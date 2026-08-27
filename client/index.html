@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MagicHat</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      .bootstrap-state {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+        color: #94a3b8;
+      }
+
+      .bootstrap-failed .bootstrap-state {
+        color: #f87171;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <main class="bootstrap-state" aria-live="polite">
+        <p data-bootstrap-message>Starting MagicHat...</p>
+      </main>
+    </div>
+    <script type="module" src="/src/windows/main/main.ts"></script>
+  </body>
+</html>

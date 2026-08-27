@@ -1,0 +1,13 @@
+node_modules/
+client/dist/
+dist-electron/
+dist-release/
+packager-installer/Output/
+data/
+**/.test/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+.plan/

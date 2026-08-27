@@ -1,0 +1,26 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2021", "DOM"],
+    "types": ["node", "electron"],
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "noEmit": true
+  },
+  "include": [
+    "src",
+    "../common/validator.ts",
+    "../common/ipc_bridge/peer.ts",
+    "../common/ipc_bridge/messagePortPeer.ts",
+    "../common/ipc_bridge/messagePortProtocol.ts",
+    "../common/ipc_bridge/rpc.ts",
+    "../common/config/**/*.ts",
+    "../common/tasks/**/*.ts",
+    "../common/terminal/**/*.ts",
+    "../common/window/**/*.ts",
+    "../common/serializer.ts",
+    "../common/macroParser.ts"
+  ]
+}

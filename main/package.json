@@ -1,0 +1,14 @@
+{
+  "name": "magichat-main",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MagicHat Electron main process, IPC bridge, configuration, and task services.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

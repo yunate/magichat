@@ -1,0 +1,13 @@
+{
+  "name": "magichat-common",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MagicHat shared layer with domain models, RPC interfaces, validators, serializers, and IPC bridge source.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

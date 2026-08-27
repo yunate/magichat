@@ -1,0 +1,39 @@
+{
+  "name": "magichat",
+  "private": true,
+  "version": "1.0.0",
+  "main": "dist-electron/main/index.js",
+  "description": "Local Electron developer toolbox with a Vue renderer, main process, and shared contracts.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yunate/MagicHat.git"
+  },
+  "workspaces": [
+    "client",
+    "common",
+    "main"
+  ],
+  "scripts": {
+    "start": ".\\start.bat",
+    "debug": ".\\start.bat debug",
+    "typecheck": "npm run typecheck:common && npm run typecheck:main && npm run typecheck:client",
+    "typecheck:common": "npm run typecheck --workspace magichat-common",
+    "typecheck:client": "npm run typecheck --workspace magichat-client",
+    "typecheck:main": "npm run typecheck --workspace magichat-main",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "npm run build --workspace magichat-client",
+    "build:electron": "node build/build-electron.mjs",
+    "package": "npm run build && electron-builder --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.9"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  }
+}

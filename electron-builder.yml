@@ -1,0 +1,28 @@
+appId: com.magichat.app
+productName: MagicHat
+asar: true
+npmRebuild: false
+removePackageScripts: true
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+directories:
+  buildResources: build
+  output: dist-release
+files:
+  - build/appIcon.ico
+  - client/dist/**
+  - dist-electron/**
+  - node_modules/node-pty/**
+  - package.json
+asarUnpack:
+  - node_modules/node-pty/**
+win:
+  icon: build/appIcon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "MagicHat Setup ${version}.${ext}"
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

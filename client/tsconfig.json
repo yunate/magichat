@@ -1,0 +1,22 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": [
+    "src",
+    "vite.config.ts",
+    "../common/validator.ts",
+    "../common/ipc_bridge/peer.ts",
+    "../common/ipc_bridge/messagePortPeer.ts",
+    "../common/ipc_bridge/messagePortProtocol.ts",
+    "../common/ipc_bridge/rpc.ts",
+    "../common/window/**/*.ts"
+  ]
+}

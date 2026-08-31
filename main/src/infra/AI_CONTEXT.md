@@ -4,8 +4,8 @@ Local filesystem, configuration, JSON, and log primitives. This module contains 
 
 ## Components
 
-- `applicationPaths.ts` derives immutable application-wide roots and renderer/preload entry paths. Development data uses the repository `data/` directory; packaged data uses `data/` beside the application executable.
-- `configManager.ts` directly implements `ConfigServerRpcApi`, derives and creates its config directory, maps supported config keys to filenames, and keeps shared serializers authoritative for domain conversion.
+- `applicationPaths.ts` derives immutable application-wide roots and renderer, preload, native-tool, and external UAC Broker bundle paths. Native executable paths target `native-tools/cli-helper/` and `native-tools/js-launcher/`; the broker targets `dist-electron/uac-broker/index.js` during development and `resources/uac-broker/index.js` when packaged.
+- `configManager.ts` directly implements `ConfigServerRpcApi`, derives and creates its config directory, maps Command, Task Center, and global config keys to filenames, and keeps shared serializers authoritative for domain conversion.
 - `jsonFile.ts` provides guarded JSON reads and atomic writes.
 - `strictJsonFile.ts` provides throwing JSON reads and unique temporary-file atomic writes for authoritative TreeView persistence.
 - `logFile.ts` provides failure-tolerant task log append and read operations.

@@ -3,7 +3,8 @@ import ImageOcrTool from "./ImageOcrTool.vue";
 
 export const imageOcrTool: ToolDefinition = {
   id: "image-ocr",
-  title: "图片文字提取",
+  title: "Image OCR",
   component: ImageOcrTool,
+  category: "image",
   order: 16,
 };

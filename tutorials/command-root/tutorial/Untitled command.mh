@@ -1,0 +1,27 @@
+{
+  "isDraft": false,
+  "id": "a00a62e2-91a8-46d9-921e-94f8df41579e",
+  "data": {
+    "scriptType": "powershell",
+    "content": "while ($true) {\r\n    $value = Get-Random -Minimum 1000 -Maximum 2000\r\n    Write-Output ('{0:F3}' -f ($value / 1000))\r\n    Start-Sleep -Seconds 1\r\n}",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": [
+          {
+            "key": "ttt",
+            "value": "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhhaaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh",
+            "enabled": true
+          }
+        ]
+      },
+      {
+        "id": "80c40409-4737-495e-b5e0-06503f7cb4e6",
+        "name": "Group 1",
+        "params": []
+      }
+    ]
+  }
+}

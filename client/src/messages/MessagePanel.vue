@@ -107,8 +107,8 @@ function formatTime(timestamp: number): string {
   flex-direction: column;
   background: var(--color-surface);
   border-left: 1px solid var(--color-border);
-  border-radius: var(--radius-md) 0 0 var(--radius-md);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-large) 0 0 var(--radius-large);
+  box-shadow: var(--shadow-message-panel);
   overflow: hidden;
 }
 
@@ -137,7 +137,7 @@ function formatTime(timestamp: number): string {
 .message-panel__btn {
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   color: var(--color-text-muted);
   font-size: 13px;
@@ -177,25 +177,8 @@ function formatTime(timestamp: number): string {
   align-items: baseline;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-medium);
   background: var(--color-bg);
-}
-
-.message-panel__item.is-info {
-  border-left-color: var(--color-primary);
-}
-
-.message-panel__item.is-success {
-  border-left-color: var(--color-success);
-}
-
-.message-panel__item.is-warning {
-  border-left-color: var(--color-warning);
-}
-
-.message-panel__item.is-error {
-  border-left-color: var(--color-danger);
 }
 
 .message-panel__icon {

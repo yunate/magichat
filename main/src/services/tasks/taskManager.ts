@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { shell } from "electron";
 import { TASK_CENTER_CONFIG_KEY } from "../../../../common/config/taskCenter";
 import type { TaskCreateParam } from "../../../../common/tasks/taskCreateParam";
 import type { TaskInfo } from "../../../../common/tasks/taskInfo";
@@ -28,12 +29,18 @@ export class TaskManager implements TasksServerRpcApi {
     console.log(`[tasks] created ${taskInfo.type} task ${taskInfo.id} (${taskInfo.title})`);
     this._persistTask(task);
     void TaskEventsRemoteBroadcaster.taskUpdated(taskInfo);
-    const seededLogs = task.getFullLogs();
+    const seededLogs = task.getTailLogs(LOG_TAIL_LIMIT);
     if (seededLogs.length > 0) {
       void TaskEventsRemoteBroadcaster.taskLogAppended(taskInfo.id, seededLogs);
     }
     this._processQueue();
     return taskInfo;
+  }
+
+  startQueuedTasks(): void {
+    if (this._isQueueStarted) return;
+    this._isQueueStarted = true;
+    this._processQueue();
   }
 
   listTasks(): TaskInfo[] {
@@ -51,9 +58,12 @@ export class TaskManager implements TasksServerRpcApi {
     return task ? task.getTailLogs(LOG_TAIL_LIMIT) : [];
   }
 
-  getTaskFullLogs(id: string): string[] {
+  revealTaskLog(id: string): void {
     const task = this._tasks.get(id);
-    return task ? task.getFullLogs() : [];
+    if (!task) throw new Error("Task was not found");
+    const logFile = TaskPaths.getTaskLogFile(id);
+    if (!fs.existsSync(logFile)) throw new Error("Task log file was not found");
+    shell.showItemInFolder(logFile);
   }
 
   getTaskCreateParams(id: string): TaskCreateParam | null {
@@ -65,6 +75,18 @@ export class TaskManager implements TasksServerRpcApi {
     const task = this._tasks.get(id);
     if (!task) return;
     task.setPinned(isPinned);
+  }
+
+  setTaskDisplayState(id: string, displayState: string): void {
+    const task = this._tasks.get(id);
+    if (!task) throw new Error("Task was not found");
+    task.setDisplayState(displayState);
+  }
+
+  clearTaskDisplayState(id: string): void {
+    const task = this._tasks.get(id);
+    if (!task) throw new Error("Task was not found");
+    task.clearDisplayState();
   }
 
   // Live tasks retain runtime resources and must be stopped before deletion.
@@ -108,7 +130,6 @@ export class TaskManager implements TasksServerRpcApi {
     this._tasks = new Map();
     this._factory = new TaskFactory(this._buildCallbacks(), this._tmpDir);
     this._loadTasks();
-    this._processQueue();
   }
 
   private _buildCallbacks(): TaskCallbacks {
@@ -128,6 +149,7 @@ export class TaskManager implements TasksServerRpcApi {
   }
 
   private _processQueue(): void {
+    if (!this._isQueueStarted) return;
     const max = this._readMaxParallel();
     let running = this._countByStatus("running");
     const pending = [...this._tasks.values()]
@@ -252,6 +274,7 @@ export class TaskManager implements TasksServerRpcApi {
   private readonly _tasks: Map<string, Task>;
   private readonly _factory: TaskFactory;
   private readonly _tmpDir: string;
+  private _isQueueStarted = false;
 }
 
 export const gTaskManager = TaskManager.getInstance();

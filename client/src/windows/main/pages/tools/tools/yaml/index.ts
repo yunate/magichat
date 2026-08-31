@@ -5,5 +5,6 @@ export const yamlTool: ToolDefinition = {
   id: "yaml",
   title: "YAML",
   component: YamlTool,
+  category: "text-data",
   order: 14,
 };

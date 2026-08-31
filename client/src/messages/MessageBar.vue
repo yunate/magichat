@@ -1,24 +1,33 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { gMessageStore, messageLevelMeta } from "./messageStore";
+import { gMessageStore } from "./messageStore";
 import MessagePanel from "./MessagePanel.vue";
 
 const isPanelOpen = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+const dismissedMessageId = ref<number | null>(null);
 
 const latest = computed(() => gMessageStore.latest.value);
+const displayedLatest = computed(() => latest.value?.id === dismissedMessageId.value
+  ? null
+  : latest.value);
 const unreadCount = computed(() => gMessageStore.unreadCount.value);
-const latestText = computed(() => latest.value?.text ?? "No messages");
-const levelClass = computed(() => (latest.value ? `is-${latest.value.level}` : "is-empty"));
-const levelIcon = computed(() => (latest.value ? messageLevelMeta[latest.value.level].icon : "…"));
+const latestText = computed(() => displayedLatest.value?.text ?? "No messages");
 
 function togglePanel(): void {
   isPanelOpen.value = !isPanelOpen.value;
-  if (isPanelOpen.value) gMessageStore.markAllRead();
+  if (isPanelOpen.value) {
+    gMessageStore.markAllRead();
+    dismissMessage();
+  }
 }
 
 function closePanel(): void {
   isPanelOpen.value = false;
+}
+
+function dismissMessage(): void {
+  dismissedMessageId.value = latest.value?.id ?? null;
 }
 
 function onWindowPointerDown(event: PointerEvent): void {
@@ -47,7 +56,6 @@ onUnmounted(() => window.removeEventListener("pointerdown", onWindowPointerDown)
       @keydown.enter.prevent="togglePanel"
       @keydown.space.prevent="togglePanel"
     >
-      <span class="message-bar__icon" :class="levelClass" aria-hidden="true">{{ levelIcon }}</span>
       <span class="message-bar__text">{{ latestText }}</span>
       <span
         v-if="unreadCount > 0"
@@ -77,41 +85,13 @@ onUnmounted(() => window.removeEventListener("pointerdown", onWindowPointerDown)
   height: var(--message-bar-height);
   padding: 0 var(--space-4);
   background: var(--color-surface);
-  border-top: 1px solid var(--color-border);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s ease;
-}
-
-.message-bar:hover {
-  background: var(--color-surface-raised);
 }
 
 .message-bar:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
-}
-
-.message-bar__icon {
-  flex: none;
-  font-size: 14px;
-  color: var(--color-text-muted);
-}
-
-.message-bar__icon.is-info {
-  color: var(--color-primary);
-}
-
-.message-bar__icon.is-success {
-  color: var(--color-success);
-}
-
-.message-bar__icon.is-warning {
-  color: var(--color-warning);
-}
-
-.message-bar__icon.is-error {
-  color: var(--color-danger);
 }
 
 .message-bar__text {
@@ -128,7 +108,7 @@ onUnmounted(() => window.removeEventListener("pointerdown", onWindowPointerDown)
   flex: none;
   min-width: 18px;
   padding: 0 var(--space-1);
-  border-radius: 999px;
+  border-radius: var(--radius-large);
   background: var(--color-primary);
   color: var(--color-bg);
   font-size: 11px;
@@ -141,6 +121,11 @@ onUnmounted(() => window.removeEventListener("pointerdown", onWindowPointerDown)
   flex: none;
   color: var(--color-text-muted);
   font-size: 12px;
+  transition: color 0.15s ease;
+}
+
+.message-bar:hover .message-bar__chevron {
+  color: var(--color-text);
 }
 
 .message-panel-slide-enter-active,

@@ -25,10 +25,10 @@ async function copyValue(label: string, value: string): Promise<void> {
 
 <template>
   <ToolSplitLayout
-    title="命名转换"
-    hint="输入任意标识符或短语, 右侧给出 camel / Pascal / snake / kebab / CONSTANT 等命名形式。"
-    left-label="输入"
-    right-label="转换结果"
+    title="Case Converter"
+    hint="Enter an identifier or phrase to convert it to camel, Pascal, snake, kebab, CONSTANT, and other case styles."
+    left-label="Input"
+    right-label="Converted Values"
   >
     <template #left>
       <textarea
@@ -36,8 +36,8 @@ async function copyValue(label: string, value: string): Promise<void> {
         v-select-all
         class="case-tool__area"
         spellcheck="false"
-        aria-label="输入文本"
-        placeholder="在此输入要转换的标识符或短语…"
+        aria-label="Input text"
+        placeholder="Enter an identifier or phrase..."
       ></textarea>
     </template>
     <template #right>
@@ -51,7 +51,7 @@ async function copyValue(label: string, value: string): Promise<void> {
               :disabled="item.value === ''"
               @click="copyValue(item.label, item.value)"
             >
-              {{ copiedLabel === item.label ? "已复制" : "复制" }}
+              {{ copiedLabel === item.label ? "Copied" : "Copy" }}
             </button>
           </div>
           <span v-select-all tabindex="0" class="case-tool__value">{{ item.value || "—" }}</span>
@@ -72,7 +72,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   overflow: auto;
@@ -102,7 +102,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
 }
 
@@ -119,7 +119,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 .case-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -138,7 +138,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 
 .case-tool__value {
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   word-break: break-all;
 }

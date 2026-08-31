@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, useTemplateRef, watch } from "vue";
 import type { CSSProperties } from "vue";
+import { FunnelTask } from "../../../../common/funnelTask";
 import { MacroParser } from "../../../../common/macroParser";
+import type { ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
 import PopupSelect from "../PopupSelect.vue";
 import PopupToast from "../PopupToast.vue";
+import SplitContainer from "../SplitContainer.vue";
 import ParamEditor from "./ParamEditor.vue";
 import TextAreaEditor from "./TextAreaEditor.vue";
 import {
@@ -11,6 +14,7 @@ import {
   createMacroDisplayDetails,
   resolveTextEditParamGroup,
   resolveTextEditText,
+  type MacroAnalysis,
   type ResolvedTextEditParamGroup,
   type TextEditAdditionalParamsProvider,
   type TextEditAdditionalParamScope,
@@ -27,11 +31,14 @@ type Props = {
   tabSize?: number;
   textIdentity?: string;
   getAdditionalParams?: TextEditAdditionalParamsProvider;
+  getOverrideParams?: TextEditAdditionalParamsProvider;
   isScriptMacroParamSyncEnabled?: boolean;
   isParamGroupManagementDisabled?: boolean;
   readonly?: boolean;
   isParamExpandedInitially?: boolean;
+  paramPriorityDescription?: string;
   accessibleLabel?: string;
+  scriptType?: ScriptType;
 };
 
 const props = withDefaults(defineProps<Props>(), {
@@ -58,27 +65,34 @@ const selectedGroupId = ref<string | null>(resolveSelectedGroupId(props.selected
 const isParamExpanded = ref(props.isParamExpandedInitially);
 const textEdit = useTemplateRef<HTMLElement>("textEdit");
 const paramPanel = useTemplateRef<HTMLElement>("paramPanel");
+const groupRenameInput = useTemplateRef<HTMLInputElement>("groupRenameInput");
+const paramHelpButton = useTemplateRef<HTMLButtonElement>("paramHelpButton");
+const paramHelp = useTemplateRef<HTMLElement>("paramHelp");
 const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
 const paramEditor = useTemplateRef<{
   removeParam: (index: number) => void;
 }>("paramEditor");
 const paramPanelHeight = ref(132);
-const pendingDeleteIndex = ref<number | null>(null);
-const generatedMacroKeysByGroup = new Map<string, Set<string>>();
+const isParamHelpOpen = ref(false);
+const isGroupRenaming = ref(false);
+const groupRenameValue = ref("");
+const paramHelpStyle = ref<CSSProperties>({});
+const macroAnalysis = shallowRef<MacroAnalysis | null>(null);
+const generatedMacroKeysByGroup = reactive(new Map<string, Set<string>>());
 const groupSelectId = `text-edit-param-group-${crypto.randomUUID()}`;
 const paramPanelId = `text-edit-param-panel-${crypto.randomUUID()}`;
 const MIN_PARAM_PANEL_HEIGHT = 80;
 const MIN_TEXT_AREA_HEIGHT = 120;
-const SPLITTER_HEIGHT = 5;
+const SPLITTER_HEIGHT = 12;
 const PARAM_TOOLBAR_HEIGHT = 40;
-const KEYBOARD_RESIZE_STEP = 16;
+const PARAM_HELP_MARGIN = 8;
+const PARAM_HELP_GAP = 8;
 let emittedText: string | null = null;
-let resizeStart: { pointerY: number; panelHeight: number } | null = null;
-let previousBodyCursor = "";
-let previousBodyUserSelect = "";
+let macroRevision = 0;
+const macroAnalysisFunnelTask = new FunnelTask(computeMacroAnalysis, 300);
 
 watch(() => props.paramGroups, (value) => {
-  const nextGroups = synchronizeScriptMacroParams(cloneTextEditParamGroups(value));
+  const nextGroups = cloneTextEditParamGroups(value);
   groups.value = nextGroups;
   selectedGroupId.value = resolveSelectedGroupId(selectedGroupId.value, groups.value);
   if (!areParamGroupsEqual(value, nextGroups)) {
@@ -92,7 +106,7 @@ watch(() => props.text, (value) => {
   }
   emittedText = null;
   text.value = value;
-  synchronizeCurrentGroups();
+  invalidateMacroAnalysis();
 });
 watch(() => props.selectedGroupId, (value) => {
   selectedGroupId.value = resolveSelectedGroupId(value, groups.value);
@@ -105,22 +119,35 @@ const groupOptions = computed(() => groups.value.map((group) => ({
   value: group.id,
   label: group.name,
 })));
-const fixedParamCount = computed(() => props.isScriptMacroParamSyncEnabled
-  ? MacroParser.extractKeys(text.value).length
-  : 0);
-const macroDetails = computed(() => createMacroDisplayDetails(
-  selectedGroup.value,
-  getAdditionalParams(),
-));
+const fixedParamCount = computed(() => selectedGroup.value === null
+  ? 0
+  : generatedMacroKeysByGroup.get(selectedGroup.value.id)?.size ?? 0);
+const macroScope = computed(() => ({
+  selectedGroup: selectedGroup.value,
+  additionalScopes: getAdditionalParams(),
+  overrideScopes: getOverrideParams(),
+}));
+const macroDetails = computed(() => macroAnalysis.value?.details ?? new Map());
 const paramPanelStyle = computed<CSSProperties>(() => props.isTextAreaVisible
   ? { flexBasis: `${paramPanelHeight.value}px` }
   : {});
 
+watch(macroScope, invalidateMacroAnalysis, { deep: true, immediate: true });
+watch(() => props.textIdentity, invalidateMacroAnalysis);
+onMounted(() => {
+  window.addEventListener("pointerdown", onWindowPointerDown);
+  window.addEventListener("resize", closeParamHelp);
+  window.addEventListener("scroll", closeParamHelp, true);
+});
 onUnmounted(() => {
-  stopParamResize();
+  macroAnalysisFunnelTask.cancel();
+  window.removeEventListener("pointerdown", onWindowPointerDown);
+  window.removeEventListener("resize", closeParamHelp);
+  window.removeEventListener("scroll", closeParamHelp, true);
 });
 
 function onSelectGroup(groupId: string): void {
+  cancelGroupRename();
   selectedGroupId.value = resolveSelectedGroupId(groupId, groups.value);
   emit("updateSelectedGroupId", selectedGroupId.value);
 }
@@ -141,7 +168,54 @@ function addParamGroup(): void {
   emit("updateSelectedGroupId", group.id);
 }
 
+function beginGroupRename(): void {
+  const group = selectedGroup.value;
+  if (group === null) return;
+  groupRenameValue.value = group.name;
+  isGroupRenaming.value = true;
+  void nextTick(() => {
+    groupRenameInput.value?.focus();
+    groupRenameInput.value?.select();
+  });
+}
+
+function updateGroupRenameValue(event: Event): void {
+  if (event.target instanceof HTMLInputElement) groupRenameValue.value = event.target.value;
+}
+
+function commitGroupRename(): void {
+  if (!isGroupRenaming.value) return;
+  const group = selectedGroup.value;
+  if (group === null) {
+    cancelGroupRename();
+    return;
+  }
+  const name = groupRenameValue.value.trim();
+  if (name.length === 0) {
+    popupToast.value?.show("Parameter group name is required.");
+    cancelGroupRename();
+    return;
+  }
+  if (groups.value.some((candidate) => candidate.id !== group.id && candidate.name === name)) {
+    popupToast.value?.show("Parameter group names must be unique.");
+    cancelGroupRename();
+    return;
+  }
+  isGroupRenaming.value = false;
+  if (name === group.name) return;
+  groups.value = groups.value.map((candidate) => candidate.id === group.id
+    ? { ...candidate, name }
+    : candidate);
+  emit("updateParamGroups", cloneTextEditParamGroups(groups.value));
+}
+
+function cancelGroupRename(): void {
+  isGroupRenaming.value = false;
+  groupRenameValue.value = "";
+}
+
 function removeParamGroup(groupId: string): void {
+  cancelGroupRename();
   const removedIndex = groups.value.findIndex((group) => group.id === groupId);
   if (removedIndex < 0) return;
   const removedGroup = groups.value[removedIndex];
@@ -150,7 +224,7 @@ function removeParamGroup(groupId: string): void {
   if (remainingGroups.length === 0) {
     const defaultGroup: TextEditParamGroup = {
       id: crypto.randomUUID(),
-      name: "default params",
+      name: "default",
       sourceType: removedGroup.sourceType,
       sourcePath: removedGroup.sourcePath,
       params: [],
@@ -189,13 +263,13 @@ function updateSelectedParams(params: TextEditParam[]): void {
 
 function updateText(value: string): void {
   text.value = value;
-  synchronizeCurrentGroups();
+  invalidateMacroAnalysis();
   emittedText = value;
   emit("updateText", value);
 }
 
-function synchronizeCurrentGroups(): void {
-  const nextGroups = synchronizeScriptMacroParams(groups.value);
+function synchronizeCurrentGroups(macroKeys: readonly string[]): void {
+  const nextGroups = synchronizeScriptMacroParams(groups.value, macroKeys);
   if (areParamGroupsEqual(groups.value, nextGroups)) return;
   groups.value = nextGroups;
   emit("updateParamGroups", cloneTextEditParamGroups(nextGroups));
@@ -203,9 +277,9 @@ function synchronizeCurrentGroups(): void {
 
 function synchronizeScriptMacroParams(
   sourceGroups: readonly TextEditParamGroup[],
+  macroKeys: readonly string[],
 ): TextEditParamGroup[] {
   if (!props.isScriptMacroParamSyncEnabled) return cloneTextEditParamGroups(sourceGroups);
-  const macroKeys = MacroParser.extractKeys(text.value);
   const activeGroupIds = new Set(sourceGroups.map((group) => group.id));
   for (const groupId of generatedMacroKeysByGroup.keys()) {
     if (!activeGroupIds.has(groupId)) generatedMacroKeysByGroup.delete(groupId);
@@ -278,7 +352,12 @@ function getRawParamGroups(): TextEditParamGroup[] {
 
 function getResolvedParamGroups(): ResolvedTextEditParamGroup[] {
   const additionalScopes = getAdditionalParams();
-  return groups.value.map((group) => resolveTextEditParamGroup(group, additionalScopes));
+  const overrideScopes = getOverrideParams();
+  return groups.value.map((group) => resolveTextEditParamGroup(
+    group,
+    additionalScopes,
+    overrideScopes,
+  ));
 }
 
 function getRawText(): string {
@@ -286,69 +365,112 @@ function getRawText(): string {
 }
 
 function getResolvedText(): TextEditTextResolution {
-  return resolveTextEditText(text.value, selectedGroup.value, getAdditionalParams());
+  return ensureMacroAnalysisCurrent().textResolution;
+}
+
+function invalidateMacroAnalysis(): void {
+  macroRevision += 1;
+  macroAnalysisFunnelTask.schedule();
+}
+
+function ensureMacroAnalysisCurrent(): MacroAnalysis {
+  const current = macroAnalysis.value;
+  if (current !== null && current.revision === macroRevision) return current;
+  macroAnalysisFunnelTask.cancel();
+  return computeMacroAnalysis();
+}
+
+function computeMacroAnalysis(): MacroAnalysis {
+  const scope = macroScope.value;
+  const references = MacroParser.extractReferences(text.value);
+  const analysis: MacroAnalysis = {
+    revision: macroRevision,
+    references,
+    details: createMacroDisplayDetails(
+      scope.selectedGroup,
+      scope.additionalScopes,
+      scope.overrideScopes,
+    ),
+    textResolution: resolveTextEditText(
+      text.value,
+      scope.selectedGroup,
+      scope.additionalScopes,
+      scope.overrideScopes,
+    ),
+  };
+  macroAnalysis.value = analysis;
+  synchronizeCurrentGroups([...new Set(references.map((reference) => reference.key))]);
+  return analysis;
 }
 
 function getAdditionalParams(): readonly TextEditAdditionalParamScope[] {
   return props.getAdditionalParams?.() ?? [];
 }
 
-function requestDeleteParam(index: number): void {
-  pendingDeleteIndex.value = index;
+function getOverrideParams(): readonly TextEditAdditionalParamScope[] {
+  return props.getOverrideParams?.() ?? [];
 }
 
-function confirmDeleteParam(): void {
-  const index = pendingDeleteIndex.value;
-  pendingDeleteIndex.value = null;
-  if (index !== null) paramEditor.value?.removeParam(index);
+function requestDeleteParam(index: number): void {
+  paramEditor.value?.removeParam(index);
 }
 
 function showCopyStatus(message: string): void {
   popupToast.value?.show(message);
 }
 
-function startParamResize(event: PointerEvent): void {
-  if (event.button !== 0 || paramPanel.value === null) return;
-  event.preventDefault();
-  resizeStart = {
-    pointerY: event.clientY,
-    panelHeight: paramPanel.value.getBoundingClientRect().height,
-  };
-  previousBodyCursor = document.body.style.cursor;
-  previousBodyUserSelect = document.body.style.userSelect;
-  document.body.style.cursor = "row-resize";
-  document.body.style.userSelect = "none";
-  window.addEventListener("pointermove", resizeParamPanel);
-  window.addEventListener("pointerup", stopParamResize);
-  window.addEventListener("pointercancel", stopParamResize);
-}
-
-function resizeParamPanel(event: PointerEvent): void {
-  if (resizeStart === null) return;
-  setParamPanelHeight(resizeStart.panelHeight + event.clientY - resizeStart.pointerY);
-}
-
-function stopParamResize(): void {
-  if (resizeStart === null) return;
-  resizeStart = null;
-  document.body.style.cursor = previousBodyCursor;
-  document.body.style.userSelect = previousBodyUserSelect;
-  window.removeEventListener("pointermove", resizeParamPanel);
-  window.removeEventListener("pointerup", stopParamResize);
-  window.removeEventListener("pointercancel", stopParamResize);
-}
-
-function resizeParamPanelByKey(event: KeyboardEvent): void {
-  let targetHeight: number;
-  switch (event.key) {
-    case "ArrowUp": targetHeight = paramPanelHeight.value - KEYBOARD_RESIZE_STEP; break;
-    case "ArrowDown": targetHeight = paramPanelHeight.value + KEYBOARD_RESIZE_STEP; break;
-    case "Home": targetHeight = MIN_PARAM_PANEL_HEIGHT; break;
-    case "End": targetHeight = maximumParamPanelHeight(); break;
-    default: return;
+function toggleParamHelp(): void {
+  if (isParamHelpOpen.value) {
+    closeParamHelp();
+    return;
   }
-  event.preventDefault();
-  setParamPanelHeight(targetHeight);
+  isParamHelpOpen.value = true;
+  void nextTick(positionParamHelp);
+}
+
+function closeParamHelp(): void {
+  isParamHelpOpen.value = false;
+}
+
+function positionParamHelp(): void {
+  const buttonBounds = paramHelpButton.value?.getBoundingClientRect();
+  const helpBounds = paramHelp.value?.getBoundingClientRect();
+  if (buttonBounds === undefined || helpBounds === undefined) return;
+  const maximumLeft = window.innerWidth - helpBounds.width - PARAM_HELP_MARGIN;
+  const left = Math.max(PARAM_HELP_MARGIN, Math.min(buttonBounds.left, maximumLeft));
+  const below = buttonBounds.bottom + PARAM_HELP_GAP;
+  const top = below + helpBounds.height <= window.innerHeight - PARAM_HELP_MARGIN
+    ? below
+    : Math.max(PARAM_HELP_MARGIN, buttonBounds.top - helpBounds.height - PARAM_HELP_GAP);
+  paramHelpStyle.value = { left: `${left}px`, top: `${top}px` };
+}
+
+function onWindowPointerDown(event: PointerEvent): void {
+  if (!isParamHelpOpen.value || !(event.target instanceof Node)) return;
+  if (paramHelpButton.value?.contains(event.target) || paramHelp.value?.contains(event.target)) return;
+  closeParamHelp();
+}
+
+function onParamHelpKeydown(event: KeyboardEvent): void {
+  if (event.key !== "Escape") return;
+  event.stopPropagation();
+  closeParamHelp();
+  paramHelpButton.value?.focus();
+}
+
+async function copyResolvedCode(): Promise<void> {
+  const resolution = getResolvedText();
+  if (!resolution.successful) {
+    popupToast.value?.show(`Failed to copy code: ${resolution.error ?? "Macro resolution failed."}`);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(resolution.value);
+    popupToast.value?.show("Copied resolved code.");
+  } catch (reason: unknown) {
+    popupToast.value?.show("Failed to copy code.");
+    console.error("Failed to copy resolved code:", reason);
+  }
 }
 
 function setParamPanelHeight(height: number): void {
@@ -356,6 +478,10 @@ function setParamPanelHeight(height: number): void {
     maximumParamPanelHeight(),
     Math.max(MIN_PARAM_PANEL_HEIGHT, height),
   ));
+}
+
+function resizeParamPanel(_index: number, height: number): void {
+  setParamPanelHeight(height);
 }
 
 function maximumParamPanelHeight(): number {
@@ -387,7 +513,10 @@ defineExpose({
   <section
     ref="textEdit"
     class="text-edit"
-    :class="{ 'is-param-only': !isTextAreaVisible }"
+    :class="{
+      'is-param-only': !isTextAreaVisible,
+      'is-param-expanded': isParamExpanded,
+    }"
     :aria-label="accessibleLabel"
   >
     <header v-if="groups.length > 0" class="text-edit__param-toolbar">
@@ -403,7 +532,7 @@ defineExpose({
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3 3 3-3" /></svg>
       </button>
       <span :id="groupSelectId">{{ isParamGroupManagementDisabled ? "Parameters" : "Parameter Group" }}</span>
-      <div v-if="!isParamGroupManagementDisabled" class="text-edit__group-select">
+      <div v-if="!isParamGroupManagementDisabled && !isGroupRenaming" class="text-edit__group-select">
         <PopupSelect
           :value="selectedGroupId ?? ''"
           :options="groupOptions"
@@ -414,6 +543,18 @@ defineExpose({
           @remove-option="removeParamGroup"
         />
       </div>
+      <input
+        v-else-if="!isParamGroupManagementDisabled"
+        ref="groupRenameInput"
+        class="text-edit__group-rename"
+        type="text"
+        :value="groupRenameValue"
+        aria-label="Parameter group name"
+        @input="updateGroupRenameValue"
+        @blur="commitGroupRename"
+        @keydown.enter.prevent="commitGroupRename"
+        @keydown.escape.prevent="cancelGroupRename"
+      />
       <button
         v-if="!isParamGroupManagementDisabled"
         type="button"
@@ -424,70 +565,97 @@ defineExpose({
       >
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
       </button>
-    </header>
-    <div
-      v-if="selectedGroup !== null"
-      v-show="isParamExpanded"
-      :id="paramPanelId"
-      ref="paramPanel"
-      class="text-edit__param-panel"
-      :style="paramPanelStyle"
-    >
-      <ParamEditor
-        ref="paramEditor"
-        :group="selectedGroup"
-        :macro-details="macroDetails"
-        :fixed-param-count="fixedParamCount"
-        :readonly="readonly"
-        @update="updateSelectedParams"
-        @copy-status="showCopyStatus"
-        @request-delete="requestDeleteParam"
-      />
-    </div>
-    <p v-else class="text-edit__empty">No parameter groups.</p>
-    <div
-      v-if="isTextAreaVisible && isParamExpanded"
-      class="text-edit__splitter"
-      role="separator"
-      aria-label="Resize parameter and text areas"
-      aria-orientation="horizontal"
-      :aria-valuemin="MIN_PARAM_PANEL_HEIGHT"
-      :aria-valuemax="maximumParamPanelHeight()"
-      :aria-valuenow="paramPanelHeight"
-      tabindex="0"
-      @pointerdown="startParamResize"
-      @keydown="resizeParamPanelByKey"
-    ></div>
-    <TextAreaEditor
-      v-if="isTextAreaVisible"
-      :value="text"
-      :identity="textIdentity"
-      :macro-details="macroDetails"
-      :tab-size="tabSize"
-      :readonly="readonly"
-      @update="updateText"
-    />
-    <PopupToast ref="popupToast" />
-    <div
-      v-if="pendingDeleteIndex !== null"
-      class="text-edit__dialog-backdrop"
-      @pointerdown.self="pendingDeleteIndex = null"
-    >
-      <section
-        class="text-edit__dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-param-title"
-        @keydown.escape.prevent="pendingDeleteIndex = null"
+      <button
+        v-if="!isParamGroupManagementDisabled"
+        type="button"
+        class="text-edit__rename-group"
+        aria-label="Rename parameter group"
+        title="Rename parameter group"
+        @click="beginGroupRename"
       >
-        <h2 id="delete-param-title">Delete parameter?</h2>
-        <p>This parameter will be deleted.</p>
-        <footer>
-          <button type="button" @click="pendingDeleteIndex = null">Cancel</button>
-          <button type="button" class="is-danger" autofocus @click="confirmDeleteParam">Delete</button>
-        </footer>
-      </section>
-    </div>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 11.5-.5 2 2-.5 7.75-7.75-1.5-1.5zM9.75 4.75l1.5 1.5" /></svg>
+      </button>
+      <button
+        ref="paramHelpButton"
+        type="button"
+        class="text-edit__param-help-button"
+        aria-label="Parameter help"
+        title="Parameter help"
+        aria-haspopup="dialog"
+        :aria-expanded="isParamHelpOpen"
+        :aria-controls="isParamHelpOpen ? `${paramPanelId}-help` : undefined"
+        @click="toggleParamHelp"
+        @keydown="onParamHelpKeydown"
+      >?</button>
+      <button
+        v-if="isTextAreaVisible"
+        type="button"
+        class="text-edit__copy-code"
+        title="Copy code with resolved Macros"
+        @click="copyResolvedCode"
+      >Copy code</button>
+    </header>
+    <Teleport to="body">
+      <aside
+        v-if="isParamHelpOpen"
+        :id="`${paramPanelId}-help`"
+        ref="paramHelp"
+        class="text-edit-param-help"
+        :style="paramHelpStyle"
+        role="dialog"
+        aria-label="Parameter rules"
+        @keydown="onParamHelpKeydown"
+      >
+        <p>Use <code>mh{xxx}</code>, where <code>xxx</code> is the key, to reference a parameter in code or another value.</p>
+        <ul>
+          <li>Keys are unique within a group and start with a letter or <code>_</code>.</li>
+          <li>Use letters, numbers, or <code>_</code>; <code>.</code> and <code>-</code> separate non-empty segments.</li>
+          <li v-if="paramPriorityDescription">{{ paramPriorityDescription }}</li>
+          <li>Only enabled parameters are resolved.</li>
+          <li>References must exist and cannot form cycles.</li>
+        </ul>
+      </aside>
+    </Teleport>
+    <SplitContainer
+      class="text-edit__body"
+      orientation="horizontal"
+      :separator-labels="['Resize parameter and text areas']"
+      :separator-visible="[isParamExpanded]"
+      @resize="resizeParamPanel"
+    >
+      <div
+        v-if="selectedGroup !== null"
+        v-show="isParamExpanded"
+        :id="paramPanelId"
+        ref="paramPanel"
+        class="text-edit__param-panel"
+        :style="paramPanelStyle"
+      >
+        <ParamEditor
+          ref="paramEditor"
+          :group="selectedGroup"
+          :macro-details="macroDetails"
+          :fixed-param-count="fixedParamCount"
+          :readonly="readonly"
+          @update="updateSelectedParams"
+          @copy-status="showCopyStatus"
+          @request-delete="requestDeleteParam"
+        />
+      </div>
+      <p v-else v-show="isParamExpanded" class="text-edit__empty">No parameter groups.</p>
+      <TextAreaEditor
+        v-if="isTextAreaVisible"
+        :value="text"
+        :identity="textIdentity"
+        :macro-analysis="macroAnalysis"
+        :ensure-macro-analysis="ensureMacroAnalysisCurrent"
+        :script-type="scriptType"
+        :tab-size="tabSize"
+        :readonly="readonly"
+        @update="updateText"
+      />
+    </SplitContainer>
+    <PopupToast ref="popupToast" />
   </section>
 </template>
 
@@ -501,28 +669,18 @@ defineExpose({
   flex-direction: column;
   overflow: hidden;
   color: var(--color-text);
-  background: var(--color-content-bg);
-}
-
-.text-edit::before {
-  position: absolute;
-  z-index: 5;
-  top: 40px;
-  bottom: 0;
-  left: 43px;
-  width: 1px;
-  content: "";
-  background: var(--color-border);
-  pointer-events: none;
+  background: transparent;
 }
 
 .text-edit__param-toolbar {
-  min-height: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
+  flex: 0 0 40px;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
-  background: color-mix(in srgb, var(--color-surface) 72%, var(--color-content-bg));
+  overflow: hidden;
+  background: transparent;
 }
 
 .text-edit__param-toggle {
@@ -535,7 +693,7 @@ defineExpose({
   color: var(--color-text-muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   cursor: pointer;
 }
 
@@ -565,14 +723,31 @@ defineExpose({
 }
 
 .text-edit__param-toolbar > span {
+  flex: none;
   margin-inline-start: var(--space-1);
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .text-edit__group-select {
   width: 160px;
+  flex: 0 0 160px;
+}
+
+.text-edit__group-rename {
+  width: 160px;
+  height: var(--tree-row-height);
+  flex: 0 0 160px;
+  padding-inline: var(--space-2);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-medium);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .text-edit__group-select :deep(.popup-select__trigger) {
@@ -580,6 +755,8 @@ defineExpose({
 }
 
 .text-edit__add-group,
+.text-edit__rename-group,
+.text-edit__param-help-button,
 .text-edit__param-action {
   width: 28px;
   height: 28px;
@@ -590,11 +767,13 @@ defineExpose({
   color: var(--color-text-muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   cursor: pointer;
 }
 
 .text-edit__add-group:hover,
+.text-edit__rename-group:hover,
+.text-edit__param-help-button:hover,
 .text-edit__param-action:hover:not(:disabled) {
   color: var(--color-text);
   background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-raised));
@@ -602,12 +781,15 @@ defineExpose({
 }
 
 .text-edit__add-group:focus-visible,
+.text-edit__rename-group:focus-visible,
+.text-edit__param-help-button:focus-visible,
 .text-edit__param-action:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
 
 .text-edit__add-group svg,
+.text-edit__rename-group svg,
 .text-edit__param-action svg {
   width: 16px;
   height: 16px;
@@ -615,6 +797,11 @@ defineExpose({
   stroke: currentColor;
   stroke-linecap: round;
   stroke-width: 1.5;
+}
+
+.text-edit__param-help-button {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .text-edit__param-action:disabled {
@@ -626,6 +813,34 @@ defineExpose({
   color: var(--color-danger);
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
+}
+
+.text-edit__copy-code {
+  min-height: 28px;
+  flex: none;
+  margin-inline-start: auto;
+  padding-inline: var(--space-3);
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.text-edit__copy-code:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-raised));
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+}
+
+.text-edit__copy-code:active {
+  transform: translateY(1px);
+}
+
+.text-edit__copy-code:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .text-edit__select-all {
@@ -649,7 +864,8 @@ defineExpose({
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
-  background: color-mix(in srgb, var(--color-surface) 42%, var(--color-content-bg));
+  border-block-end: 1px solid var(--color-border);
+  background: transparent;
 }
 
 .text-edit.is-param-only .text-edit__param-panel {
@@ -657,34 +873,9 @@ defineExpose({
   flex: 1;
 }
 
-.text-edit__splitter {
-  position: relative;
-  z-index: 4;
-  height: 5px;
-  flex: 0 0 5px;
-  background: transparent;
-  cursor: row-resize;
-  touch-action: none;
-}
-
-.text-edit__splitter::before {
-  position: absolute;
-  top: 2px;
-  right: 0;
-  left: 0;
-  height: 1px;
-  content: "";
-  background: var(--color-border);
-}
-
-.text-edit__splitter:hover::before,
-.text-edit__splitter:focus-visible::before {
-  height: 2px;
-  background: var(--color-primary);
-}
-
-.text-edit__splitter:focus-visible {
-  outline: 0;
+.text-edit__body {
+  flex: 1;
+  overflow: hidden;
 }
 
 .text-edit__empty {
@@ -694,67 +885,37 @@ defineExpose({
   text-align: center;
 }
 
-.text-edit__dialog-backdrop {
-  position: absolute;
-  z-index: 20;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: var(--space-4);
-  background: rgb(0 0 0 / 58%);
-}
-
-.text-edit__dialog {
-  width: min(420px, calc(100% - 32px));
-  padding: var(--space-4);
-  color: var(--color-text);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 20px 56px rgb(0 0 0 / 42%);
-}
-
-.text-edit__dialog h2,
-.text-edit__dialog p {
-  margin: 0;
-}
-
-.text-edit__dialog h2 {
-  font-size: 16px;
-}
-
-.text-edit__dialog p {
-  margin-block-start: var(--space-2);
-  color: var(--color-text-muted);
-}
-
-.text-edit__dialog footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-block-start: var(--space-4);
-}
-
-.text-edit__dialog button {
-  min-height: 30px;
-  padding-inline: var(--space-3);
-  color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.text-edit__dialog button.is-danger {
-  color: var(--color-bg);
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-}
-
-.text-edit__dialog button:focus-visible,
 .text-edit__select-all input:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+
+.text-edit-param-help {
+  position: fixed;
+  z-index: 1000;
+  width: min(320px, calc(100vw - 16px));
+  padding: var(--space-3);
+  color: var(--color-text);
+  background: var(--color-surface-deep);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-flyout);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.text-edit-param-help p {
+  margin: 0 0 var(--space-2);
+}
+
+.text-edit-param-help ul {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+}
+
+.text-edit-param-help code {
+  color: var(--color-code-variable);
+  font-family: Consolas, "Courier New", monospace;
 }
 
 .sr-only {

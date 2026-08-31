@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "./types";
+import { TOOL_CATEGORIES } from "./types";
 
 class ToolsRegistry {
   registerTool(definition: ToolDefinition): void {
@@ -10,7 +11,11 @@ class ToolsRegistry {
   }
 
   getTools(): readonly ToolDefinition[] {
-    return [...this._tools].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return [...this._tools].sort((left, right) => {
+      const categoryOrder = TOOL_CATEGORIES.indexOf(left.category)
+        - TOOL_CATEGORIES.indexOf(right.category);
+      return categoryOrder || (left.order ?? 0) - (right.order ?? 0);
+    });
   }
 
   private _tools: ToolDefinition[] = [];

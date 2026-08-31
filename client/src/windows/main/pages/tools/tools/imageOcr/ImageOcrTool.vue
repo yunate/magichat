@@ -1,22 +1,38 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useTemplateRef } from "vue";
-import type { LoggerMessage, Worker } from "tesseract.js";
+import type { LoggerMessage, PSM, Worker } from "tesseract.js";
 import PopupSelect from "../../../../../../components/PopupSelect.vue";
 import { vSelectAll } from "../../../../../../directives/vSelectAll";
 import ToolSplitLayout from "../../components/ToolSplitLayout.vue";
 
 type OcrLanguage = "chi_sim+eng" | "eng" | "chi_tra+eng" | "jpn+eng";
+type OcrLayout = "screenshot" | "document" | "textBlock" | "singleLine";
 
 type LanguageOption = {
   value: OcrLanguage;
   label: string;
 };
 
+type LayoutOption = {
+  value: OcrLayout;
+  label: string;
+};
+
+const TARGET_RECOGNITION_EDGE = 3200;
+const MAX_RECOGNITION_SCALE = 3;
+
 const LANGUAGE_OPTIONS: readonly LanguageOption[] = [
-  { value: "chi_sim+eng", label: "简体中文 + 英文" },
-  { value: "eng", label: "英文" },
-  { value: "chi_tra+eng", label: "繁体中文 + 英文" },
-  { value: "jpn+eng", label: "日文 + 英文" },
+  { value: "chi_sim+eng", label: "Simplified Chinese + English" },
+  { value: "eng", label: "English" },
+  { value: "chi_tra+eng", label: "Traditional Chinese + English" },
+  { value: "jpn+eng", label: "Japanese + English" },
+];
+
+const LAYOUT_OPTIONS: readonly LayoutOption[] = [
+  { value: "screenshot", label: "Screenshot / Sparse Text" },
+  { value: "document", label: "Document" },
+  { value: "textBlock", label: "Single Text Block" },
+  { value: "singleLine", label: "Single Line" },
 ];
 
 const fileInput = useTemplateRef<HTMLInputElement>("fileInput");
@@ -25,9 +41,10 @@ const selectedFile = ref<File | null>(null);
 const previewUrl = ref("");
 const imageDimensions = ref("");
 const selectedLanguage = ref<OcrLanguage>("chi_sim+eng");
+const selectedLayout = ref<OcrLayout>("screenshot");
 const recognizedText = ref("");
 const error = ref("");
-const stageText = ref("等待选择图片");
+const stageText = ref("Waiting for an image");
 const progress = ref(0);
 const isDragging = ref(false);
 const isRunning = ref(false);
@@ -54,6 +71,11 @@ const canClear = computed(
 function updateLanguage(value: string): void {
   const option = LANGUAGE_OPTIONS.find((candidate) => candidate.value === value);
   if (option !== undefined) selectedLanguage.value = option.value;
+}
+
+function updateLayout(value: string): void {
+  const option = LAYOUT_OPTIONS.find((candidate) => candidate.value === value);
+  if (option !== undefined) selectedLayout.value = option.value;
 }
 
 function openFilePicker(): void {
@@ -123,13 +145,13 @@ function setImage(file: File): void {
   recognizedText.value = "";
   error.value = "";
   progress.value = 0;
-  stageText.value = "图片已就绪";
+  stageText.value = "Image ready";
 }
 
 function acceptImage(files: FileList): void {
   const imageFile = Array.from(files).find((file) => file.type.startsWith("image/"));
   if (imageFile === undefined) {
-    error.value = "请选择有效的图片文件.";
+    error.value = "Select a valid image file.";
     return;
   }
   setImage(imageFile);
@@ -146,7 +168,7 @@ function onDrop(event: DragEvent): void {
   isDragging.value = false;
   const files = event.dataTransfer?.files;
   if (files === undefined || files.length === 0) {
-    error.value = "拖放内容中没有图片文件.";
+    error.value = "The dropped content does not contain an image file.";
     return;
   }
   acceptImage(files);
@@ -155,7 +177,7 @@ function onDrop(event: DragEvent): void {
 function onPaste(event: ClipboardEvent): void {
   const files = event.clipboardData?.files;
   if (files === undefined || files.length === 0) {
-    error.value = "剪贴板中没有图片.";
+    error.value = "The clipboard does not contain an image.";
     return;
   }
   acceptImage(files);
@@ -170,17 +192,40 @@ function onPreviewLoad(): void {
 function getStageText(message: LoggerMessage): string {
   switch (message.status) {
     case "loading tesseract core":
-      return "正在加载 OCR 引擎";
+      return "Loading OCR engine";
     case "initializing tesseract":
-      return "正在初始化 OCR 引擎";
+      return "Initializing OCR engine";
     case "loading language traineddata":
-      return "正在下载语言数据";
+      return "Downloading language data";
     case "initializing api":
-      return "正在准备识别";
+      return "Preparing recognition";
     case "recognizing text":
-      return "正在识别文字";
+      return "Recognizing text";
     default:
-      return "正在处理图片";
+      return "Processing image";
+  }
+}
+
+async function createRecognitionImage(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.max(
+      1,
+      Math.min(MAX_RECOGNITION_SCALE, TARGET_RECOGNITION_EDGE / Math.max(bitmap.width, bitmap.height)),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const context = canvas.getContext("2d", { alpha: false });
+    if (context === null) throw new Error("Unable to prepare the image for recognition.");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    bitmap.close();
   }
 }
 
@@ -194,14 +239,17 @@ async function startRecognition(): Promise<void> {
   recognizedText.value = "";
   error.value = "";
   progress.value = 0;
-  stageText.value = "正在加载识别组件";
+  stageText.value = "Loading recognition component";
 
   let worker: Worker | null = null;
   let ownedCreation: Promise<Worker> | null = null;
   try {
     await previousWorkerTermination;
     if (version !== recognitionVersion) return;
-    const { createWorker } = await import("tesseract.js");
+    stageText.value = "Preparing image";
+    const recognitionImage = await createRecognitionImage(file);
+    if (version !== recognitionVersion) return;
+    const { createWorker, PSM } = await import("tesseract.js");
     if (version !== recognitionVersion) return;
     ownedCreation = createWorker(selectedLanguage.value, undefined, {
       logger(message: LoggerMessage): void {
@@ -221,16 +269,29 @@ async function startRecognition(): Promise<void> {
       return;
     }
     currentWorker = worker;
-    const result = await worker.recognize(file);
+    let pageSegMode: PSM;
+    switch (selectedLayout.value) {
+      case "screenshot": pageSegMode = PSM.SPARSE_TEXT; break;
+      case "document": pageSegMode = PSM.AUTO; break;
+      case "textBlock": pageSegMode = PSM.SINGLE_BLOCK; break;
+      case "singleLine": pageSegMode = PSM.SINGLE_LINE; break;
+    }
+    await worker.setParameters({
+      tessedit_pageseg_mode: pageSegMode,
+      preserve_interword_spaces: "1",
+      user_defined_dpi: "300",
+    });
+    if (version !== recognitionVersion) return;
+    const result = await worker.recognize(recognitionImage);
     if (version !== recognitionVersion) return;
     recognizedText.value = result.data.text;
     progress.value = 100;
-    stageText.value = result.data.text.trim() === "" ? "识别完成, 未发现文字" : "识别完成";
+    stageText.value = result.data.text.trim() === "" ? "Recognition complete. No text found." : "Recognition complete";
   } catch (caughtError: unknown) {
     if (version !== recognitionVersion) return;
     console.error("OCR recognition failed:", caughtError);
-    error.value = "识别失败. 请检查网络连接或更换图片后重试.";
-    stageText.value = "识别失败";
+    error.value = "Recognition failed. Check the network connection or try another image.";
+    stageText.value = "Recognition failed";
   } finally {
     if (ownedCreation !== null && workerCreation === ownedCreation) {
       workerCreation = null;
@@ -250,7 +311,7 @@ function cancelRecognition(): void {
   if (!isRunning.value) return;
   void stopRecognition();
   progress.value = 0;
-  stageText.value = "已取消, 可重新识别";
+  stageText.value = "Canceled. Ready to restart.";
   error.value = "";
 }
 
@@ -261,7 +322,7 @@ async function copyResult(): Promise<void> {
     error.value = "";
   } catch (caughtError: unknown) {
     console.error("Failed to copy OCR result:", caughtError);
-    error.value = "复制失败. 请检查浏览器剪贴板权限.";
+    error.value = "Copy failed. Check clipboard permissions.";
   }
 }
 
@@ -273,7 +334,7 @@ function clearAll(): void {
   recognizedText.value = "";
   error.value = "";
   progress.value = 0;
-  stageText.value = "等待选择图片";
+  stageText.value = "Waiting for an image";
 }
 
 onUnmounted(() => {
@@ -284,22 +345,35 @@ onUnmounted(() => {
 
 <template>
   <ToolSplitLayout
-    title="图片文字提取"
-    hint="选择, 拖放或粘贴图片, 在浏览器本地识别文字. 首次使用需下载语言数据."
-    left-label="图片"
-    right-label="识别文本"
+    title="Image OCR"
+    hint="Select, drop, or paste an image to recognize text locally. Language data is downloaded on first use."
+    left-label="Image"
+    right-label="Recognized Text"
   >
     <template #toolbar>
       <div class="ocr-tool__language">
-        <span id="ocr-language-label">识别语言</span>
+        <span id="ocr-language-label">Recognition Language</span>
         <div class="ocr-tool__language-select">
           <PopupSelect
             :value="selectedLanguage"
             :options="LANGUAGE_OPTIONS"
-            accessible-label="识别语言"
+            accessible-label="Recognition language"
             labelled-by="ocr-language-label"
             :disabled="isRunning"
             @update-value="updateLanguage"
+          />
+        </div>
+      </div>
+      <div class="ocr-tool__language">
+        <span id="ocr-layout-label">Image Layout</span>
+        <div class="ocr-tool__language-select">
+          <PopupSelect
+            :value="selectedLayout"
+            :options="LAYOUT_OPTIONS"
+            accessible-label="Image layout"
+            labelled-by="ocr-layout-label"
+            :disabled="isRunning"
+            @update-value="updateLayout"
           />
         </div>
       </div>
@@ -310,7 +384,7 @@ onUnmounted(() => {
           :disabled="selectedFile === null || isRunning || isCleaningUp"
           @click="startRecognition"
         >
-          开始识别
+          Start Recognition
         </button>
         <button
           v-if="isRunning"
@@ -318,14 +392,14 @@ onUnmounted(() => {
           class="ocr-tool__button"
           @click="cancelRecognition"
         >
-          取消
+          Cancel
         </button>
       </div>
     </template>
 
     <template #leftActions>
       <button type="button" class="ocr-tool__compact-button" @click="openFilePicker">
-        选择图片
+        Select Image
       </button>
       <input
         ref="fileInput"
@@ -346,7 +420,7 @@ onUnmounted(() => {
         }"
         role="button"
         tabindex="0"
-        aria-label="图片拖放和粘贴区域"
+        aria-label="Image drop and paste area"
         @dragenter.prevent="isDragging = true"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
@@ -356,29 +430,29 @@ onUnmounted(() => {
         @keydown.space.prevent="openFilePicker"
       >
         <template v-if="selectedFile === null">
-          <p class="ocr-tool__empty-title">拖放图片到这里</p>
-          <p class="ocr-tool__empty-hint">也可聚焦此区域后粘贴剪贴板图片</p>
+          <p class="ocr-tool__empty-title">Drop an image here</p>
+          <p class="ocr-tool__empty-hint">You can also focus this area and paste an image from the clipboard</p>
         </template>
         <template v-else>
           <div class="ocr-tool__preview">
             <img
               ref="previewImage"
               :src="previewUrl"
-              alt="待识别图片预览"
+              alt="Image preview for recognition"
               @load="onPreviewLoad"
             />
           </div>
           <dl class="ocr-tool__metadata">
             <div>
-              <dt>文件</dt>
+              <dt>File</dt>
               <dd>{{ selectedFile.name }}</dd>
             </div>
             <div>
-              <dt>尺寸</dt>
-              <dd>{{ imageDimensions || "读取中" }}</dd>
+              <dt>Dimensions</dt>
+              <dd>{{ imageDimensions || "Reading" }}</dd>
             </div>
             <div>
-              <dt>大小</dt>
+              <dt>Size</dt>
               <dd>{{ fileSizeText }}</dd>
             </div>
           </dl>
@@ -394,7 +468,7 @@ onUnmounted(() => {
           :disabled="recognizedText === ''"
           @click="copyResult"
         >
-          复制
+          Copy
         </button>
         <button
           type="button"
@@ -402,7 +476,7 @@ onUnmounted(() => {
           :disabled="!canClear"
           @click="clearAll"
         >
-          清空
+          Clear
         </button>
       </div>
     </template>
@@ -413,7 +487,7 @@ onUnmounted(() => {
           <div
             class="ocr-tool__progress"
             role="progressbar"
-            aria-label="文字识别进度"
+            aria-label="Text recognition progress"
             :aria-valuenow="progress"
             aria-valuemin="0"
             aria-valuemax="100"
@@ -429,8 +503,8 @@ onUnmounted(() => {
           v-select-all
           class="ocr-tool__text"
           spellcheck="false"
-          aria-label="识别文本"
-          placeholder="识别结果将显示在这里, 可直接编辑."
+          aria-label="Recognized text"
+          placeholder="Recognition results appear here and can be edited."
         ></textarea>
       </div>
     </template>
@@ -477,7 +551,7 @@ onUnmounted(() => {
 .ocr-tool__button,
 .ocr-tool__compact-button {
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-weight: 600;
@@ -654,7 +728,7 @@ onUnmounted(() => {
 .ocr-tool__progress {
   height: 6px;
   overflow: hidden;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-border);
 }
 
@@ -685,7 +759,7 @@ onUnmounted(() => {
   overflow: auto;
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   scrollbar-color: var(--color-border) transparent;
@@ -697,20 +771,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 720px) {
-  :deep(.tool-split) {
-    min-width: 0;
-    overflow-y: auto;
-  }
-
-  :deep(.tool-split__split) {
-    flex: none;
-    grid-template-rows: minmax(220px, auto) minmax(220px, auto);
-  }
-
-  :deep(.tool-split__pane) {
-    min-height: 220px;
-  }
-
   .ocr-tool__language {
     flex-basis: 100%;
     width: 100%;

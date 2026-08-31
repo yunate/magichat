@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { vSelectAll } from "../../../../../../directives/vSelectAll";
-import ToolSplitLayout from "../../components/ToolSplitLayout.vue";
+import MonacoDataEditor, { type DataEditorLanguage } from "../../components/MonacoDataEditor.vue";
+import DataTransformLayout from "../../components/DataTransformLayout.vue";
 import { transformYaml, type YamlMode } from "./yaml";
 
 const DEFAULT_JSON = '{"name":"magichat","tools":["yaml","qr"],"version":1,"nested":{"ok":true}}';
@@ -13,6 +13,11 @@ const copied = ref(false);
 
 const result = computed(() => transformYaml(input.value, mode.value));
 const output = computed(() => (result.value.ok ? result.value.text : result.value.error));
+const inputLanguage = computed<DataEditorLanguage>(() => mode.value === "toYaml" ? "json" : "plaintext");
+const outputLanguage = computed<DataEditorLanguage>(() => {
+  if (!result.value.ok) return "plaintext";
+  return mode.value === "toYaml" ? "plaintext" : "json";
+});
 
 function setMode(next: YamlMode): void {
   if (mode.value === next) return;
@@ -34,14 +39,15 @@ async function copyResult(): Promise<void> {
 </script>
 
 <template>
-  <ToolSplitLayout
+  <DataTransformLayout
     title="YAML"
-    hint="JSON 与 YAML 互转; 用 js-yaml 安全解析 (默认 schema, 不执行任意类型), 解析失败会显示错误。"
-    left-label="输入"
-    right-label="输出"
+    hint="Convert between JSON and YAML with js-yaml safe parsing. Parse errors are shown in the output."
+    left-label="Input"
+    right-label="Output"
+    separator-label="Resize conversion input and output"
   >
     <template #toolbar>
-      <div class="yaml-tool__modes" role="group" aria-label="转换方向">
+      <div class="yaml-tool__modes" role="group" aria-label="Conversion direction">
         <button
           type="button"
           class="yaml-tool__mode"
@@ -61,14 +67,13 @@ async function copyResult(): Promise<void> {
       </div>
     </template>
     <template #left>
-      <textarea
-        v-model="input"
-        v-select-all
-        class="yaml-tool__area"
-        spellcheck="false"
-        aria-label="待转换输入"
-        placeholder="在此输入…"
-      ></textarea>
+      <MonacoDataEditor
+        :value="input"
+        :language="inputLanguage"
+        editor-label="Conversion input"
+        placeholder="Enter content here..."
+        @update="input = $event"
+      />
     </template>
     <template #rightActions>
       <button
@@ -77,21 +82,19 @@ async function copyResult(): Promise<void> {
         :disabled="!result.ok || result.text === ''"
         @click="copyResult"
       >
-        {{ copied ? "已复制" : "复制" }}
+        {{ copied ? "Copied" : "Copy" }}
       </button>
     </template>
     <template #right>
-      <textarea
-        v-select-all
-        class="yaml-tool__area"
-        :class="{ 'yaml-tool__area--error': !result.ok }"
-        readonly
-        spellcheck="false"
-        aria-label="转换输出"
+      <MonacoDataEditor
         :value="output"
-      ></textarea>
+        :language="outputLanguage"
+        editor-label="Conversion output"
+        readonly
+        :is-error="!result.ok"
+      />
     </template>
-  </ToolSplitLayout>
+  </DataTransformLayout>
 </template>
 
 <style scoped>
@@ -103,7 +106,7 @@ async function copyResult(): Promise<void> {
 .yaml-tool__mode {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: 13px;
@@ -125,7 +128,7 @@ async function copyResult(): Promise<void> {
 .yaml-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -142,31 +145,4 @@ async function copyResult(): Promise<void> {
   cursor: not-allowed;
 }
 
-.yaml-tool__area {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: var(--space-4);
-  background: transparent;
-  color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-border) transparent;
-  white-space: pre;
-}
-
-.yaml-tool__area:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--color-primary);
-}
-
-.yaml-tool__area--error {
-  color: var(--color-danger, #f87171);
-  white-space: pre-wrap;
-}
 </style>

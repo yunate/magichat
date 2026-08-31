@@ -1,12 +1,13 @@
 # IPC Bridge
 
-Symmetric TypeScript bridge shared by Electron renderer and main. Either peer can send a request and await the response over a dedicated MessagePort.
+Symmetric TypeScript bridge shared by Electron renderer, main, and local Node child processes. Either peer can send a request and await the response over a supported transport.
 
 ## Layers
 
 - [`peer.ts`](peer.ts) defines `BridgePeer` and the transport-neutral `BridgeSocket`. It correlates string request and response envelopes by message ID and does not know RPC methods.
 - [`messagePortProtocol.ts`](messagePortProtocol.ts) defines the startup port-transfer event, transport envelopes, and boundary validators.
 - [`messagePortPeer.ts`](messagePortPeer.ts) adapts DOM `MessagePort` and Electron `MessagePortMain` through structural capability detection.
+- [`pipeBridgeSocket.ts`](pipeBridgeSocket.ts) adapts a connected Node socket with bounded length-prefixed UTF-8 string messages for local named-pipe RPC.
 - [`rpc.ts`](rpc.ts) adds typed routing and connection-scoped remote objects above `BridgePeer`.
 
 ## Contracts

@@ -5,5 +5,6 @@ export const jsonTool: ToolDefinition = {
   id: "json",
   title: "JSON",
   component: JsonTool,
+  category: "text-data",
   order: 4,
 };

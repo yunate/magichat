@@ -9,18 +9,25 @@ export type TerminalPtyInfo = Readonly<{
 }>;
 
 export type TerminalRunRequest = Readonly<{
-  runId: string;
+  scriptId: string;
+  commandPath: string;
   scriptType: ScriptType;
   scriptContent: string;
 }>;
 
 export interface TerminalServerRpcApi {
   init(notifierRegisterName: string): Promise<void>;
-  createPty(terminalType: TerminalType, columns: number, rows: number): Promise<TerminalPtyInfo>;
+  createPty(
+    terminalType: TerminalType,
+    columns: number,
+    rows: number,
+    initialPath: string,
+  ): Promise<TerminalPtyInfo>;
   run(request: TerminalRunRequest): Promise<void>;
   stop(): Promise<void>;
   destroyPty(): Promise<void>;
   isActive(): Promise<boolean>;
+  clear(): Promise<void>;
   write(data: string): Promise<void>;
   resize(columns: number, rows: number): Promise<void>;
   dispose(): Promise<void>;
@@ -28,7 +35,6 @@ export interface TerminalServerRpcApi {
 
 export interface TerminalClientRpcApi {
   output(data: string): void;
-  runCompleted(runId: string): void;
   runtimeError(message: string): void;
 }
 

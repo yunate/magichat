@@ -5,13 +5,19 @@ Process-level business services. [`tasks/`](tasks/AI_CONTEXT.md) owns the Task C
 ## Structure
 
 - `tasks/` owns task creation, persistence, execution, process lifecycle, logs, and updates.
-- `command/` configures the Command TreeView provider with domain folder and script item serializers, and owns explicit reveal/delete recovery operations for invalid Command storage.
+- `command/` owns Command storage operations and the process-level `CommandService`. The service retains the current connection's single `CommandStorageRpcObject`; that object owns the initialized renderer Command Client proxy used by external CLI commands.
+- `cli/` owns the external CLI boundary. `CliBridge` decodes bounded binary environment and argument frames from the instance-scoped named pipe and returns binary status frames, while the native Windows CLI client connects directly to that pipe and applies a 30-second I/O timeout. `CliService` passes the received `MAGICHAT_CLI` environment array to each command implementation through the `handlers/CliHandler` contract. `set-env` delegates validated key/value batches and an optional Macro target to `CommandService`; `prepare` requires a live MagicHat Terminal identity and accepts the scoped current Command path for explicit relative resolution. `set-task-state` and `clear-task-state` require Task Center page context and a currently running Task ID before changing that Task's display state.
 - [`treeView/`](treeView/AI_CONTEXT.md) owns the generic serializer-backed local TreeView DataProvider.
+- `theme/` lists validated external theme folders, resolves their fixed stylesheet sets from the authoritative application theme path, and returns bundled `dark` when a selected folder is absent.
+- `uacBroker/` owns the process-level `UacBrokerService`. It creates Main's random named pipe on demand, invokes the native JavaScript launcher to elevate the current Electron or MagicHat executable in Node mode, verifies the broker through its lifecycle API, owns Broker-backed capability services, and coordinates shutdown.
+- `fileOccupancy/` owns the Broker-backed `FileOccupancyService`, its bidirectional capability proxy, pending operations, result validation, and renderer connection-level RPC objects. The process-level `UacBrokerService` ensures the Broker connection, injects its `BridgePeer` when constructing this service, and retains the service for that connection. Consumers obtain it only through the owner's asynchronous capability getter. Queries start without waiting for native inspection and forward the eventual result to the originating renderer. The elevated owner directly re-queries `ddwhouses` with the executable path before termination and validates PID plus start time.
 - `scriptExecution.ts` is the shared interpreter invocation and script encoding source for Task scripts.
 
 ## Boundaries
 
 - RPC handlers remain thin and delegate domain behavior to services.
 - Services obtain paths and persistence primitives from `infra/`.
+- The elevated runtime, native helper invocation, process inspection, termination, and RPC object registration remain under `main/src/uacBroker/`; services own Main-side launch, identity verification, pending-operation orchestration, and renderer notifications.
 - Task broadcasts target bridges held by `WindowManager`, with failures isolated per window.
 - Script execution uses fixed programs and argument arrays without shell command construction.
+- CLI environments carry authoritative `MAGICHAT_CLI_PAGE` context. Task scripts also carry `MAGICHAT_CLI_TASK_ID`; Command runners scope `MAGICHAT_CLI_COMMAND_PATH` to the executing logical Item and restore the parent value after nested execution; Command Terminals explicitly omit inherited Task IDs. These values constrain normal routing but are not an authorization boundary against environment forgery by the same user.

@@ -9,6 +9,7 @@ import {
 } from "../../../../../../../common/tasks/scriptTaskDefinition";
 import type { TaskCreateParam } from "../../../../../../../common/tasks/taskCreateParam";
 import type { TaskTemplate } from "../../../../../../../common/tasks/taskTemplate";
+import { hasConfirmDialogRequest } from "../../../../../components/confirmDialog";
 import PopupToast from "../../../../../components/PopupToast.vue";
 import PopupSelect from "../../../../../components/PopupSelect.vue";
 import { TextEditComponent } from "../../../../../components/textEdit";
@@ -49,6 +50,7 @@ const form = reactive<FormState>({
 const variableGroups = ref<TextEditParamGroup[]>([createVariableGroup({})]);
 const selectedVariableGroupId = ref<string>(variableGroups.value[0]?.id ?? "");
 const popupToast = ref<{ show: (text: string) => void } | null>(null);
+const templateBaseline = ref<TaskTemplate | null>(null);
 
 // Re-seed on source change: initialParams (Run new) wins over the template default; sidebar flow (no initialParams) seeds from the template.
 watch(
@@ -87,6 +89,10 @@ const canSaveTemplate = computed(
     form.scriptContent.trim().length > 0 &&
     getVariablesError().length === 0,
 );
+const isDirty = computed(
+  () => templateBaseline.value !== null
+    && JSON.stringify(createTemplateFromForm()) !== JSON.stringify(templateBaseline.value),
+);
 
 function onSubmit(): void {
   if (!canSubmit.value) return;
@@ -103,7 +109,7 @@ function onSubmit(): void {
 }
 
 function onSaveTemplate(): void {
-  if (!canSaveTemplate.value) return;
+  if (!canSaveTemplate.value || !isDirty.value) return;
   emit("saveTemplate", createTemplateFromForm());
 }
 
@@ -168,7 +174,7 @@ function getVariablesError(): string {
     return "Variable key is required.";
   }
   if (params.some((param) => !isValidVariableKey(param.key))) {
-    return "Variable keys must start with a letter or underscore and contain only letters, numbers, and underscores.";
+    return "Variable keys must start with a letter or underscore and use letters, numbers, underscores, dots, or dashes without empty segments.";
   }
   const keys = params.map((param) => param.key);
   if (new Set(keys).size !== keys.length) return "Variable keys must be unique.";
@@ -198,7 +204,24 @@ function showTemplateSaved(name: string, operation: "updated" | "cloned"): void 
   popupToast.value?.show(`Template "${name}" ${operation}.`);
 }
 
-defineExpose({ showTemplateSaved });
+function getTemplateDraft(): TaskTemplate {
+  return createTemplateFromForm();
+}
+
+function isTemplateDirty(): boolean {
+  return isDirty.value;
+}
+
+function canSaveTemplateDraft(): boolean {
+  return canSaveTemplate.value;
+}
+
+defineExpose({
+  canSaveTemplateDraft,
+  getTemplateDraft,
+  isTemplateDirty,
+  showTemplateSaved,
+});
 
 // First focusable field; focused on open so keyboard users land inside the dialog, not the page behind.
 const firstFieldRef = ref<HTMLElement | null>(null);
@@ -207,9 +230,17 @@ function setFirstFieldRef(el: Element | ComponentPublicInstance | null): void {
   firstFieldRef.value = el instanceof HTMLElement ? el : null;
 }
 
-// Modal is v-if-mounted, so the window listener is torn down on unmount; Escape closes.
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") onClose();
+  if (event.defaultPrevented || hasConfirmDialogRequest()) return;
+  if (event.key === "Escape") {
+    onClose();
+    return;
+  }
+  if (event.altKey
+    || (!event.ctrlKey && !event.metaKey)
+    || event.key.toLocaleLowerCase("en-US") !== "s") return;
+  event.preventDefault();
+  onSaveTemplate();
 }
 
 function toScriptType(value: string | undefined): ScriptType {
@@ -226,6 +257,7 @@ function seedFromTemplate(template: TaskTemplate): void {
   form.name = template.builtin ? "" : template.name;
   form.canResume = template.template?.canResume ?? false;
   seedVariableRows(template.template?.variables ?? {});
+  templateBaseline.value = createTemplateFromForm();
 }
 
 function seedFromParams(createParam: TaskCreateParam): void {
@@ -238,14 +270,15 @@ function seedFromParams(createParam: TaskCreateParam): void {
   form.name = createParam.name;
   form.canResume = createParam.canResume;
   seedVariableRows(createParam.params.variables);
+  templateBaseline.value = createTemplateFromForm();
 }
 
 function removeKeydownListener(): void {
-  window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("keydown", onKeydown, true);
 }
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keydown", onKeydown, true);
   // Wait for the dialog DOM to paint before focusing the first field.
   void nextTick(() => firstFieldRef.value?.focus());
 });
@@ -258,7 +291,18 @@ onUnmounted(removeKeydownListener);
     <section class="task-form" role="dialog" aria-modal="true" aria-labelledby="task-form-title">
       <PopupToast ref="popupToast" />
       <header class="task-form__header">
-        <h2 id="task-form-title" class="task-form__title">{{ props.template.name }}</h2>
+        <div class="task-form__heading">
+          <h2 id="task-form-title" class="task-form__title">{{ props.template.name }}</h2>
+          <span
+            v-if="isDirty"
+            class="task-form__dirty"
+            role="status"
+            title="Unsaved changes"
+          >
+            <span class="task-form__dirty-dot" aria-hidden="true"></span>
+            Unsaved changes
+          </span>
+        </div>
         <button type="button" class="task-form__close" aria-label="Close" @click="onClose">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M3 3 13 13M13 3 3 13" />
@@ -298,6 +342,7 @@ onUnmounted(removeKeydownListener);
               :text="form.scriptContent"
               :selected-group-id="selectedVariableGroupId"
               :text-identity="selectedVariableGroupId"
+              :script-type="form.scriptType"
               :is-script-macro-param-sync-enabled="true"
               :is-param-group-management-disabled="true"
               accessible-label="Script content and variables"
@@ -328,14 +373,6 @@ onUnmounted(removeKeydownListener);
               @click="onCloneTemplate"
             >
               Clone
-            </button>
-            <button
-              type="button"
-              class="task-form__btn task-form__btn--ghost"
-              :disabled="!canSaveTemplate"
-              @click="onSaveTemplate"
-            >
-              {{ editingTemplateId !== null ? "Update template" : "Save as template" }}
             </button>
             <button
               v-if="editingTemplateId !== null"
@@ -369,7 +406,7 @@ onUnmounted(removeKeydownListener);
   align-items: center;
   justify-content: center;
   padding: var(--space-6);
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-backdrop);
 }
 
 .task-form {
@@ -380,9 +417,9 @@ onUnmounted(removeKeydownListener);
   height: min(900px, 100%);
   max-height: none;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-dialog-raised);
 }
 
 .task-form__header {
@@ -395,11 +432,34 @@ onUnmounted(removeKeydownListener);
   border-bottom: 1px solid var(--color-border);
 }
 
+.task-form__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .task-form__title {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+.task-form__dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.task-form__dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
 }
 
 .task-form__close {
@@ -408,7 +468,7 @@ onUnmounted(removeKeydownListener);
   justify-content: center;
   padding: var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -460,7 +520,7 @@ onUnmounted(removeKeydownListener);
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 14px;
@@ -493,7 +553,7 @@ onUnmounted(removeKeydownListener);
   flex: 1;
   overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
 }
 
 .task-form__check {
@@ -547,7 +607,7 @@ onUnmounted(removeKeydownListener);
 
 .task-form__btn {
   padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;

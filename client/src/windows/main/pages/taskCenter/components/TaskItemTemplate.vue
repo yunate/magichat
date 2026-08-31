@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import SplitContainer from "../../../../../components/SplitContainer.vue";
 import TaskStatusBadge from "./TaskStatusBadge.vue";
 import type { TaskInfo } from "../../../../../../../common/tasks/taskInfo";
 import { vSelectAll } from "../../../../../directives/vSelectAll";
@@ -20,7 +21,7 @@ const emit = defineEmits<{
   runNew: [id: string];
   select: [payload: { id: string; isChecked: boolean }];
   pin: [payload: { id: string; isPinned: boolean }];
-  viewFullLogs: [id: string];
+  revealLog: [id: string];
   viewed: [id: string];
 }>();
 
@@ -31,13 +32,16 @@ const canStop = computed(
 
 const createdAt = computed(() => formatTime(props.task.createdAt));
 const scriptType = computed(() => props.task.tasksSpectialInfo?.scriptType ?? "Script");
-
-// finishedAt is a top-level optional number set when a task reaches a terminal state; show only when present
-// (defensive: a missing/non-number value renders nothing rather than an Invalid Date).
-const finishedAt = computed(() => {
-  const value = props.task.finishedAt;
-  return typeof value === "number" && Number.isFinite(value) ? formatTime(value) : "";
+const exitCode = computed(() => props.task.tasksSpectialInfo?.exitCode ?? null);
+const defaultScriptPaneHeight = computed(() => {
+  const scriptContent = props.task.tasksSpectialInfo?.scriptContent ?? "";
+  const lineCount = scriptContent.length === 0 ? 1 : scriptContent.split(/\r\n|\r|\n/).length;
+  const toolbarHeight = Object.keys(props.task.tasksSpectialInfo?.variables ?? {}).length > 0 ? 40 : 0;
+  return Math.min(360, Math.max(120, lineCount * 18 + toolbarHeight + 24));
 });
+const resizedScriptPaneHeight = ref<number | null>(null);
+const logPaneHeight = ref(200);
+const scriptPaneHeight = computed(() => resizedScriptPaneHeight.value ?? defaultScriptPaneHeight.value);
 
 // pinnedAt is a top-level optional number set when a task is pinned; read defensively (only a finite
 // number counts as pinned) so the pin toggle reflects real state for every task type and status.
@@ -66,8 +70,13 @@ function onRunNew(): void {
   emit("runNew", props.task.id);
 }
 
-function onViewFullLogs(): void {
-  emit("viewFullLogs", props.task.id);
+function onRevealLog(): void {
+  emit("revealLog", props.task.id);
+}
+
+function resizeDetails(_index: number, detailHeight: number, logsHeight: number): void {
+  resizedScriptPaneHeight.value = detailHeight;
+  logPaneHeight.value = logsHeight;
 }
 
 function onViewed(): void {
@@ -121,89 +130,111 @@ function formatTime(value: number): string {
           <path d="M3 1.5 8 6 3 10.5" />
         </svg>
       </button>
-      <span class="task-item__title">{{ props.task.title }}</span>
-      <span class="task-item__type">{{ scriptType }}</span>
-      <!-- Sibling of the badge/button (not nested in the title column) so it shares the head's align-items:center
-           baseline; margin-left:auto pushes it to the right edge. Muted/nowrap; visible while collapsed. -->
-      <span class="task-item__created">{{ createdAt }}</span>
-      <!-- Pin toggle: works for every status (Complete can pin too). @click.stop keeps it from toggling expand. -->
-      <button
-        type="button"
-        class="task-item__pin"
-        :class="{ 'is-pinned': isPinned }"
-        :aria-label="isPinned ? 'Unpin task' : 'Pin task'"
-        :aria-pressed="isPinned"
-        @click.stop="onPin"
-        @dblclick.stop
-      >
-        <svg
-          class="task-item__pin-icon"
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path
-            d="M9.5 1.5 14.5 6.5 12 7l-2.5 2.5.5 3.5-1.5 1.5-3-3-3.5 3.5-.5-.5L5.5 11l-3-3L4 6.5l3.5.5L10 4.5z"
+      <div class="task-item__summary">
+        <div class="task-item__summary-line">
+          <span class="task-item__title">{{ props.task.title }}</span>
+          <span class="task-item__type">{{ scriptType }}</span>
+          <span class="task-item__created">{{ createdAt }}</span>
+          <TaskStatusBadge
+            v-if="props.task.status !== 'running'"
+            :status="props.task.status"
           />
-        </svg>
-      </button>
-      <TaskStatusBadge :status="props.task.status" />
-      <button
-        v-if="canStop"
-        type="button"
-        class="task-item__stop"
-        @click="onStop"
-        @dblclick.stop
-      >
-        Stop
-      </button>
-      <button
-        type="button"
-        class="task-item__run-new"
-        title="Create a new task from this task"
-        @click.stop="onRunNew"
-        @dblclick.stop
-      >
-        Run new
-      </button>
+          <span v-if="exitCode !== null" class="task-item__exit-code">
+            Exit code {{ exitCode }}
+          </span>
+        </div>
+        <span
+          v-if="props.task.displayState !== undefined"
+          class="task-item__display-state"
+          :title="props.task.displayState"
+        >
+          {{ props.task.displayState }}
+        </span>
+      </div>
+      <div class="task-item__actions">
+        <button
+          v-if="canStop"
+          type="button"
+          class="task-item__stop"
+          @click="onStop"
+          @dblclick.stop
+        >
+          Stop
+        </button>
+        <button
+          type="button"
+          class="task-item__run-new"
+          title="Create a new task from this task"
+          @click.stop="onRunNew"
+          @dblclick.stop
+        >
+          Run new
+        </button>
+        <button
+          type="button"
+          class="task-item__pin"
+          :class="{ 'is-pinned': isPinned }"
+          :aria-label="isPinned ? 'Unpin task' : 'Pin task'"
+          :aria-pressed="isPinned"
+          @click.stop="onPin"
+          @dblclick.stop
+        >
+          <svg
+            class="task-item__pin-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M9.5 1.5 14.5 6.5 12 7l-2.5 2.5.5 3.5-1.5 1.5-3-3-3.5 3.5-.5-.5L5.5 11l-3-3L4 6.5l3.5.5L10 4.5z"
+            />
+          </svg>
+        </button>
+      </div>
     </div>
 
-    <!-- Collapsible body: the expand toggle hides the whole detail area (meta, the injected detail slot, logs). -->
     <div v-show="props.isExpanded" class="task-item__body">
-      <dl class="task-item__meta">
-        <div class="task-item__meta-item">
-          <dt>Created</dt>
-          <dd>{{ createdAt }}</dd>
-        </div>
-        <div v-if="finishedAt.length > 0" class="task-item__meta-item">
-          <dt>Completed</dt>
-          <dd>{{ finishedAt }}</dd>
-        </div>
-      </dl>
+      <SplitContainer
+        class="task-item__details-layout"
+        orientation="horizontal"
+        :separator-labels="['Resize task details and logs']"
+        @resize="resizeDetails"
+      >
+        <section class="task-item__detail-pane" :style="{ blockSize: `${scriptPaneHeight}px` }">
+          <slot name="detail" />
+        </section>
 
-      <!-- Task-specific detail body. -->
-      <slot name="detail" />
-
-      <div class="task-item__logs">
-        <div class="task-item__logs-toolbar">
+        <section class="task-item__logs" :style="{ blockSize: `${logPaneHeight}px` }">
           <button
             type="button"
             class="task-item__logs-full"
-            @click="onViewFullLogs"
+            aria-label="Show log file"
+            title="Show log file"
+            @click="onRevealLog"
           >
-            View full log
+            <svg
+              class="task-item__logs-full-icon"
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M2.5 3.5h4l1.5 2h5.5v7h-11z" />
+              <path d="m9.5 8.5 1.5 1.5 2.5-2.5" />
+            </svg>
           </button>
-        </div>
-        <p v-if="props.isLogLoading" class="task-item__logs-hint" role="status" aria-live="polite">
-          Loading logs…
-        </p>
-        <p v-else-if="props.logs.length === 0" class="task-item__logs-hint">
-          No logs yet.
-        </p>
-        <pre v-else v-select-all class="task-item__log-output">{{ logText }}</pre>
-      </div>
+          <p v-if="props.isLogLoading" class="task-item__logs-hint" role="status" aria-live="polite">
+            Loading logs…
+          </p>
+          <p v-else-if="props.logs.length === 0" class="task-item__logs-hint">
+            No logs yet.
+          </p>
+          <pre v-else v-select-all class="task-item__log-output">{{ logText }}</pre>
+        </section>
+      </SplitContainer>
     </div>
   </li>
 </template>
@@ -215,7 +246,7 @@ function formatTime(value: number): string {
   gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   transition: background 0.15s ease;
 }
@@ -232,6 +263,7 @@ function formatTime(value: number): string {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 48px;
 }
 
 .task-item__select {
@@ -243,9 +275,22 @@ function formatTime(value: number): string {
 }
 
 .task-item__body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  min-height: 0;
+}
+
+.task-item__details-layout {
+  min-height: 0;
+}
+
+.task-item__detail-pane,
+.task-item__logs {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-item__detail-pane {
+  min-height: 120px;
+  border-inline: 1px solid var(--color-divider);
 }
 
 .task-item__toggle {
@@ -255,7 +300,7 @@ function formatTime(value: number): string {
   flex: none;
   padding: var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -286,9 +331,6 @@ function formatTime(value: number): string {
   transform: rotate(90deg);
 }
 
-/* Sits in .task-item__head (align-items:center) so it lines up with the badge/button. Right alignment
-   comes from the flex:1 title-wrap eating the remaining space; here we only need flex:none so the
-   timestamp never shrinks and nowrap to keep it on one line. */
 .task-item__created {
   flex: none;
   white-space: nowrap;
@@ -297,12 +339,34 @@ function formatTime(value: number): string {
 }
 
 .task-item__title {
-  flex: 1;
+  flex: none;
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text);
+  white-space: nowrap;
+}
+
+.task-item__summary {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.task-item__summary-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.task-item__display-state {
+  display: block;
   min-width: 0;
   overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -313,7 +377,22 @@ function formatTime(value: number): string {
   color: var(--color-text-muted);
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
+}
+
+.task-item__exit-code {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.task-item__actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .task-item__run-new {
@@ -322,7 +401,7 @@ function formatTime(value: number): string {
   min-height: 30px;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-selected);
   color: var(--color-text);
   font-size: 14px;
@@ -351,7 +430,7 @@ function formatTime(value: number): string {
   flex: none;
   padding: var(--space-1) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: color-mix(in srgb, var(--color-danger) 5%, transparent);
   color: color-mix(in srgb, var(--color-danger) 65%, var(--color-text-muted));
   font-size: 12px;
@@ -378,7 +457,7 @@ function formatTime(value: number): string {
   flex: none;
   padding: var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -412,60 +491,45 @@ function formatTime(value: number): string {
   fill: currentColor;
 }
 
-.task-item__meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: var(--space-1) var(--space-4);
-  margin: 0;
-}
-
-.task-item__meta-item {
-  display: flex;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.task-item__meta-item dt {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.task-item__meta-item dd {
-  margin: 0;
-  min-width: 0;
-  color: var(--color-text);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .task-item__logs {
-  margin-top: var(--space-1);
-  border-top: 1px solid var(--color-border);
-  padding-top: var(--space-2);
-}
-
-.task-item__logs-toolbar {
+  position: relative;
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-2);
+  flex-direction: column;
+  min-height: 64px;
+  border-inline: 1px solid var(--color-divider);
+  border-block-end: 1px solid var(--color-divider);
 }
 
 .task-item__logs-full {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-raised);
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-3);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
   color: var(--color-text);
-  font-size: 12px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  font: inherit;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.task-item__logs-full-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .task-item__logs-full:hover {
-  border-color: var(--color-primary);
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-text) 9%, var(--color-surface-raised));
+  border-color: color-mix(in srgb, var(--color-border) 58%, var(--color-text-muted));
 }
 
 .task-item__logs-full:focus-visible {
@@ -475,6 +539,8 @@ function formatTime(value: number): string {
 
 .task-item__logs-hint {
   margin: 0;
+  padding: var(--space-3);
+  padding-inline-end: 56px;
   font-size: 12px;
   color: var(--color-text-muted);
 }
@@ -482,13 +548,15 @@ function formatTime(value: number): string {
 /* Logs are untrusted task output: text interpolation only (never v-html) so markup is escaped. */
 .task-item__log-output {
   margin: 0;
-  max-height: 260px;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  padding-inline-end: 56px;
+  border-radius: var(--radius-medium);
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-family: var(--font-family);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;

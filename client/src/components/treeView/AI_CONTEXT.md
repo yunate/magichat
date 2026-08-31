@@ -1,29 +1,40 @@
 # TreeView Client
 
-Reusable TreeView state and Vue UI driven by a main-provided `RemoteObject<TreeViewDataProvider>`.
+Reusable TreeView state and Vue UI driven by a main-side `TreeViewDataProvider`.
 
 ## Structure
 
-- `TreeView.ts` owns the loaded workspace snapshot, ID indexes, controller, and replaceable operations.
-- `TreeView.vue` composes the workspace selector, Explorer, tabs, context menus, breadcrumb, content slot, and resizable sidebar. Folder and item menus can reveal their validated backing entries in the system Explorer through the DataProvider.
+- `TreeView.ts` owns the key-path storage roots, loaded Workspace refs, current snapshot, ID indexes, controller, and replaceable operations. A consumer may provide a DataProvider; otherwise `createDefaultTreeViewDataProvider.ts` obtains the Main window peer, creates the generic remote DataProvider, and initializes its notifier. TreeView disposes that owned provider with the model. Initialization and external storage notifications scan every root independently; ordinary mutations update the affected Workspace ref, parent Folder, or entity in memory.
+- `treeView.controller.setStorageRoots()` validates replacement roots and reloads the TreeView through the existing Provider. Root changes do not recreate the model, Provider, or notifier.
+- `TreeView.vue` composes the workspace selector, Explorer, tabs, context menus, breadcrumb, content slot, and sidebar width persistence. The shared `SplitContainer` owns sidebar resizing and double-click reset dispatch without adding pane borders in this layout. The left Explorer pane owns a complete square-cornered bordered surface. The right header owns its square-cornered border, while the content area remains borderless. Folder and item menus can reveal their validated backing entries in the system Explorer through the DataProvider.
 - `TreeView.vue` owns the create-workspace dialog because Electron does not provide browser `window.prompt()`.
+- Newly created Draft Items open directly as normal Tabs; they never enter the temporary preview state.
 - `TreeViewSaveDraftDialog.vue` owns draft naming and target-folder selection. `treeView.controller.saveDraft()` moves the item while it is still a Draft, then promotes it only after the target path succeeds, preserving its stable item ID.
 - `TreeViewNode.vue` recursively renders folders and non-draft items.
 - Explorer drag targets expose before, inside, and after feedback. The owner resolves each drop to a target parent and `targetOrder`, including same-folder order-only moves.
 - Ctrl/Meta-click adds or removes Explorer folders and items from a transient multi-selection. A multi-selection context menu exposes only Clone and Delete. Dragging any selected node moves the normalized top-level selection together; selected descendants are omitted when an ancestor folder is also selected.
-- `TreeViewTabs.vue` renders ID-backed tabs and tab interactions. Tab reordering previews the before/after insertion position with a primary-color edge indicator.
-- `treeViewDataNotifierRpcObject.ts` forwards main-side storage notifications directly to `treeView.controller.emitStorageChanged()`.
+- Opening a node context menu does not change the current Explorer selection or active Tab highlight. Menu actions target the node that opened the menu; when that node already belongs to a multi-selection, Clone and Delete retain their batch behavior.
+- `TreeViewTabs.vue` renders ID-backed tabs and tab interactions. TreeView persists one italic preview Tab independently from normal and pinned Tabs: opening another unopened entity updates the preview entry in place instead of closing and appending a Tab, and restart restores it as temporary. Explorer Item single-click activation opens its Preview Tab immediately; a subsequent double-click promotes that Tab to normal. Double-clicking a Folder promotes its preview Tab to normal while toggling expansion, and double-clicking an existing preview Tab also promotes it to normal. Tab reordering previews the before/after insertion position with a primary-color edge indicator.
+- `treeViewDataNotifierRpcObject.ts` forwards main-side storage notifications to `treeView.controller.emitStorageChanged()` and non-fatal storage warnings to the application MessageStore.
 
 ## Boundaries
+
+- Folder, Item, and Tab context menus provide their domain actions through the shared `ContextMenu`. TreeView passes the right-click or keyboard anchor and its visible component rectangle; the shared surface owns final position calculation, body teleportation, area clamping, overflow scrolling, and visual styling. TreeView retains target state, actions, and dismissal.
 
 - Folder, item, and tab overlay slots are absolute layers above complete default content. They do not replace TreeView-owned structure or behavior.
 - Explorer rows, tabs, context menus, workspace creation, and draft saving use the compact visual language established by the reference TreeView without sharing its implementation.
 - `isTabMultiline` is a business-owned presentation flag. Single-line tabs scroll horizontally; multiline tabs wrap through three visible rows and then scroll vertically.
 - `isFolderTabVisible` and `isItemTabVisible` independently filter tab kinds. When both are false, TreeView hides the entire right workspace and renders a full-width Explorer-only layout.
-- An open Tab page mounts on first activation and then stays mounted in the shared persistent stack; closing the Tab or switching workspaces unmounts its page. Inactive pages remain measurable but cannot receive pointer, keyboard, or accessibility interaction. Persistent page keys include the workspace identity so equal entity IDs in different workspaces never reuse a page instance. `treeView.operations.switchTab` is the business override boundary for consumers that need additional cleanup or their own conditional page unloading when switching.
-- TreeView and its Vue components never inspect business `data` and never run business serializers.
+- An open Tab page mounts on first activation and then stays mounted in the shared persistent stack; closing the Tab or switching Workspaces unmounts its page. A newly active page loads behind the previously displayed page and uses its slot readiness callback to replace that page only after reaching a stable loaded or unavailable state. Inactive pages remain measurable but cannot receive pointer, keyboard, or accessibility interaction. Persistent page keys include the absolute Workspace identity so equal entity IDs in different roots or Workspaces never reuse a page instance. `treeView.operations.switchTab` is the business override boundary for consumers that need additional cleanup or their own conditional page unloading when switching.
+- TreeView snapshots and Vue components never retain or inspect business `data`. Workspace, Folder, and Item business data is transported as JSON through the entity-data API; consumers own all business serialization.
 - UI interactions and business callers use `treeView.controller`; they do not mutate the snapshot directly.
 - `treeView.operations` can wrap raw operations for confirmed business checks. Operations currently use a direct Promise queue with no generation or revision mechanism.
-- TreeView UI never calls `BridgeRouter`; bridge factories create the DataProvider and initialize the temporary notifier creator.
-- A business owner may enable `shouldCreateDefaultWorkspace` and provide `defaultWorkspaceName`. Initialization creates and selects that workspace only when storage has no workspaces; a nonempty storage without one selected workspace remains an error.
-- Deleting the selected workspace chooses the first remaining workspace. When none remains and default creation is enabled, the configured default is recreated. The provider installs that final selection before emitting its change notification.
+- TreeView UI never calls `BridgeRouter`. The model uses bridge factories only when it owns the generic DataProvider lifecycle; a consumer-provided DataProvider remains consumer-owned.
+- TreeView never creates a Workspace implicitly. When storage has no Workspace, the content area presents a Create workspace action and hides the sidebar creation shortcut; the first manually created Workspace is selected and loaded immediately. When existing Workspaces have no selection, initialization selects and persists the first Workspace in selector order; multiple selected Workspaces remain an error.
+- Deleting a Workspace requires confirmation through the application-level confirm dialog before the storage operation starts.
+- Switching Workspaces loads only the target Workspace properties and tree. Creating or cloning a Workspace adds its ref without loading its tree; renaming rebases the selected in-memory tree paths without rereading storage.
+- TreeView creation operations do not accept or derive business defaults. Consumers interpret a new entity's `null` business data and persist concrete JSON through the entity-data API when needed.
+- Folder and Item structural mutations read only the changed entity and affected parent Folder properties. The client updates immutable tree branches and rebuilds local ID/path indexes without rereading the Workspace root. Full reload remains reserved for initialization and external storage notifications.
+- The Workspace selector stores the absolute Workspace path as its value. It displays only the Workspace name for one storage root, and `root key / Workspace name` when multiple roots require disambiguation.
+- Breadcrumbs and business-facing source labels display paths relative to the Workspace parent, so the visible path starts with the Workspace name instead of exposing the absolute filesystem path.
+- Deleting the selected Workspace deletes it first, then selects the nearest remaining Workspace by selector position and loads only that Workspace. When none remains, the TreeView returns to its empty Workspace state.

@@ -1,0 +1,16 @@
+{
+  "isDraft": false,
+  "id": "10000000-0000-4000-8000-000000000016",
+  "data": {
+    "scriptType": "powershell",
+    "content": "mhcall(\"tutorial/set-env/ps1-mhsetenv\")\nWrite-Output \"ps1 call ps1.\"\n\nmhcall(\"tutorial/set-env/cmd-mhsetenv.mh\")\nWrite-Output \"ps1 call cmd.\"\n\nmhcall(\"tutorial/set-env/node-mhsetenv.mh\")\nWrite-Output \"ps1 call node.\"\n\nmhcall(\"tutorial/set-env/py-mhsetenv.mh\")\nWrite-Output \"ps1 call python.\"\n",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from "vue";
 import type { ComponentPublicInstance } from "vue";
-import { confirmDialog } from "../../../../components/confirmDialog";
+import {
+  confirmActionDialog,
+  confirmDialog,
+  hasConfirmDialogRequest,
+} from "../../../../components/confirmDialog";
 import type { ConfirmDialogAction } from "../../../../components/confirmDialogTypes";
 import PersistentStack from "../../../../components/PersistentStack.vue";
 import PopupToast from "../../../../components/PopupToast.vue";
 import TaskList from "./components/TaskList.vue";
 import TemplateSidebar from "./components/TemplateSidebar.vue";
 import TaskCreateForm from "./components/TaskCreateForm.vue";
-import FullLogDialog from "./components/FullLogDialog.vue";
 import {
   TASK_UPDATED_EVENT,
   TASK_LOG_APPENDED_EVENT,
@@ -31,7 +34,13 @@ import type { TaskTemplate } from "../../../../../../common/tasks/taskTemplate";
 import type { TaskStatus, TaskType } from "../../../../../../common/tasks/taskType";
 
 type TaskCategory = "active" | "complete";
-type DeleteTemplateDialogAction = "delete" | "cancel";
+type FormCloseDecision = "save" | "discard" | "cancel";
+type TaskCreateFormApi = Readonly<{
+  canSaveTemplateDraft: () => boolean;
+  getTemplateDraft: () => TaskTemplate;
+  isTemplateDirty: () => boolean;
+  showTemplateSaved: (name: string, operation: "updated" | "cloned") => void;
+}>;
 
 const configServerRpcObject = gMainApplication.window.getConfigServerRpcObject();
 const tasksServerRpcObject = gMainApplication.window.getTasksServerRpcObject();
@@ -57,11 +66,6 @@ const CATEGORY_TABS: readonly CategoryTab[] = [
     statuses: ["succeeded", "failed", "abandoned"],
   },
 ];
-const DELETE_TEMPLATE_ACTIONS: readonly ConfirmDialogAction<DeleteTemplateDialogAction>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "delete", label: "Delete", appearance: "primary", isDefault: true },
-];
-
 const tasks = ref<TaskInfo[]>([]);
 const templates = ref<TaskTemplate[]>([]);
 const selectedCategory = ref<TaskCategory>("active");
@@ -70,22 +74,23 @@ const isSidebarCollapsed = ref(false);
 const activeTemplate = ref<TaskTemplate | null>(null);
 const formInitialParams = ref<TaskCreateParam | null>(null);
 const isSubmitting = ref(false);
-const taskCreateForm = ref<{
-  showTemplateSaved: (name: string, operation: "updated" | "cloned") => void;
-} | null>(null);
+const taskCreateForm = ref<TaskCreateFormApi | null>(null);
 const popupToast = ref<{ show: (text: string) => void } | null>(null);
 
 const maxParallelInput = ref<number | "">("");
 const logsById = reactive<Record<string, string[]>>({});
 const expandedIds = reactive(new Set<string>());
 const logLoadingIds = reactive(new Set<string>());
-// Rows whose full log has been fetched; appendLogs may seed logsById before the first expand, so
+// Rows whose persisted tail has been fetched; appendLogs may seed logsById before the first expand, so
 // the fetch guard can't rely on logsById presence alone.
 const logFetchedIds = reactive(new Set<string>());
 
 const MAX_INLINE_LOG_LINES = 200;
-
-const fullLogTask = ref<{ id: string; title: string } | null>(null);
+const FORM_CLOSE_ACTIONS: readonly ConfirmDialogAction<FormCloseDecision>[] = [
+  { id: "cancel", label: "Cancel" },
+  { id: "discard", label: "Don't Save" },
+  { id: "save", label: "Save", appearance: "primary", isDefault: true },
+];
 
 const tabButtonRefs: Record<TaskCategory, HTMLButtonElement | null> = {
   active: null,
@@ -212,6 +217,32 @@ function closeForm(): void {
   formInitialParams.value = null;
 }
 
+async function requestCloseForm(): Promise<void> {
+  const form = taskCreateForm.value;
+  if (form === null || !form.isTemplateDirty()) {
+    closeForm();
+    return;
+  }
+  if (hasConfirmDialogRequest()) return;
+  const decision = await confirmDialog({
+    title: "Unsaved changes",
+    descriptions: ["This task template has unsaved changes.", "Save before closing?"],
+    actions: FORM_CLOSE_ACTIONS,
+    cancelActionId: "cancel",
+  });
+  if (decision === "cancel") return;
+  if (decision === "discard") {
+    closeForm();
+    return;
+  }
+  if (!form.canSaveTemplateDraft()) {
+    gMessageStore.pushMessage("warning", "Fix the form errors before saving.");
+    return;
+  }
+  const saved = await handleSaveTemplate(form.getTemplateDraft());
+  if (saved !== null) closeForm();
+}
+
 // null reply means the task is gone, so hint instead of opening an empty form.
 async function handleRunNew(id: string): Promise<void> {
   const requestVersion = ++runNewRequestVersion;
@@ -250,22 +281,30 @@ async function handleCreate(params: TaskCreateParam): Promise<void> {
   }
 }
 
-async function handleSaveTemplate(params: TaskTemplate): Promise<boolean> {
+async function handleSaveTemplate(
+  params: TaskTemplate,
+  isCurrentForm = true,
+): Promise<TaskTemplate | null> {
   const isUpdating = templates.value.some(
     (template) => !template.builtin && template.id === params.id,
   );
   try {
-    await (await tasksServerRpcObject).saveTaskTemplate(params);
+    const saved = await (await tasksServerRpcObject).saveTaskTemplate(params);
     templates.value = await (await tasksServerRpcObject).listTaskTemplates();
     const verb = isUpdating ? "updated" : "saved";
-    gMessageStore.pushMessage("success", `Template "${params.name}" ${verb}.`);
-    if (isUpdating) taskCreateForm.value?.showTemplateSaved(params.name, "updated");
-    return true;
+    gMessageStore.pushMessage("success", `Template "${saved.name}" ${verb}.`);
+    if (isCurrentForm) {
+      activeTemplate.value = saved;
+      formInitialParams.value = null;
+      await nextTick();
+      if (isUpdating) taskCreateForm.value?.showTemplateSaved(saved.name, "updated");
+    }
+    return saved;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to save template";
     gMessageStore.pushMessage("error", message);
     console.error("[taskCenter] failed to save template", err);
-    return false;
+    return null;
   }
 }
 
@@ -275,8 +314,9 @@ async function handleCloneTemplate(source: TaskTemplate): Promise<void> {
     id: crypto.randomUUID(),
     name: createCloneTemplateName(source.name),
   };
-  if (await handleSaveTemplate(clone)) {
-    taskCreateForm.value?.showTemplateSaved(clone.name, "cloned");
+  const saved = await handleSaveTemplate(clone, false);
+  if (saved !== null) {
+    taskCreateForm.value?.showTemplateSaved(saved.name, "cloned");
   }
 }
 
@@ -294,11 +334,12 @@ function createCloneTemplateName(sourceName: string): string {
 // close the form if it was showing the just-deleted template.
 async function handleDeleteTemplate(template: TaskTemplate): Promise<void> {
   try {
-    const action = await confirmDialog({
+    const action = await confirmActionDialog({
       title: "Delete template?",
       descriptions: [`Template "${template.name}" will be permanently deleted.`],
-      actions: DELETE_TEMPLATE_ACTIONS,
-      cancelActionId: "cancel",
+      actionId: "delete",
+      actionLabel: "Delete",
+      isActionDefault: true,
     });
     if (action === "cancel") return;
     const deleted = await (await tasksServerRpcObject).deleteTaskTemplate(template.id);
@@ -330,9 +371,17 @@ async function handleStop(id: string): Promise<void> {
 // session stays in sync; TaskList prunes its own selection when the rows disappear.
 async function handleDelete(ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
-  const confirmed = window.confirm(`Delete ${ids.length} completed task(s)?`);
-  if (!confirmed) return;
   try {
+    const action = await confirmActionDialog({
+      title: "Delete completed tasks?",
+      descriptions: [
+        `${ids.length} completed task${ids.length === 1 ? "" : "s"} will be permanently deleted.`,
+      ],
+      actionId: "delete",
+      actionLabel: "Delete",
+      isActionDefault: true,
+    });
+    if (action === "cancel") return;
     await (await tasksServerRpcObject).deleteTasks([...ids]);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to delete tasks";
@@ -359,17 +408,17 @@ async function handleToggle(id: string): Promise<void> {
     return;
   }
   expandedIds.add(id);
-  // Fetch the full log once per row; reuse the cache after. Bail while a fetch is in flight so a fast
+  // Fetch the persisted tail once per row; reuse the cache after. Bail while a fetch is in flight so a fast
   // collapse/re-expand can't duplicate the request.
   if (logFetchedIds.has(id) || logLoadingIds.has(id)) return;
   logLoadingIds.add(id);
   // Snapshot the cache before awaiting; appendLogs may trim/front-shift it while the fetch is in flight.
   const before = logsById[id] !== undefined ? [...logsById[id]] : [];
   try {
-    const full = await (await tasksServerRpcObject).getTaskLogs(id);
-    // Re-apply lines appended during the request so the full-log baseline does not overwrite them.
+    const tail = await (await tasksServerRpcObject).getTaskLogs(id);
+    // Re-apply lines appended during the request so the persisted baseline does not overwrite them.
     const duringAwait = appendedSince(before, logsById[id] ?? []);
-    logsById[id] = trimLogs([...full, ...duringAwait]);
+    logsById[id] = trimLogs([...tail, ...duringAwait]);
     logFetchedIds.add(id);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load logs";
@@ -380,13 +429,14 @@ async function handleToggle(id: string): Promise<void> {
   }
 }
 
-function handleViewFullLogs(id: string): void {
-  const task = tasks.value.find((item) => item.id === id);
-  fullLogTask.value = { id, title: task?.title ?? id };
-}
-
-function closeFullLog(): void {
-  fullLogTask.value = null;
+async function handleRevealLog(id: string): Promise<void> {
+  try {
+    await (await tasksServerRpcObject).revealTaskLog(id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to reveal task log";
+    gMessageStore.pushMessage("error", message);
+    console.error("[taskCenter] failed to reveal task log", err);
+  }
 }
 
 async function saveMaxParallel(): Promise<void> {
@@ -542,8 +592,6 @@ function removeTasks(payload: TasksDeletedPush): void {
   unviewedCompletedIds.value = new Set(
     [...unviewedCompletedIds.value].filter((id) => !removal.has(id)),
   );
-  // Close the full-log dialog if it was showing a task that just got deleted.
-  if (fullLogTask.value !== null && removal.has(fullLogTask.value.id)) fullLogTask.value = null;
 }
 
 async function initialize(): Promise<void> {
@@ -692,7 +740,7 @@ onUnmounted(() => {
                 @run-new="handleRunNew"
                 @delete="handleDelete"
                 @pin="handlePin"
-                @view-full-logs="handleViewFullLogs"
+                @reveal-log="handleRevealLog"
                 @viewed="markTaskViewed"
                 @mark-all-viewed="markAllTasksViewed"
               />
@@ -713,16 +761,9 @@ onUnmounted(() => {
       @save-template="handleSaveTemplate"
       @clone-template="handleCloneTemplate"
       @delete-template="handleDeleteTemplate"
-      @close="closeForm"
+      @close="requestCloseForm"
     />
 
-    <FullLogDialog
-      v-if="fullLogTask"
-      :key="fullLogTask.id"
-      :task-id="fullLogTask.id"
-      :task-title="fullLogTask.title"
-      @close="closeFullLog"
-    />
   </article>
 </template>
 
@@ -770,7 +811,7 @@ onUnmounted(() => {
   width: 80px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 14px;
@@ -829,9 +870,9 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding-inline: var(--space-1);
-  color: #ffffff;
+  color: var(--color-text-on-danger);
   background: var(--color-danger);
-  border-radius: 999px;
+  border-radius: var(--radius-large);
   font-size: 10px;
   font-weight: 600;
   line-height: 1;

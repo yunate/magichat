@@ -1,76 +1,104 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from "vue";
 import type { CSSProperties } from "vue";
+import PopupWindow from "../PopupWindow.vue";
 import type { MacroDisplayDetail } from "./textEditTypes";
 
 type Props = {
   detail: MacroDisplayDetail;
   anchor: DOMRect;
+  isAnchorHovered: boolean;
 };
 
 const props = defineProps<Props>();
 const emit = defineEmits<{
-  pointerEnter: [];
-  pointerLeave: [];
+  close: [];
 }>();
 
-const COPY_FEEDBACK_DURATION_MS = 1200;
-const copyState = ref<"idle" | "copied" | "failed">("idle");
-let copyTimer: number | null = null;
+const CLOSE_DELAY_MS = 300;
+const FADE_DURATION_MS = 300;
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 8;
+const VALUE_MIN_HEIGHT = 20;
+const VALUE_MAX_HEIGHT = 220;
+const popupWindow = useTemplateRef<InstanceType<typeof PopupWindow>>("popupWindow");
+const valueControl = useTemplateRef<HTMLTextAreaElement>("valueControl");
+const popupHeight = shallowRef<number | null>(null);
+const viewportSize = shallowRef({ width: window.innerWidth, height: window.innerHeight });
+let resizeObserver: ResizeObserver | null = null;
 
 const popupStyle = computed<CSSProperties>(() => {
-  const viewportMargin = 8;
-  const popupWidth = Math.min(320, window.innerWidth - viewportMargin * 2);
-  const estimatedHeight = 152;
+  const { width: viewportWidth, height: viewportHeight } = viewportSize.value;
+  const popupWidth = Math.min(320, viewportWidth - VIEWPORT_MARGIN * 2);
   const left = Math.min(
-    Math.max(viewportMargin, props.anchor.left),
-    window.innerWidth - popupWidth - viewportMargin,
+    Math.max(VIEWPORT_MARGIN, props.anchor.left),
+    viewportWidth - popupWidth - VIEWPORT_MARGIN,
   );
-  const below = props.anchor.bottom + 8;
-  const top = below + estimatedHeight <= window.innerHeight - viewportMargin
+  const below = props.anchor.bottom + ANCHOR_GAP;
+  const measuredHeight = popupHeight.value;
+  const top = measuredHeight === null || below + measuredHeight <= viewportHeight - VIEWPORT_MARGIN
     ? below
-    : Math.max(viewportMargin, props.anchor.top - estimatedHeight - 8);
-  return { left: `${left}px`, top: `${top}px`, width: `${popupWidth}px` };
+    : Math.max(VIEWPORT_MARGIN, props.anchor.top - measuredHeight - ANCHOR_GAP);
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${popupWidth}px`,
+    visibility: measuredHeight === null ? "hidden" : "visible",
+  };
+});
+const displayedValue = computed(() => props.detail.error ?? props.detail.value);
+
+watch(displayedValue, () => void nextTick(updateValueControlHeight));
+
+onMounted(async () => {
+  window.addEventListener("resize", updateViewportSize);
+  await nextTick();
+  updateValueControlHeight();
+  const element = popupWindow.value?.getElement();
+  if (element === null || element === undefined) return;
+  resizeObserver = new ResizeObserver(() => updatePopupHeight(element));
+  resizeObserver.observe(element);
+  updatePopupHeight(element);
 });
 
-const copyLabel = computed(() => {
-  if (copyState.value === "copied") return "Copied";
-  if (copyState.value === "failed") return "Copy failed";
-  return "Copy value";
+onUnmounted(() => {
+  window.removeEventListener("resize", updateViewportSize);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
 });
 
-async function copyValue(): Promise<void> {
-  if (!props.detail.successful) return;
-  clearCopyTimer();
-  try {
-    await navigator.clipboard.writeText(props.detail.value);
-    copyState.value = "copied";
-  } catch (reason: unknown) {
-    copyState.value = "failed";
-    console.error("Failed to copy Macro value:", reason);
-  }
-  copyTimer = window.setTimeout(() => {
-    copyState.value = "idle";
-    copyTimer = null;
-  }, COPY_FEEDBACK_DURATION_MS);
+function updateViewportSize(): void {
+  viewportSize.value = { width: window.innerWidth, height: window.innerHeight };
+  void nextTick(updateValueControlHeight);
 }
 
-function clearCopyTimer(): void {
-  if (copyTimer === null) return;
-  window.clearTimeout(copyTimer);
-  copyTimer = null;
+function updatePopupHeight(element: HTMLElement): void {
+  popupHeight.value = element.getBoundingClientRect().height;
 }
 
-onUnmounted(clearCopyTimer);
+function updateValueControlHeight(): void {
+  const element = valueControl.value;
+  if (element === null) return;
+  element.style.height = "0";
+  const height = Math.min(VALUE_MAX_HEIGHT, Math.max(VALUE_MIN_HEIGHT, element.scrollHeight));
+  element.style.height = `${height}px`;
+  element.style.overflowY = element.scrollHeight > VALUE_MAX_HEIGHT ? "auto" : "hidden";
+}
+
 </script>
 
 <template>
-  <aside
+  <PopupWindow
+    ref="popupWindow"
     class="macro-popup"
     :style="popupStyle"
-    role="tooltip"
-    @pointerenter="emit('pointerEnter')"
-    @pointerleave="emit('pointerLeave')"
+    is-externally-positioned
+    semantic-role="tooltip"
+    :dismiss-delay-ms="CLOSE_DELAY_MS"
+    :fade-duration-ms="FADE_DURATION_MS"
+    :is-dismiss-paused="isAnchorHovered"
+    is-dismiss-paused-on-hover
+    @dismiss="emit('close')"
   >
     <header class="macro-popup__header">
       <code>{{ detail.key }}</code>
@@ -78,23 +106,20 @@ onUnmounted(clearCopyTimer);
     </header>
     <p class="macro-popup__path">{{ detail.sourcePath }}</p>
     <div class="macro-popup__value" :class="{ 'is-warning': !detail.successful }">
-      <code>{{ detail.error ?? detail.value }}</code>
-      <button
-        type="button"
-        :disabled="!detail.successful"
-        :aria-label="copyLabel"
-        :title="copyLabel"
-        @click="copyValue"
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M5.5 5.5h7v7h-7zM3.5 10.5h-1v-7h7v1" />
-        </svg>
-      </button>
+      <div class="macro-popup__value-content">
+        <textarea
+          ref="valueControl"
+          class="macro-popup__value-control"
+          :value="displayedValue"
+          rows="1"
+          wrap="soft"
+          readonly
+          aria-label="Macro value"
+          spellcheck="false"
+        ></textarea>
+      </div>
     </div>
-    <p class="macro-popup__feedback" aria-live="polite">
-      {{ copyState === "idle" ? "" : copyLabel }}
-    </p>
-  </aside>
+  </PopupWindow>
 </template>
 
 <style scoped>
@@ -103,10 +128,10 @@ onUnmounted(clearCopyTimer);
   z-index: 1000;
   padding: var(--space-3);
   color: var(--color-text);
-  background: color-mix(in srgb, var(--color-surface-raised) 92%, black);
+  background: var(--color-surface-deep);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-flyout);
 }
 
 .macro-popup__header,
@@ -118,7 +143,7 @@ onUnmounted(clearCopyTimer);
 }
 
 .macro-popup__header code {
-  color: #9cdcfe;
+  color: var(--color-code-variable);
   font-weight: 600;
 }
 
@@ -126,7 +151,7 @@ onUnmounted(clearCopyTimer);
   padding: 2px 6px;
   color: var(--color-text-muted);
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font-size: 11px;
   font-weight: 600;
 }
@@ -145,62 +170,76 @@ onUnmounted(clearCopyTimer);
 
 .macro-popup__value {
   min-height: 36px;
+  align-items: flex-start;
   padding: var(--space-2);
   background: var(--color-content-bg);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
+}
+
+.macro-popup__value:hover,
+.macro-popup__value:focus-within {
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-content-bg));
+}
+
+.macro-popup__value:focus-within {
+  border-color: var(--color-primary);
 }
 
 .macro-popup__value.is-warning {
   border-color: color-mix(in srgb, var(--color-warning) 52%, var(--color-border));
 }
 
-.macro-popup__value code {
+.macro-popup__value-content {
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  max-height: 220px;
+  flex: 1;
+  overflow: hidden;
 }
 
-.macro-popup__value button {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  display: grid;
-  place-items: center;
+.macro-popup__value-control {
+  width: 100%;
+  min-height: 20px;
+  max-height: 220px;
+  display: block;
   padding: 0;
-  color: var(--color-text-muted);
+  resize: none;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  color: var(--color-text);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  border-radius: 0;
+  font: inherit;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  cursor: text;
+  scrollbar-color: transparent transparent;
 }
 
-.macro-popup__value button:hover:not(:disabled) {
+.macro-popup__value:hover .macro-popup__value-control,
+.macro-popup__value:focus-within .macro-popup__value-control {
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.macro-popup__value-control::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.macro-popup__value:hover .macro-popup__value-control::-webkit-scrollbar-thumb,
+.macro-popup__value:focus-within .macro-popup__value-control::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  background-clip: padding-box;
+}
+
+.macro-popup__value-control:focus {
+  outline: 0;
+}
+
+.macro-popup__value-control::selection {
   color: var(--color-text);
-  background: var(--color-surface-selected);
+  background: color-mix(in srgb, var(--color-primary) 42%, transparent);
 }
 
-.macro-popup__value button:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
-.macro-popup__value button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.macro-popup__value svg {
-  width: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linejoin: round;
-}
-
-.macro-popup__feedback {
-  min-height: 16px;
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
 </style>

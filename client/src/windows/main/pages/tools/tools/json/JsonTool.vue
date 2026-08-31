@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { vSelectAll } from "../../../../../../directives/vSelectAll";
-import ToolSplitLayout from "../../components/ToolSplitLayout.vue";
+import MonacoDataEditor from "../../components/MonacoDataEditor.vue";
+import DataTransformLayout from "../../components/DataTransformLayout.vue";
 import { transformJson, type JsonMode } from "./json";
 
 const DEFAULT_JSON = '{"name":"magichat","tools":["json","url","hash"],"version":1,"nested":{"ok":true}}';
@@ -31,21 +31,22 @@ async function copyResult(): Promise<void> {
 </script>
 
 <template>
-  <ToolSplitLayout
+  <DataTransformLayout
     title="JSON"
-    hint="左侧输入 JSON, 右侧实时格式化或压缩; 解析失败会显示错误位置。"
-    left-label="输入"
-    right-label="输出"
+    hint="Enter JSON on the left to format or minify it live. Parse errors include their location."
+    left-label="Input"
+    right-label="Output"
+    separator-label="Resize JSON input and output"
   >
     <template #toolbar>
-      <div class="json-tool__modes" role="group" aria-label="模式">
+      <div class="json-tool__modes" role="group" aria-label="Mode">
         <button
           type="button"
           class="json-tool__mode"
           :class="{ 'json-tool__mode--active': mode === 'format' }"
           @click="setMode('format')"
         >
-          格式化
+          Format
         </button>
         <button
           type="button"
@@ -53,19 +54,18 @@ async function copyResult(): Promise<void> {
           :class="{ 'json-tool__mode--active': mode === 'minify' }"
           @click="setMode('minify')"
         >
-          压缩
+          Minify
         </button>
       </div>
     </template>
     <template #left>
-      <textarea
-        v-model="input"
-        v-select-all
-        class="json-tool__area"
-        spellcheck="false"
-        aria-label="JSON 输入"
-        placeholder="在此输入 JSON…"
-      ></textarea>
+      <MonacoDataEditor
+        :value="input"
+        language="json"
+        editor-label="JSON input"
+        placeholder="Enter JSON here..."
+        @update="input = $event"
+      />
     </template>
     <template #rightActions>
       <button
@@ -74,21 +74,19 @@ async function copyResult(): Promise<void> {
         :disabled="!result.ok || result.text === ''"
         @click="copyResult"
       >
-        {{ copied ? "已复制" : "复制" }}
+        {{ copied ? "Copied" : "Copy" }}
       </button>
     </template>
     <template #right>
-      <textarea
-        v-select-all
-        class="json-tool__area"
-        :class="{ 'json-tool__area--error': !result.ok }"
-        readonly
-        spellcheck="false"
-        aria-label="JSON 输出"
+      <MonacoDataEditor
         :value="output"
-      ></textarea>
+        :language="result.ok ? 'json' : 'plaintext'"
+        editor-label="JSON output"
+        readonly
+        :is-error="!result.ok"
+      />
     </template>
-  </ToolSplitLayout>
+  </DataTransformLayout>
 </template>
 
 <style scoped>
@@ -100,7 +98,7 @@ async function copyResult(): Promise<void> {
 .json-tool__mode {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: 13px;
@@ -122,7 +120,7 @@ async function copyResult(): Promise<void> {
 .json-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -139,31 +137,4 @@ async function copyResult(): Promise<void> {
   cursor: not-allowed;
 }
 
-.json-tool__area {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: var(--space-4);
-  background: transparent;
-  color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-border) transparent;
-  white-space: pre;
-}
-
-.json-tool__area:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--color-primary);
-}
-
-.json-tool__area--error {
-  color: var(--color-danger, #f87171);
-  white-space: pre-wrap;
-}
 </style>

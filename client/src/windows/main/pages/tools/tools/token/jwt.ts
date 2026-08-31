@@ -18,7 +18,7 @@ export type JwtResult = JwtParts | JwtError;
 function decodeBase64UrlToJson(segment: string): string {
   let base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
   const remainder = base64.length % 4;
-  if (remainder === 1) throw new Error("非法的 base64url 长度");
+  if (remainder === 1) throw new Error("Invalid base64url length");
   if (remainder > 0) base64 += "=".repeat(4 - remainder);
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -29,10 +29,10 @@ function decodeBase64UrlToJson(segment: string): string {
 
 export function parseJwt(token: string): JwtResult {
   const trimmed = token.trim();
-  if (trimmed === "") return { ok: false, error: "请输入 JWT" };
+  if (trimmed === "") return { ok: false, error: "Enter a JWT" };
   const segments = trimmed.split(".");
   if (segments.length !== 3) {
-    return { ok: false, error: "不是有效的 JWT（应为 header.payload.signature 三段）" };
+    return { ok: false, error: "Invalid JWT. Expected header.payload.signature." };
   }
   const [headerSegment, payloadSegment, signature] = segments;
   try {
@@ -40,7 +40,7 @@ export function parseJwt(token: string): JwtResult {
     const payload = decodeBase64UrlToJson(payloadSegment);
     return { ok: true, header, payload, signature };
   } catch {
-    return { ok: false, error: "解析失败：header/payload 不是合法的 base64url 编码 JSON" };
+    return { ok: false, error: "Parse failed. Header or payload is not valid base64url-encoded JSON." };
   }
 }
 
@@ -50,9 +50,9 @@ export interface TimeClaim {
 }
 
 const TIME_CLAIM_LABELS: Record<string, string> = {
-  iat: "签发时间 (iat)",
-  nbf: "生效时间 (nbf)",
-  exp: "过期时间 (exp)",
+  iat: "Issued At (iat)",
+  nbf: "Not Before (nbf)",
+  exp: "Expires At (exp)",
 };
 
 // exp/iat/nbf are Unix seconds; surface them as readable local time. payloadJson is already validated
@@ -64,7 +64,7 @@ export function extractTimeClaims(payloadJson: string): TimeClaim[] {
   for (const key of ["iat", "nbf", "exp"]) {
     const raw = parsed[key];
     if (typeof raw === "number" && Number.isFinite(raw)) {
-      claims.push({ label: TIME_CLAIM_LABELS[key], value: new Date(raw * 1000).toLocaleString() });
+      claims.push({ label: TIME_CLAIM_LABELS[key], value: new Date(raw * 1000).toLocaleString("en-US") });
     }
   }
   return claims;

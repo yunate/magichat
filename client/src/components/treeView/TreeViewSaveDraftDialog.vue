@@ -146,19 +146,19 @@ function onKeydown(event: KeyboardEvent): void {
 </template>
 
 <style scoped>
-.draft-dialog-backdrop { position: fixed; z-index: 230; inset: 0; display: grid; place-items: center; padding: var(--space-4); background: rgb(0 0 0 / 58%); }
-.draft-dialog { width: min(520px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: var(--color-surface-raised); box-shadow: 0 20px 56px rgb(0 0 0 / 42%); }
+.draft-dialog-backdrop { position: fixed; z-index: 230; inset: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--color-backdrop-strong); }
+.draft-dialog { width: min(520px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: var(--color-surface-raised); box-shadow: var(--shadow-dialog); }
 .draft-dialog__header, .draft-dialog__actions { display: flex; align-items: center; padding-inline: var(--space-4); }
 .draft-dialog__header { min-height: 48px; justify-content: space-between; border-bottom: 1px solid var(--color-border); }
 .draft-dialog__header h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.draft-dialog__header button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.draft-dialog__header button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-medium); color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .draft-dialog__header svg { width: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.5; }
 .draft-dialog__body { min-height: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); overflow-y: auto; }
 .draft-dialog__body > label, .draft-dialog__folder-heading { font-size: 12px; font-weight: 600; }
-#tree-view-draft-name { width: 100%; height: 36px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: var(--color-bg); }
+#tree-view-draft-name { width: 100%; height: 36px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: var(--color-bg); }
 .draft-dialog__folder-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-2); }
 .draft-dialog__path { min-width: 0; overflow: hidden; color: var(--color-text-muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.draft-dialog__folders { max-height: 208px; margin: 0; padding: 0; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-bg) 76%, var(--color-surface)); }
+.draft-dialog__folders { max-height: 208px; margin: 0; padding: 0; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent); border-radius: var(--radius-medium); background: color-mix(in srgb, var(--color-bg) 76%, var(--color-surface)); }
 .draft-dialog__folder { width: 100%; height: 32px; display: flex; align-items: center; gap: var(--space-2); padding-inline-end: var(--space-2); color: var(--color-text-muted); cursor: pointer; }
 .draft-dialog__folder:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 6%, transparent); }
 .draft-dialog__folder.is-selected { color: var(--color-text); background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)); box-shadow: inset 2px 0 var(--color-primary); }
@@ -168,7 +168,7 @@ function onKeydown(event: KeyboardEvent): void {
 .draft-dialog__folder span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .draft-dialog__error { margin: 0; color: var(--color-danger); font-size: 12px; }
 .draft-dialog__actions { min-height: 52px; justify-content: flex-end; gap: var(--space-2); border-top: 1px solid var(--color-border); }
-.draft-dialog__actions button { min-width: 72px; height: 32px; padding-inline: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: transparent; cursor: pointer; }
+.draft-dialog__actions button { min-width: 72px; height: 32px; padding-inline: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: transparent; cursor: pointer; }
 .draft-dialog__actions button.is-primary { border-color: var(--color-primary); color: var(--color-bg); background: var(--color-primary); font-weight: 600; }
 :is(button, input):focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 button:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }

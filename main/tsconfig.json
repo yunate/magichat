@@ -20,6 +20,7 @@
     "../common/tasks/**/*.ts",
     "../common/terminal/**/*.ts",
     "../common/window/**/*.ts",
+    "../common/cli/**/*.ts",
     "../common/serializer.ts",
     "../common/macroParser.ts"
   ]

@@ -29,7 +29,7 @@ export function parseColor(input: string): ColorResult {
   const trimmed = input.trim();
   if (trimmed === "") return { ok: false, error: "" };
   const rgb = _toRgb(trimmed);
-  if (rgb === null) return { ok: false, error: "无法识别的颜色, 支持 #hex / rgb() / hsl()" };
+  if (rgb === null) return { ok: false, error: "Unrecognized color. Use #hex, rgb(), or hsl()." };
   const hex = rgbToHex(rgb);
   const hsl = rgbToHsl(rgb);
   return {

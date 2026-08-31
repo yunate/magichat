@@ -1,11 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, useTemplateRef, watch } from "vue";
-import type { CSSProperties } from "vue";
+import { dirname, join, relative } from "pathe";
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  shallowRef,
+  useTemplateRef,
+  watch,
+} from "vue";
 import {
   commandFolderDataSerializer,
   commandItemDataSerializer,
+  type CommandEnvUpdate,
   type CommandFolderData,
   type CommandItemData,
+  type CommandParam,
   type CommandParamGroup,
 } from "../../../../../../common/command";
 import {
@@ -15,15 +26,18 @@ import {
 } from "../../../../../../common/tasks/scriptTaskDefinition";
 import type {
   TreeViewFolder,
-  TreeViewFolderProperties,
   TreeViewItem,
-  TreeViewItemProperties,
 } from "../../../../../../common/treeView";
-import { ensureTreeViewName, getTreeViewParentPath } from "../../../../../../common/treeView";
-import { confirmDialog } from "../../../../components/confirmDialog";
-import type { ConfirmDialogAction } from "../../../../components/confirmDialogTypes";
+import type { TerminalPlacement } from "../../../../../../common/config/command";
+import {
+  TREE_VIEW_ITEM_FILE_EXTENSION,
+  TreeViewPath,
+} from "../../../../../../common/treeView";
+import { confirmActionDialog, showAlertDialog } from "../../../../components/confirmDialog";
 import { runWithOperationProgress } from "../../../../components/operationProgressDialog";
 import PopupSelect from "../../../../components/PopupSelect.vue";
+import PopupToast from "../../../../components/PopupToast.vue";
+import SplitContainer from "../../../../components/SplitContainer.vue";
 import { TextEditComponent } from "../../../../components/textEdit";
 import type {
   TextEditAdditionalParamScope,
@@ -38,7 +52,6 @@ import type {
 } from "./commandTabPageTypes";
 import { gMessageStore } from "../../../../messages/messageStore";
 import { IS_DEBUG } from "../../../../environment";
-import { gCommandSettings } from "./commandSettings";
 
 type CommandFolderDraft = Readonly<{
   kind: "folder";
@@ -55,16 +68,22 @@ type CommandItemDraft = Readonly<{
 }>;
 
 type CommandEditorDraft = CommandFolderDraft | CommandItemDraft;
-type TerminalTypeDialogAction = "confirm" | "cancel";
-type RestartDialogAction = "restart" | "cancel";
-type BusyTerminalDialogAction = "clearAndRun" | "cancel";
 type TextEditExposed = { getResolvedText(): TextEditTextResolution };
+type TerminalStatus = Readonly<{
+  kind: "info" | "error";
+  message: string;
+}>;
 
 type Props = {
   entity: TreeViewFolder | TreeViewItem;
+  isActive: boolean;
+  notifyReady: () => void;
+  terminalPlacement: TerminalPlacement;
+  terminalInitialPath: string;
   treeView: TreeView;
   getOpenFolderData: (id: string) => CommandFolderData | null;
-  requestDraftSave: () => void;
+  getWorkspaceEnv: () => readonly CommandParam[];
+  requestDraftSave: () => Promise<boolean>;
 };
 
 const props = defineProps<Props>();
@@ -74,123 +93,244 @@ const emit = defineEmits<{
   stateChange: [state: CommandTabPageState];
 }>();
 
-const draft = shallowRef<CommandEditorDraft>(createDraft(props.entity));
+const draft = shallowRef<CommandEditorDraft | null>(null);
+const isLoading = ref(false);
+const loadError = shallowRef("");
 const isSaving = ref(false);
-const saveError = shallowRef("");
 const titleError = shallowRef("");
 const isTerminalActive = ref(false);
 const isCommandRunning = ref(false);
-const commandWorkbench = useTemplateRef<HTMLElement>("commandWorkbench");
+const terminalStatus = shallowRef<TerminalStatus>({
+  kind: "info",
+  message: "Terminal not ready.",
+});
+const isAncestorDataLoading = ref(false);
+const ancestorDataError = shallowRef("");
+const ancestorDataRevision = ref(0);
+const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
 const terminal = useTemplateRef<TerminalExposed>("terminal");
 const textEdit = useTemplateRef<TextEditExposed>("textEdit");
-const scriptPaneSize = ref<number | null>(null);
-let workbenchResizeStart: Readonly<{ pointerPosition: number; paneSize: number }> | null = null;
-let previousResizeCursor = "";
-let previousResizeUserSelect = "";
-const MIN_SCRIPT_PANE_WIDTH = 360;
-const MIN_TERMINAL_PANE_WIDTH = 320;
-const MIN_SCRIPT_PANE_HEIGHT = 220;
-const MIN_TERMINAL_PANE_HEIGHT = 220;
-const WORKBENCH_SPLITTER_WIDTH = 5;
-const WORKBENCH_KEYBOARD_RESIZE_STEP = 16;
-const TERMINAL_TYPE_ACTIONS: readonly ConfirmDialogAction<TerminalTypeDialogAction>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "confirm", label: "Stop and change", appearance: "primary" },
-];
-const RESTART_ACTIONS: readonly ConfirmDialogAction<RestartDialogAction>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "restart", label: "Stop and restart", appearance: "primary", isDefault: true },
-];
-const BUSY_TERMINAL_ACTIONS: readonly ConfirmDialogAction<BusyTerminalDialogAction>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "clearAndRun", label: "Clear and run", appearance: "primary", isDefault: true },
-];
-const TERMINAL_IDLE_PROMPT_PATTERN = /^(?:PS|CMD) [A-Za-z]:\\.*>$/;
+let itemRenameOperation: Promise<string | null> | null = null;
+let tabPromoteOperation: Promise<void> | null = null;
+let isMounted = false;
+let isRegistered = false;
+let ancestorDataLoadId = 0;
+const ancestorFolderData = new Map<string, CommandFolderData>();
+const TERMINAL_STATUS_CHECK_INTERVAL_MS = 1000;
+const PARAM_PRIORITY_DESCRIPTION = "Priority, highest first: Workspace Environment, current group, nearest parent Folder, then outer parent Folders.";
 const scriptTypeOptions = SCRIPT_TYPES.map((scriptType) => ({
   value: scriptType,
   label: scriptType,
 }));
 
-const isDirty = computed(() => isDraftDirty(draft.value));
+const isDirty = computed(() => draft.value !== null && isDraftDirty(draft.value));
+const scriptType = computed(() => {
+  const current = draft.value;
+  return current?.kind === "item" ? current.data.scriptType : null;
+});
 const isItemDraft = computed(() => isTreeViewItem(props.entity) && props.entity.properties.isDraft);
-const paramGroups = computed<readonly TextEditParamGroup[]>(() => draft.value.data.paramGroups.map((group) => ({
-  id: group.id,
-  name: group.name,
-  sourceType: draft.value.kind === "folder" ? "Folder" : "Command",
-  sourcePath: props.entity.path,
-  params: group.params,
-})));
-const isSideBySide = computed(() => ["left", "right"].includes(gCommandSettings.terminalPlacement.value));
+const isSaveDisabled = computed(() => (!isDirty.value && !isItemDraft.value) || isSaving.value);
+const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
+  const current = draft.value;
+  if (current === null) return [];
+  return current.data.paramGroups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    sourceType: current.kind === "folder" ? "Folder" : "Command",
+    sourcePath: workspaceRelativePath(props.entity.path),
+    params: group.params,
+  }));
+});
+const isSideBySide = computed(() => ["left", "right"].includes(props.terminalPlacement));
 const isScriptBeforeTerminal = computed(() => ["right", "bottom"].includes(
-  gCommandSettings.terminalPlacement.value,
+  props.terminalPlacement,
 ));
-const commandWorkbenchStyle = computed<CSSProperties>(() => scriptPaneSize.value === null
-  ? {}
-  : { "--command-script-pane-size": `${scriptPaneSize.value}px` });
 const api: CommandTabPageApi = {
   id: props.entity.properties.id,
-  isDirty: () => isDirty.value,
+  isDirty: () => isDirty.value || isItemDraft.value,
+  isDraft: () => isItemDraft.value,
   isRunning: () => isCommandRunning.value,
   save,
+  discardDraft,
   stopRunning,
   getFolderData,
+  applyPersistedParams,
+  applyAncestorFolderData,
 };
 
-watch([isDirty, isCommandRunning], () => emitState());
+watch([isDirty, isItemDraft, isCommandRunning, scriptType], () => emitState());
 watch(() => props.entity.name, () => {
   titleError.value = "";
 });
-watch(gCommandSettings.terminalPlacement, () => {
-  stopWorkbenchResize();
-  scriptPaneSize.value = null;
+watch(() => props.entity.path, (path, previousPath) => {
+  if (!isMounted || draft.value === null || dirname(path) === dirname(previousPath)) return;
+  void refreshAncestorFolderData(path);
+});
+watch(() => props.isActive, (isActive) => {
+  if (isMounted && isActive) void loadDraft();
 });
 
 onMounted(() => {
-  emit("register", api);
-  emitState();
+  isMounted = true;
+  if (props.isActive) void loadDraft();
 });
 
 onUnmounted(() => {
-  stopWorkbenchResize();
-  emit("unregister", api);
+  isMounted = false;
+  if (isRegistered) emit("unregister", api);
 });
 
 function emitState(): void {
   emit("stateChange", {
     id: api.id,
-    isDirty: isDirty.value,
+    isDirty: isDirty.value || isItemDraft.value,
     isRunning: isCommandRunning.value,
+    scriptType: scriptType.value,
   });
 }
 
-function createDraft(entity: TreeViewFolder | TreeViewItem): CommandEditorDraft {
+function onTerminalRunStatusChange(isRunning: boolean): void {
+  isCommandRunning.value = isRunning;
+}
+
+function terminalMessageHandler(message: string): void {
+  terminalStatus.value = { kind: "info", message };
+}
+
+function requestTabPromoted(): void {
+  void ensureTabPromoted().catch((reason: unknown) => {
+    popupToast.value?.show(errorMessage(reason));
+  });
+}
+
+async function ensureTabPromoted(): Promise<void> {
+  const pendingOperation = tabPromoteOperation;
+  if (pendingOperation !== null) {
+    await pendingOperation;
+    return;
+  }
+  if (props.treeView.previewTabId.value !== api.id) return;
+  const operation = props.treeView.controller.promoteTab({ tabId: api.id });
+  tabPromoteOperation = operation;
+  try {
+    await operation;
+  } finally {
+    if (tabPromoteOperation === operation) tabPromoteOperation = null;
+  }
+}
+
+async function loadDraft(): Promise<void> {
+  if (draft.value !== null || isLoading.value || loadError.value.length > 0) return;
+  isLoading.value = true;
+  let shouldNotifyReady = false;
+  try {
+    replaceAncestorFolderData(await loadAncestorFolderData(props.entity.path));
+    const kind = isTreeViewItem(props.entity) ? "item" : "folder";
+    const dataJson = await props.treeView.controller.getEntityData({
+      kind,
+      path: props.entity.path,
+    });
+    const loadedDraft = createDraft(props.entity, dataJson);
+    if (!isMounted) return;
+    draft.value = loadedDraft;
+    isRegistered = true;
+    emit("register", api);
+    emitState();
+    shouldNotifyReady = true;
+  } catch (reason: unknown) {
+    if (isMounted) {
+      loadError.value = errorMessage(reason);
+      popupToast.value?.show(loadError.value);
+      shouldNotifyReady = true;
+    }
+  } finally {
+    if (isMounted) isLoading.value = false;
+  }
+  if (!shouldNotifyReady || !isMounted) return;
+  await nextTick();
+  if (isMounted) props.notifyReady();
+}
+
+async function refreshAncestorFolderData(entityPath: string): Promise<void> {
+  const loadId = ++ancestorDataLoadId;
+  isAncestorDataLoading.value = true;
+  ancestorDataError.value = "";
+  try {
+    const loadedData = await loadAncestorFolderData(entityPath);
+    if (!isMounted || loadId !== ancestorDataLoadId
+      || dirname(props.entity.path) !== dirname(entityPath)) return;
+    replaceAncestorFolderData(loadedData);
+  } catch (reason: unknown) {
+    if (!isMounted || loadId !== ancestorDataLoadId
+      || dirname(props.entity.path) !== dirname(entityPath)) return;
+    ancestorDataError.value = errorMessage(reason);
+    popupToast.value?.show(ancestorDataError.value);
+  } finally {
+    if (isMounted && loadId === ancestorDataLoadId) isAncestorDataLoading.value = false;
+  }
+}
+
+async function loadAncestorFolderData(entityPath: string): Promise<Map<string, CommandFolderData>> {
+  const loadedData = new Map<string, CommandFolderData>();
+  for (const folder of collectAncestorFolders(entityPath)) {
+    const dataJson = await props.treeView.controller.getEntityData({
+      kind: "folder",
+      path: folder.path,
+    });
+    loadedData.set(folder.properties.id, dataJson === null
+      ? commandFolderDataSerializer.getDefault()
+      : commandFolderDataSerializer.fromJson(dataJson));
+  }
+  return loadedData;
+}
+
+function replaceAncestorFolderData(loadedData: ReadonlyMap<string, CommandFolderData>): void {
+  ancestorFolderData.clear();
+  for (const [folderId, data] of loadedData) ancestorFolderData.set(folderId, data);
+}
+
+function createDraft(
+  entity: TreeViewFolder | TreeViewItem,
+  dataJson: string | null,
+): CommandEditorDraft {
   if (isTreeViewItem(entity)) {
-    const data = cloneItemData(commandItemDataSerializer.fromValue(entity.properties.data));
+    const data = cloneItemData(dataJson === null
+      ? commandItemDataSerializer.getDefault()
+      : commandItemDataSerializer.fromJson(dataJson));
     return { kind: "item", id: entity.properties.id, data, baseline: cloneItemData(data) };
   }
-  const data = cloneFolderData(commandFolderDataSerializer.fromValue(entity.properties.data));
+  const data = cloneFolderData(dataJson === null
+    ? commandFolderDataSerializer.getDefault()
+    : commandFolderDataSerializer.fromJson(dataJson));
   return { kind: "folder", id: entity.properties.id, data, baseline: cloneFolderData(data) };
 }
 
-function getItemDraft(): CommandItemDraft {
+function requireDraft(): CommandEditorDraft {
   const current = draft.value;
+  if (current === null) throw new Error("Command data is not loaded");
+  return current;
+}
+
+function getItemDraft(): CommandItemDraft {
+  const current = requireDraft();
   if (current.kind !== "item") throw new Error("Command draft is unavailable");
   return current;
 }
 
 function getFolderDraft(): CommandFolderDraft {
-  const current = draft.value;
+  const current = requireDraft();
   if (current.kind !== "folder") throw new Error("Command folder draft is unavailable");
   return current;
 }
 
 function replaceDraft(value: CommandEditorDraft): void {
   draft.value = value;
+  if (isDraftDirty(value)) requestTabPromoted();
 }
 
 function paramGroupsUpdateHandler(groups: TextEditParamGroup[]): void {
   if (groups.length === 0) return;
-  const current = draft.value;
+  const current = requireDraft();
   const paramGroups = groups.map(toCommandParamGroup);
   if (current.kind === "folder") {
     replaceDraft({ ...current, data: { ...current.data, paramGroups } });
@@ -200,7 +340,7 @@ function paramGroupsUpdateHandler(groups: TextEditParamGroup[]): void {
 }
 
 function selectedParamGroupUpdateHandler(groupId: string | null): void {
-  const current = draft.value;
+  const current = requireDraft();
   if (groupId === null || !current.data.paramGroups.some((group) => group.id === groupId)) return;
   if (current.kind === "folder") {
     replaceDraft({ ...current, data: { ...current.data, selectedParamGroupId: groupId } });
@@ -210,61 +350,67 @@ function selectedParamGroupUpdateHandler(groupId: string | null): void {
 }
 
 function itemContentUpdateHandler(content: string): void {
-  const current = draft.value;
+  const current = requireDraft();
   if (current.kind === "item") replaceDraft({ ...current, data: { ...current.data, content } });
 }
 
 function updateItemScriptType(scriptType: ScriptType): void {
-  const current = draft.value;
+  const current = requireDraft();
   if (current.kind === "item") replaceDraft({ ...current, data: { ...current.data, scriptType } });
 }
 
-async function save(): Promise<void> {
-  const current = draft.value;
-  if (isSaving.value || !isDraftDirty(current)) return;
+async function save(): Promise<boolean> {
+  const current = requireDraft();
+  if (isSaving.value) return false;
+  if (!isDraftDirty(current)) {
+    return isItemDraft.value ? props.requestDraftSave() : true;
+  }
   isSaving.value = true;
-  saveError.value = "";
-  const savedData = current.kind === "folder"
-    ? cloneFolderData(current.data)
-    : cloneItemData(current.data);
   try {
+    const renameOperation = itemRenameOperation;
+    if (renameOperation !== null) {
+      const renameError = await renameOperation;
+      if (renameError !== null) throw new Error(renameError);
+    }
     if (current.kind === "folder") {
-      commandFolderDataSerializer.validate(savedData);
       const folder = props.treeView.getFolderById(current.id);
       if (folder === null) throw new Error("Command folder is no longer available");
-      const properties: TreeViewFolderProperties = {
-        ...structuredClone(folder.properties),
-        data: savedData,
-      };
-      await props.treeView.controller.updateFolder(folder.path, properties);
+      await props.treeView.controller.updateEntityData(
+        { kind: "folder", path: folder.path },
+        commandFolderDataSerializer.toJson(cloneFolderData(current.data)),
+      );
     } else {
-      commandItemDataSerializer.validate(savedData);
       const item = props.treeView.getItemById(current.id);
       if (item === null) throw new Error("Command item is no longer available");
-      const properties: TreeViewItemProperties = {
-        ...structuredClone(item.properties),
-        data: savedData,
-      };
-      await props.treeView.controller.updateItem(item.path, properties);
+      await props.treeView.controller.updateEntityData(
+        { kind: "item", path: item.path },
+        commandItemDataSerializer.toJson(cloneItemData(current.data)),
+      );
     }
     const latest = draft.value;
-    if (latest.kind === "folder" && current.kind === "folder") {
+    if (latest?.kind === "folder" && current.kind === "folder") {
       replaceDraft({ ...latest, baseline: cloneFolderData(current.data) });
-    } else if (latest.kind === "item" && current.kind === "item") {
+    } else if (latest?.kind === "item" && current.kind === "item") {
       replaceDraft({ ...latest, baseline: cloneItemData(current.data) });
     }
+    return isItemDraft.value ? await props.requestDraftSave() : true;
   } catch (reason: unknown) {
-    saveError.value = errorMessage(reason);
+    popupToast.value?.show(errorMessage(reason));
     throw reason;
   } finally {
     isSaving.value = false;
   }
 }
 
+async function discardDraft(): Promise<void> {
+  if (!isItemDraft.value) return;
+  await props.treeView.controller.deleteItem(api.id);
+}
+
 async function saveClickHandler(): Promise<void> {
+  if (isSaveDisabled.value) return;
   try {
     await save();
-    if (isItemDraft.value) props.requestDraftSave();
   } catch {
     return;
   }
@@ -274,19 +420,19 @@ async function renameItem(name: string): Promise<string | null> {
   const entity = props.treeView.getItemById(api.id);
   if (entity === null) return "Command is no longer available";
   try {
-    ensureTreeViewName(name, "Command title");
+    TreeViewPath.ensureName(name, "Command title");
     if (name === entity.name) return null;
-    const parentPath = getTreeViewParentPath(entity.path);
-    const parent = parentPath === null ? null : findFolderByPath(props.treeView.rootFolder.value, parentPath);
+    const parent = findFolderByPath(props.treeView.rootFolder.value, dirname(entity.path));
     if (parent === null) return "Command parent folder is unavailable";
     const targetOrder = parent.items.findIndex((item) => item.properties.id === api.id);
     if (targetOrder < 0) return "Command order is unavailable";
     await props.treeView.controller.move({
       kind: "item",
       sourcePath: entity.path,
-      targetPath: `${parent.path}/${name}`,
+      targetPath: join(parent.path, `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}`),
       targetOrder,
     });
+    requestTabPromoted();
     return null;
   } catch (reason: unknown) {
     return errorMessage(reason);
@@ -297,9 +443,17 @@ async function itemTitleBlurHandler(event: Event): Promise<void> {
   if (!(event.target instanceof HTMLInputElement)) return;
   const input = event.target;
   const name = input.value.trim();
-  const message = await renameItem(name);
+  const operation = renameItem(name);
+  itemRenameOperation = operation;
+  let message: string | null;
+  try {
+    message = await operation;
+  } finally {
+    if (itemRenameOperation === operation) itemRenameOperation = null;
+  }
   if (message !== null) {
     titleError.value = message;
+    popupToast.value?.show(message);
     return;
   }
   titleError.value = "";
@@ -311,25 +465,48 @@ function itemTitleEnterHandler(event: KeyboardEvent): void {
 }
 
 function collectAdditionalParams(): readonly TextEditAdditionalParamScope[] {
-  const ancestors: TreeViewFolder[] = [];
-  let parentPath = getTreeViewParentPath(props.entity.path);
-  while (parentPath !== null) {
-    const folder = findFolderByPath(props.treeView.rootFolder.value, parentPath);
-    if (folder === null) break;
-    ancestors.unshift(folder);
-    parentPath = getTreeViewParentPath(parentPath);
-  }
-  return ancestors.map((folder) => {
+  void ancestorDataRevision.value;
+  return collectAncestorFolders(props.entity.path).map((folder) => {
     const data = props.getOpenFolderData(folder.properties.id)
-      ?? commandFolderDataSerializer.fromValue(folder.properties.data);
+      ?? ancestorFolderData.get(folder.properties.id);
+    if (data === undefined) throw new Error("Command folder data is not loaded");
     const selectedGroup = data.paramGroups.find((group) => group.id === data.selectedParamGroupId);
     if (selectedGroup === undefined) throw new Error("Selected folder param group is unavailable");
     return {
       label: "Folder",
-      sourcePath: folder.path,
+      sourcePath: workspaceRelativePath(folder.path),
       params: selectedGroup.params,
     };
   });
+}
+
+function collectWorkspaceEnv(): readonly TextEditAdditionalParamScope[] {
+  return [{
+    label: "Environment",
+    sourcePath: workspaceRelativePath(props.treeView.selectedWorkspaceRef.value?.workspacePath ?? ""),
+    params: props.getWorkspaceEnv(),
+  }];
+}
+
+function workspaceRelativePath(entityPath: string): string {
+  const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
+  return workspacePath === undefined
+    ? entityPath
+    : relative(dirname(workspacePath), entityPath);
+}
+
+function collectAncestorFolders(entityPath: string): TreeViewFolder[] {
+  const ancestors: TreeViewFolder[] = [];
+  let parentPath = dirname(entityPath);
+  while (true) {
+    const folder = findFolderByPath(props.treeView.rootFolder.value, parentPath);
+    if (folder === null) break;
+    ancestors.unshift(folder);
+    const nextParentPath = dirname(parentPath);
+    if (nextParentPath === parentPath) break;
+    parentPath = nextParentPath;
+  }
+  return ancestors;
 }
 
 function findFolderByPath(root: TreeViewFolder | null, path: string): TreeViewFolder | null {
@@ -345,24 +522,31 @@ function findFolderByPath(root: TreeViewFolder | null, path: string): TreeViewFo
 }
 
 async function runHandler(): Promise<void> {
-  if (isCommandRunning.value) return;
+  if (isCommandRunning.value || isAncestorDataLoading.value || ancestorDataError.value.length > 0) return;
   try {
     const terminalApi = terminal.value;
     if (terminalApi === null) throw new Error("Terminal is unavailable");
     const current = getItemDraft();
-    if (current.data.content.length === 0) return;
+    if (current.data.content.length === 0) {
+      popupToast.value?.show("Command content is empty.");
+      return;
+    }
     const resolution = textEdit.value?.getResolvedText();
     if (resolution === undefined || !resolution.successful) {
-      reportTerminalError(resolution?.error ?? "Command content could not be resolved");
+      const message = resolution?.error ?? "Command content could not be resolved";
+      popupToast.value?.show(message);
+      reportTerminalError(message);
       return;
     }
     if (!await prepareTerminalForRun(terminalApi, current.data.scriptType)) return;
-    isCommandRunning.value = true;
-    await terminalApi.run({ scriptType: current.data.scriptType, scriptContent: resolution.value });
+    await terminalApi.run({
+      scriptId: current.id,
+      commandPath: props.entity.path,
+      scriptType: current.data.scriptType,
+      scriptContent: resolution.value,
+    });
   } catch (reason: unknown) {
     reportTerminalError(errorMessage(reason));
-  } finally {
-    isCommandRunning.value = false;
   }
 }
 
@@ -371,21 +555,24 @@ async function prepareTerminalForRun(
   scriptType: ScriptType,
 ): Promise<boolean> {
   if (!await terminalApi.isActive()) {
-    await runWithOperationProgress("Preparing Terminal...", async () => {
+    const isCreated = await runWithOperationProgress("Preparing Terminal...", async () => {
       await terminalApi.initialize();
-      await terminalApi.createPty(toTerminalType(scriptType));
+      if (!await createTerminalPty(terminalApi, toTerminalType(scriptType))) return false;
       isTerminalActive.value = true;
+      requestTabPromoted();
+      return true;
     });
-    return true;
+    return isCreated;
   }
-  if (TERMINAL_IDLE_PROMPT_PATTERN.test(terminalApi.getCurrentLine())) return true;
-  const action = await confirmDialog({
+  if (!terminalApi.isTerminalRunning()) return true;
+  const action = await confirmActionDialog({
     title: "The Terminal is not clean",
     descriptions: [
       "Clear and run will interrupt the current input or process, clear the Terminal, and then run the command.",
     ],
-    actions: BUSY_TERMINAL_ACTIONS,
-    cancelActionId: "cancel",
+    actionId: "clearAndRun",
+    actionLabel: "Clear and run",
+    isActionDefault: true,
   });
   if (action === "cancel") return false;
   await runWithOperationProgress("Clearing Terminal...", async () => {
@@ -400,7 +587,6 @@ async function stopRunning(): Promise<void> {
   const terminalApi = terminal.value;
   if (terminalApi === null) throw new Error("Terminal is unavailable");
   await terminalApi.stop();
-  isCommandRunning.value = false;
 }
 
 async function openHandler(): Promise<void> {
@@ -410,39 +596,22 @@ async function openHandler(): Promise<void> {
     await runWithOperationProgress("Opening Terminal...", async () => {
       if (await terminalApi.isActive()) return;
       await terminalApi.initialize();
-      await terminalApi.createPty(toTerminalType(getItemDraft().data.scriptType));
+      if (!await createTerminalPty(terminalApi, toTerminalType(getItemDraft().data.scriptType))) return;
       isTerminalActive.value = true;
+      requestTabPromoted();
     });
   } catch (reason: unknown) {
     reportTerminalError(errorMessage(reason));
   }
 }
 
-async function restartHandler(): Promise<void> {
+async function closeHandler(): Promise<void> {
   try {
     const terminalApi = terminal.value;
     if (terminalApi === null) throw new Error("Terminal is unavailable");
-    if (isCommandRunning.value) {
-      const action = await confirmDialog({
-        title: "Restart running Terminal?",
-        descriptions: [
-          "The running command will be stopped.",
-          "The current Terminal process will be closed and recreated.",
-        ],
-        actions: RESTART_ACTIONS,
-        cancelActionId: "cancel",
-      });
-      if (action === "cancel") return;
-    }
-    await runWithOperationProgress("Restarting Terminal...", async () => {
-      await terminalApi.initialize();
-      if (isCommandRunning.value) {
-        await terminalApi.stop();
-        isCommandRunning.value = false;
-      }
+    await runWithOperationProgress("Closing Terminal...", async () => {
       await terminalApi.destroyPty();
-      await terminalApi.createPty(toTerminalType(getItemDraft().data.scriptType));
-      isTerminalActive.value = true;
+      isTerminalActive.value = false;
     });
   } catch (reason: unknown) {
     reportTerminalError(errorMessage(reason));
@@ -467,7 +636,11 @@ async function clearHandler(): Promise<void> {
   try {
     const terminalApi = terminal.value;
     if (terminalApi === null) throw new Error("Terminal is unavailable");
-    await runWithOperationProgress("Clearing Terminal...", () => terminalApi.clear());
+    await runWithOperationProgress("Clearing Terminal...", async () => {
+      const shouldClearShell = !terminalApi.isTerminalRunning();
+      await terminalApi.clear();
+      if (shouldClearShell) await terminalApi.write("cls\r");
+    });
   } catch (reason: unknown) {
     reportTerminalError(errorMessage(reason));
   }
@@ -475,6 +648,29 @@ async function clearHandler(): Promise<void> {
 
 function toTerminalType(scriptType: ScriptType): "cmd" | "powershell" {
   return scriptType === "cmd" ? "cmd" : "powershell";
+}
+
+function createTerminalPty(
+  terminalApi: TerminalExposed,
+  terminalType: "cmd" | "powershell",
+): Promise<boolean> {
+  return terminalApi.createPty(
+    terminalType,
+    props.terminalInitialPath,
+    TERMINAL_STATUS_CHECK_INTERVAL_MS,
+    onTerminalRunStatusChange,
+  ).then(() => true).catch(async (reason: unknown) => {
+    const message = errorMessage(reason);
+    reportTerminalError(message);
+    await showAlertDialog({
+      title: "Terminal could not be opened",
+      descriptions: [
+        "MagicHat could not prepare the configured initial folder or start the Terminal process. The Terminal was not opened.",
+      ],
+      details: [{ id: "error", label: message }],
+    });
+    return false;
+  });
 }
 
 async function scriptTypeChangeHandler(value: string): Promise<void> {
@@ -491,21 +687,19 @@ async function scriptTypeChangeHandler(value: string): Promise<void> {
   }
   try {
     if (await terminalApi.isActive()) {
-      const action = await confirmDialog({
+      const action = await confirmActionDialog({
         title: "Close active Terminal?",
         descriptions: ["The active Terminal must close before changing its type."],
-        actions: TERMINAL_TYPE_ACTIONS,
-        cancelActionId: "cancel",
+        actionId: "confirm",
+        actionLabel: "Close and change",
       });
       if (action === "cancel") return;
       await runWithOperationProgress("Changing Terminal type...", async () => {
         if (isCommandRunning.value) {
           await terminalApi.stop();
-          isCommandRunning.value = false;
         }
         await terminalApi.destroyPty();
-        await terminalApi.createPty(toTerminalType(value));
-        isTerminalActive.value = true;
+        isTerminalActive.value = false;
       });
     }
     updateItemScriptType(value);
@@ -516,101 +710,90 @@ async function scriptTypeChangeHandler(value: string): Promise<void> {
 
 function getFolderData(): CommandFolderData | null {
   const current = draft.value;
-  return current.kind === "folder" ? cloneFolderData(current.data) : null;
+  return current?.kind === "folder" ? cloneFolderData(current.data) : null;
 }
 
-function workbenchPointerDownHandler(event: PointerEvent): void {
-  if (event.button !== 0 || commandWorkbench.value === null) return;
-  event.preventDefault();
-  const scriptPanel = commandWorkbench.value.querySelector(".command-script-editor");
-  if (!(scriptPanel instanceof HTMLElement)) return;
-  const scriptBounds = scriptPanel.getBoundingClientRect();
-  workbenchResizeStart = {
-    pointerPosition: isSideBySide.value ? event.clientX : event.clientY,
-    paneSize: isSideBySide.value ? scriptBounds.width : scriptBounds.height,
-  };
-  previousResizeCursor = document.body.style.cursor;
-  previousResizeUserSelect = document.body.style.userSelect;
-  document.body.style.cursor = isSideBySide.value ? "col-resize" : "row-resize";
-  document.body.style.userSelect = "none";
-  window.addEventListener("pointermove", resizeWorkbench);
-  window.addEventListener("pointerup", stopWorkbenchResize);
-  window.addEventListener("pointercancel", stopWorkbenchResize);
-}
-
-function resizeWorkbench(event: PointerEvent): void {
-  if (workbenchResizeStart === null) return;
-  const pointerPosition = isSideBySide.value ? event.clientX : event.clientY;
-  const pointerDelta = pointerPosition - workbenchResizeStart.pointerPosition;
-  const scriptDelta = isScriptBeforeTerminal.value ? pointerDelta : -pointerDelta;
-  setScriptPaneSize(workbenchResizeStart.paneSize + scriptDelta);
-}
-
-function stopWorkbenchResize(): void {
-  if (workbenchResizeStart === null) return;
-  workbenchResizeStart = null;
-  document.body.style.cursor = previousResizeCursor;
-  document.body.style.userSelect = previousResizeUserSelect;
-  window.removeEventListener("pointermove", resizeWorkbench);
-  window.removeEventListener("pointerup", stopWorkbenchResize);
-  window.removeEventListener("pointercancel", stopWorkbenchResize);
-}
-
-function workbenchKeydownHandler(event: KeyboardEvent): void {
-  const currentSize = currentScriptPaneSize();
-  let nextSize: number;
-  switch (event.key) {
-    case "ArrowLeft":
-      if (!isSideBySide.value) return;
-      nextSize = currentSize + (isScriptBeforeTerminal.value ? -1 : 1) * WORKBENCH_KEYBOARD_RESIZE_STEP;
-      break;
-    case "ArrowRight":
-      if (!isSideBySide.value) return;
-      nextSize = currentSize + (isScriptBeforeTerminal.value ? 1 : -1) * WORKBENCH_KEYBOARD_RESIZE_STEP;
-      break;
-    case "ArrowUp":
-      if (isSideBySide.value) return;
-      nextSize = currentSize + (isScriptBeforeTerminal.value ? -1 : 1) * WORKBENCH_KEYBOARD_RESIZE_STEP;
-      break;
-    case "ArrowDown":
-      if (isSideBySide.value) return;
-      nextSize = currentSize + (isScriptBeforeTerminal.value ? 1 : -1) * WORKBENCH_KEYBOARD_RESIZE_STEP;
-      break;
-    case "Home": nextSize = minimumScriptPaneSize(); break;
-    case "End": nextSize = maximumScriptPaneSize(); break;
-    default: return;
+function applyPersistedParams(
+  data: CommandFolderData | CommandItemData,
+  updates: readonly CommandEnvUpdate[],
+): void {
+  const current = draft.value;
+  if (current === null) return;
+  if (current.kind === "folder" && !isCommandFolderData(data)) return;
+  if (current.kind === "item" && isCommandFolderData(data)) return;
+  const persistedGroup = data.paramGroups.find((group) => group.id === data.selectedParamGroupId);
+  if (persistedGroup === undefined) return;
+  if (current.kind === "folder") {
+    const folderData = data;
+    if (!isCommandFolderData(folderData)) return;
+    draft.value = {
+      ...current,
+      data: mergeExternalUpdates(current.data, persistedGroup.id, updates),
+      baseline: mergePersistedParams(current.baseline, persistedGroup),
+    };
+  } else {
+    if (isCommandFolderData(data)) return;
+    draft.value = {
+      ...current,
+      data: mergeExternalUpdates(current.data, persistedGroup.id, updates),
+      baseline: mergePersistedParams(current.baseline, persistedGroup),
+    };
   }
-  event.preventDefault();
-  setScriptPaneSize(nextSize);
+  emitState();
 }
 
-function setScriptPaneSize(size: number): void {
-  scriptPaneSize.value = Math.round(Math.min(
-    maximumScriptPaneSize(),
-    Math.max(minimumScriptPaneSize(), size),
-  ));
+function applyAncestorFolderData(folderId: string, data: CommandFolderData): void {
+  if (!ancestorFolderData.has(folderId)) return;
+  ancestorFolderData.set(folderId, cloneFolderData(data));
+  ancestorDataRevision.value += 1;
 }
 
-function currentScriptPaneSize(): number {
-  if (scriptPaneSize.value !== null) return scriptPaneSize.value;
-  const scriptPanel = commandWorkbench.value?.querySelector(".command-script-editor");
-  if (!(scriptPanel instanceof HTMLElement)) return minimumScriptPaneSize();
-  const bounds = scriptPanel.getBoundingClientRect();
-  return isSideBySide.value ? bounds.width : bounds.height;
+function mergeExternalUpdates<TData extends CommandFolderData | CommandItemData>(
+  data: TData,
+  groupId: string,
+  updates: readonly CommandEnvUpdate[],
+): TData {
+  return {
+    ...data,
+    paramGroups: data.paramGroups.map((group) => group.id === groupId
+      ? {
+          ...group,
+          params: updates.reduce(
+            (params, update) => updateCommandParams(params, update),
+            cloneParams(group.params),
+          ),
+        }
+      : group),
+  };
 }
 
-function minimumScriptPaneSize(): number {
-  return isSideBySide.value ? MIN_SCRIPT_PANE_WIDTH : MIN_SCRIPT_PANE_HEIGHT;
+function updateCommandParams(
+  params: readonly CommandParam[],
+  update: CommandEnvUpdate,
+): CommandParam[] {
+  const index = params.findIndex((param) => param.key === update.key);
+  if (index < 0) return [...params, { ...update, enabled: true }];
+  return params.map((param, paramIndex) => paramIndex === index
+    ? { ...update, enabled: true }
+    : param);
 }
 
-function maximumScriptPaneSize(): number {
-  const workbench = commandWorkbench.value;
-  const availableSize = isSideBySide.value ? workbench?.clientWidth ?? 0 : workbench?.clientHeight ?? 0;
-  const minimumTerminalSize = isSideBySide.value ? MIN_TERMINAL_PANE_WIDTH : MIN_TERMINAL_PANE_HEIGHT;
-  return Math.max(
-    minimumScriptPaneSize(),
-    availableSize - WORKBENCH_SPLITTER_WIDTH - minimumTerminalSize,
-  );
+function mergePersistedParams<TData extends CommandFolderData | CommandItemData>(
+  data: TData,
+  persistedGroup: CommandParamGroup,
+): TData {
+  return {
+    ...data,
+    paramGroups: data.paramGroups.map((group) => group.id === persistedGroup.id
+      ? { ...group, params: cloneParams(persistedGroup.params) }
+      : group),
+  };
+}
+
+function isCommandFolderData(
+  data: CommandFolderData | CommandItemData,
+): data is CommandFolderData {
+  return !("content" in data);
 }
 
 function isDraftDirty(value: CommandEditorDraft): boolean {
@@ -670,8 +853,12 @@ function cloneItemData(data: CommandItemData): CommandItemData {
 function cloneParamGroups(groups: readonly CommandParamGroup[]): CommandParamGroup[] {
   return groups.map((group) => ({
     ...group,
-    params: group.params.map((param) => ({ ...param })),
+    params: cloneParams(group.params),
   }));
+}
+
+function cloneParams(params: CommandParamGroup["params"]): CommandParam[] {
+  return params.map((param) => ({ ...param }));
 }
 
 function toCommandParamGroup(group: TextEditParamGroup): CommandParamGroup {
@@ -691,6 +878,7 @@ function errorMessage(reason: unknown): string {
 }
 
 function reportTerminalError(message: string): void {
+  terminalStatus.value = { kind: "error", message };
   gMessageStore.pushMessage("error", message);
 }
 
@@ -701,34 +889,49 @@ function reportTerminalLastLine(): void {
 </script>
 
 <template>
-  <section v-if="draft.kind === 'folder'" class="command-folder-editor">
+  <p v-if="isLoading" class="command-editor-state" role="status">Loading Command data...</p>
+  <p v-else-if="loadError.length > 0" class="command-editor-state" role="status">
+    Command data is unavailable.
+  </p>
+  <section v-else-if="draft?.kind === 'folder'" class="command-folder-editor">
     <header class="command-editor-toolbar">
       <strong>Folder parameters</strong>
       <button
         type="button"
         class="command-editor-save"
-        :disabled="!isDirty || isSaving"
+        :disabled="isSaveDisabled"
         title="Save (Ctrl+S)"
         @click="saveClickHandler"
       >{{ isSaving ? "Saving..." : "Save" }}</button>
     </header>
+    <p v-if="isAncestorDataLoading" class="command-editor-state" role="status">
+      Loading Folder parameters...
+    </p>
+    <p v-else-if="ancestorDataError.length > 0" class="command-editor-state" role="status">
+      Folder parameters are unavailable.
+    </p>
     <TextEditComponent
+      v-else
       :param-groups="paramGroups"
       :selected-group-id="getFolderDraft().data.selectedParamGroupId"
       :is-text-area-visible="false"
+      :is-param-expanded-initially="true"
       :get-additional-params="collectAdditionalParams"
+      :get-override-params="collectWorkspaceEnv"
+      :param-priority-description="PARAM_PRIORITY_DESCRIPTION"
       @update-param-groups="paramGroupsUpdateHandler"
       @update-selected-group-id="selectedParamGroupUpdateHandler"
     />
-    <p v-if="saveError.length > 0" class="command-editor-error" role="alert">{{ saveError }}</p>
   </section>
 
-  <div
-    v-else
-    ref="commandWorkbench"
+  <SplitContainer
+    v-else-if="draft?.kind === 'item'"
     class="command-workbench"
-    :class="`command-workbench--terminal-${gCommandSettings.terminalPlacement.value}`"
-    :style="commandWorkbenchStyle"
+    :class="`command-workbench--terminal-${terminalPlacement}`"
+    :orientation="isSideBySide ? 'vertical' : 'horizontal'"
+    :is-reversed="!isScriptBeforeTerminal"
+    :has-item-borders="false"
+    :separator-labels="['Resize script editor and terminal']"
   >
     <section class="command-script-editor">
       <header class="command-editor-toolbar">
@@ -753,50 +956,58 @@ function reportTerminalLastLine(): void {
         <button
           type="button"
           class="command-editor-save"
-          :disabled="(!isDirty && !isItemDraft) || isSaving"
+          :disabled="isSaveDisabled"
           title="Save (Ctrl+S)"
           @click="saveClickHandler"
         >{{ isSaving ? "Saving..." : "Save" }}</button>
         <button
           type="button"
           class="command-editor-run is-primary"
-          :aria-disabled="isCommandRunning"
+          :disabled="isCommandRunning || isAncestorDataLoading || ancestorDataError.length > 0"
+          :aria-disabled="isCommandRunning || isAncestorDataLoading || ancestorDataError.length > 0"
           :aria-busy="isCommandRunning"
-          :title="isCommandRunning ? 'Command is running' : 'Run command'"
+          :title="isCommandRunning
+            ? 'Command is running'
+            : isAncestorDataLoading
+              ? 'Folder parameters are loading'
+              : ancestorDataError.length > 0
+                ? 'Folder parameters are unavailable'
+                : 'Run command'"
           @click="runHandler"
-        >{{ isCommandRunning ? "Running..." : "Run" }}</button>
+        >Run</button>
       </header>
-      <p v-if="titleError.length > 0" class="command-editor-error" role="alert">{{ titleError }}</p>
+      <p v-if="isAncestorDataLoading" class="command-editor-state" role="status">
+        Loading Folder parameters...
+      </p>
+      <p v-else-if="ancestorDataError.length > 0" class="command-editor-state" role="status">
+        Folder parameters are unavailable.
+      </p>
       <TextEditComponent
+        v-else
         ref="textEdit"
         :param-groups="paramGroups"
         :text="getItemDraft().data.content"
         :selected-group-id="getItemDraft().data.selectedParamGroupId"
         :get-additional-params="collectAdditionalParams"
+        :get-override-params="collectWorkspaceEnv"
+        :param-priority-description="PARAM_PRIORITY_DESCRIPTION"
         :text-identity="entity.properties.id"
+        :script-type="getItemDraft().data.scriptType"
         @update-param-groups="paramGroupsUpdateHandler"
         @update-selected-group-id="selectedParamGroupUpdateHandler"
         @update-text="itemContentUpdateHandler"
       />
-      <p v-if="saveError.length > 0" class="command-editor-error" role="alert">{{ saveError }}</p>
     </section>
-
-    <div
-      class="command-workbench__splitter"
-      role="separator"
-      aria-label="Resize script editor and terminal"
-      :aria-orientation="isSideBySide ? 'vertical' : 'horizontal'"
-      :aria-valuemin="minimumScriptPaneSize()"
-      :aria-valuemax="maximumScriptPaneSize()"
-      :aria-valuenow="Math.round(currentScriptPaneSize())"
-      tabindex="0"
-      @pointerdown="workbenchPointerDownHandler"
-      @keydown="workbenchKeydownHandler"
-    ></div>
 
     <section class="command-terminal" aria-label="Terminal">
       <header class="command-terminal__toolbar">
-        <span>Terminal</span>
+        <span class="command-terminal__title">Terminal</span>
+        <output
+          class="command-terminal__status"
+          :class="{ 'is-error': terminalStatus.kind === 'error' }"
+          :title="terminalStatus.message"
+          aria-live="polite"
+        >{{ terminalStatus.message }}</output>
         <button
           v-if="IS_DEBUG"
           type="button"
@@ -812,14 +1023,14 @@ function reportTerminalLastLine(): void {
         <button
           v-if="isTerminalActive"
           type="button"
-          class="command-terminal-restart"
-          title="Restart Terminal"
-          @click="restartHandler"
-        >Restart</button>
+          class="command-terminal-toggle"
+          title="Close Terminal"
+          @click="closeHandler"
+        >Close</button>
         <button
           v-else
           type="button"
-          class="is-primary"
+          class="command-terminal-toggle is-primary"
           title="Open Terminal"
           @click="openHandler"
         >Open</button>
@@ -827,10 +1038,13 @@ function reportTerminalLastLine(): void {
       <TerminalComponent
         ref="terminal"
         @error="terminalErrorHandler"
+        @message="terminalMessageHandler"
       />
     </section>
 
-  </div>
+  </SplitContainer>
+
+  <PopupToast ref="popupToast" />
 
 </template>
 
@@ -846,11 +1060,13 @@ function reportTerminalLastLine(): void {
 
 .command-folder-editor {
   height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
 }
 
-.command-folder-editor :deep(.text-edit__param-toolbar),
-.command-workbench :deep(.text-edit__param-toolbar) {
-  background: var(--color-surface);
+.command-folder-editor:has(.text-edit.is-param-expanded) {
+  border-block-end: 0;
 }
 
 .command-workbench {
@@ -858,89 +1074,34 @@ function reportTerminalLastLine(): void {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  display: grid;
   overflow: hidden;
 }
 
-.command-workbench--terminal-right {
-  grid-template-areas: "script splitter terminal";
-  grid-template-columns: minmax(360px, var(--command-script-pane-size, 3fr)) 5px minmax(320px, 2fr);
-}
-
-.command-workbench--terminal-left {
-  grid-template-areas: "terminal splitter script";
-  grid-template-columns: minmax(320px, 2fr) 5px minmax(360px, var(--command-script-pane-size, 3fr));
-}
-
-.command-workbench--terminal-bottom {
-  grid-template-areas: "script" "splitter" "terminal";
-  grid-template-rows: minmax(220px, var(--command-script-pane-size, 3fr)) 5px minmax(220px, 2fr);
-}
-
-.command-workbench--terminal-top {
-  grid-template-areas: "terminal" "splitter" "script";
-  grid-template-rows: minmax(220px, 2fr) 5px minmax(220px, var(--command-script-pane-size, 3fr));
-}
-
 .command-script-editor {
-  grid-area: script;
+  flex: 1 1 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
 }
 
 .command-terminal {
-  grid-area: terminal;
+  flex: 1 1 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
 }
 
-.command-workbench__splitter {
-  grid-area: splitter;
-  position: relative;
-  z-index: 6;
-  touch-action: none;
+:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-script-editor {
+  min-width: 360px;
 }
 
-:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-workbench__splitter {
-  width: 5px;
-  cursor: col-resize;
+:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-terminal {
+  min-width: 320px;
 }
 
-:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-workbench__splitter {
-  height: 5px;
-  cursor: row-resize;
-}
-
-.command-workbench__splitter::before {
-  position: absolute;
-  content: "";
-  background: var(--color-divider);
-}
-
-:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-workbench__splitter::before {
-  inset-block: 0;
-  left: 2px;
-  width: 1px;
-}
-
-:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-workbench__splitter::before {
-  inset-inline: 0;
-  top: 2px;
-  height: 1px;
-}
-
-:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-workbench__splitter:hover::before,
-:is(.command-workbench--terminal-left, .command-workbench--terminal-right) .command-workbench__splitter:focus-visible::before {
-  left: 1px;
-  width: 2px;
-  background: var(--color-primary);
-}
-
-:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-workbench__splitter:hover::before,
-:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-workbench__splitter:focus-visible::before {
-  top: 1px;
-  height: 2px;
-  background: var(--color-primary);
-}
-
-.command-workbench__splitter:focus-visible {
-  outline: 0;
+:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-script-editor,
+:is(.command-workbench--terminal-top, .command-workbench--terminal-bottom) .command-terminal {
+  min-height: 220px;
 }
 
 .command-editor-toolbar,
@@ -956,10 +1117,24 @@ function reportTerminalLastLine(): void {
 }
 
 .command-editor-toolbar strong,
-.command-terminal__toolbar span {
+.command-terminal__title {
   color: var(--color-text);
   font-size: 12px;
   font-weight: 600;
+}
+
+.command-terminal__status {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--color-text-muted) 68%, var(--color-surface));
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-terminal__status.is-error {
+  color: color-mix(in srgb, var(--color-danger) 72%, var(--color-surface));
 }
 
 .command-editor-title {
@@ -974,7 +1149,7 @@ function reportTerminalLastLine(): void {
   color: var(--color-text);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-input);
+  border-radius: var(--radius-small);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -996,7 +1171,7 @@ function reportTerminalLastLine(): void {
   color: var(--color-text);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   cursor: pointer;
 }
@@ -1008,10 +1183,9 @@ function reportTerminalLastLine(): void {
   text-align: center;
 }
 
-.command-terminal__toolbar .command-terminal-restart {
-  width: 96px;
-  flex: 0 0 96px;
-  padding-inline: 0;
+.command-terminal__toolbar .command-terminal-toggle {
+  width: calc(5ch + 2 * var(--space-3) + 2px);
+  flex: 0 0 calc(5ch + 2 * var(--space-3) + 2px);
   text-align: center;
 }
 
@@ -1033,8 +1207,8 @@ function reportTerminalLastLine(): void {
 }
 
 .command-editor-toolbar button.is-primary:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-primary) 88%, white);
-  border-color: color-mix(in srgb, var(--color-primary) 88%, white);
+  background: var(--color-primary-emphasis);
+  border-color: var(--color-primary-emphasis);
 }
 
 :is(.command-editor-toolbar, .command-terminal__toolbar) button:not(:disabled):active {
@@ -1045,19 +1219,6 @@ function reportTerminalLastLine(): void {
 .command-terminal__toolbar button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.command-terminal__toolbar span {
-  margin-inline-end: auto;
-}
-
-.command-editor-error {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-content-bg));
-  border-block-start: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
-  font-size: 12px;
 }
 
 :is(.command-editor-toolbar, .command-terminal__toolbar) button:focus-visible {

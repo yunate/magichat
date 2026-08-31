@@ -3,12 +3,17 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import {
+  CLI_PAGE_TASK_CENTER,
+} from "../../../../common/cli";
+import {
   SCRIPT_TASK_KEY,
   type ScriptCreateParams,
   type ScriptType,
 } from "../../../../common/tasks/scriptTaskDefinition";
 import { MacroParser } from "../../../../common/macroParser";
 import { getErrorMessage } from "../../utils/error";
+import { gApplicationPaths } from "../../infra/applicationPaths";
+import { createCliEnvironment } from "../cli/cliEnvironment";
 import { createScriptExecution, getScriptExtension } from "../scriptExecution";
 import { Task, type TaskCallbacks } from "./task";
 
@@ -48,7 +53,8 @@ export class ScriptTask extends Task {
     const tmpFile = path.join(this._tmpDir, `${taskId}${getScriptExtension(params.scriptType)}`);
     const paramPairs = new Map(Object.entries(params.variables));
     const scriptContent = MacroParser.replaceMacrosInText(params.scriptContent, paramPairs);
-    const execution = createScriptExecution(params.scriptType, scriptContent, tmpFile);
+    const executableContent = this._createExecutableContent(params.scriptType, scriptContent);
+    const execution = createScriptExecution(params.scriptType, executableContent, tmpFile);
     try {
       fs.writeFileSync(tmpFile, execution.content, "utf8");
     } catch (err) {
@@ -61,7 +67,13 @@ export class ScriptTask extends Task {
     this._appendLog([`spawn ${execution.command} (${params.scriptType})`]);
     let child: ChildProcess;
     try {
-      child = spawn(execution.command, execution.args, { windowsHide: true });
+      child = spawn(execution.command, execution.args, {
+        env: createCliEnvironment(process.env, {
+          page: CLI_PAGE_TASK_CENTER,
+          taskId,
+        }),
+        windowsHide: true,
+      });
     } catch (err) {
       const message = getErrorMessage(err);
       this._cleanupTmp(tmpFile);
@@ -121,6 +133,12 @@ export class ScriptTask extends Task {
       throw new Error("Script create params are required");
     }
     return createParam.params;
+  }
+
+  private _createExecutableContent(scriptType: ScriptType, scriptContent: string): string {
+    if (scriptType !== "powershell") return scriptContent;
+    const modulePath = gApplicationPaths.cliPowerShellModulePath.replaceAll("'", "''");
+    return `Import-Module -Name '${modulePath}'\n${scriptContent}`;
   }
 
   private _streamLines(state: LineState, chunk: Buffer): void {

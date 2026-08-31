@@ -1,18 +1,29 @@
+export const TREE_VIEW_ITEM_FILE_EXTENSION = ".mh";
+
 export type TreeViewFolderProperties = {
   id: string;
   isExpanded: boolean;
   folderOrder: string[];
   itemOrder: string[];
-  data: unknown;
 };
 
 export type TreeViewItemProperties = {
   id: string;
   isDraft: boolean;
-  data: unknown;
 };
 
 export type TreeViewCreateItemProperties = Omit<TreeViewItemProperties, "id">;
+
+export type TreeViewStorageRoot = {
+  key: string;
+  path: string;
+};
+
+export type TreeViewWorkspaceRef = {
+  rootKey: string;
+  workspacePath: string;
+  workspaceName: string;
+};
 
 export type TreeViewItem = {
   path: string;
@@ -38,6 +49,7 @@ export type TreeViewWorkspace = {
   isSelected: boolean;
   tabs: TreeViewTab[];
   activeTabId: string | null;
+  previewTabId: string | null;
   ui: {
     layout: {
       sidebarWidth: number;
@@ -45,10 +57,15 @@ export type TreeViewWorkspace = {
   };
 };
 
-export type TreeViewEntityKind = "folder" | "item";
+export type TreeViewEntityKind = "workspace" | "folder" | "item";
+
+export type TreeViewEntityDataParams = {
+  kind: TreeViewEntityKind;
+  path: string;
+};
 
 export type TreeViewMoveParams = {
-  kind: TreeViewEntityKind;
+  kind: Exclude<TreeViewEntityKind, "workspace">;
   sourcePath: string;
   targetPath: string;
   targetOrder: number;

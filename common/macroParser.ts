@@ -9,8 +9,9 @@ export class MacroParser {
       if (typeof value !== "string") {
         return { isValid: false, kind: "invalid-value", key };
       }
-      if (MacroParser._hasInvalidMacroCandidate(value)) {
-        return { isValid: false, kind: "invalid-reference", key };
+      const invalidReferenceKey = MacroParser._findInvalidMacroKey(value);
+      if (invalidReferenceKey !== null) {
+        return { isValid: false, kind: "invalid-reference", key, invalidReferenceKey };
       }
     }
 
@@ -49,8 +50,10 @@ export class MacroParser {
     MacroParser._MACRO_CANDIDATE_PATTERN.lastIndex = 0;
 
     for (const match of text.matchAll(MacroParser._MACRO_CANDIDATE_PATTERN)) {
-      const key = match[1];
-      if (key === undefined || !MacroParser._KEY_PATTERN.test(key)) {
+      const candidateKey = match[1];
+      if (candidateKey === undefined) continue;
+      const key = candidateKey.trim();
+      if (!MacroParser._KEY_PATTERN.test(key)) {
         continue;
       }
       references.push({ key, start: match.index, end: match.index + match[0].length });
@@ -61,12 +64,12 @@ export class MacroParser {
 
   // Extracts macro keys from text in first occurrence order.
   // params:
-  //   - text: Text containing `{{key}}` macros.
+  //   - text: Text containing `mh{key}` macros.
   //   - isStrictMode: Throws when an invalid macro key is found when true.
   // return:
   //   Extracted unique macro keys.
   // except:
-  //   - Macro key is invalid: Strict mode found an invalid macro key.
+  //   - Macro key "<key>" is invalid: Strict mode found an invalid macro key.
   public static extractKeys(
     text: string,
     isStrictMode = false,
@@ -82,13 +85,13 @@ export class MacroParser {
 
   // Resolves parameter-pair value dependencies, then performs a single-pass macro replacement in text.
   // params:
-  //   - text: Text containing `{{key}}` macros.
+  //   - text: Text containing `mh{key}` macros.
   //   - paramPairs: Parameter pairs whose values may contain dependent macros.
   // return:
   //   Replacement result. Unknown or invalid text macros may remain; use `extractKeys`
   //   to check remaining valid macro keys.
   // except:
-  //   - Macro key is invalid: A parameter key or strict macro candidate in a value is invalid.
+  //   - Macro key "<key>" is invalid: A parameter key or strict macro candidate in a value is invalid.
   //   - Macro parameter value must be a string: A value is not a string at runtime.
   //   - Macro parameter references unknown key: A value references a missing parameter.
   //   - Macro parameter cycle detected: Remaining parameters cannot be resolved.
@@ -102,6 +105,13 @@ export class MacroParser {
       text,
       (key) => resolvedParamPairs.get(key),
     );
+  }
+
+  public static formatReference(key: string): string {
+    if (!MacroParser._KEY_PATTERN.test(key)) {
+      throw new Error(MacroParser._invalidKeyMessage(key));
+    }
+    return `mh{${key}}`;
   }
 
   private static _replaceMacrosInParamPairs(
@@ -184,7 +194,8 @@ export class MacroParser {
     while (match !== null) {
       parts.push(text.slice(lastIndex, match.index));
       const candidate = match[0];
-      const key = match[1];
+      const candidateKey = match[1];
+      const key = candidateKey?.trim();
       const replacement = key !== undefined && MacroParser._KEY_PATTERN.test(key)
         ? resolveMacro(key)
         : undefined;
@@ -197,23 +208,26 @@ export class MacroParser {
   }
 
   private static _validateMacroCandidates(text: string): void {
-    if (MacroParser._hasInvalidMacroCandidate(text)) throw new Error("Macro key is invalid");
+    const invalidKey = MacroParser._findInvalidMacroKey(text);
+    if (invalidKey !== null) throw new Error(MacroParser._invalidKeyMessage(invalidKey));
   }
 
-  private static _hasInvalidMacroCandidate(text: string): boolean {
+  private static _findInvalidMacroKey(text: string): string | null {
     MacroParser._MACRO_CANDIDATE_PATTERN.lastIndex = 0;
     for (const match of text.matchAll(MacroParser._MACRO_CANDIDATE_PATTERN)) {
-      const key = match[1];
-      if (key !== undefined && !MacroParser._KEY_PATTERN.test(key)) return true;
+      const candidateKey = match[1];
+      if (candidateKey === undefined) continue;
+      const key = candidateKey.trim();
+      if (!MacroParser._KEY_PATTERN.test(key)) return key;
     }
-    return false;
+    return null;
   }
 
   private static _validationMessage(validation: MacroParamValidationFailure): string {
     switch (validation.kind) {
-      case "invalid-key": return "Macro key is invalid";
+      case "invalid-key": return MacroParser._invalidKeyMessage(validation.key);
       case "invalid-value": return "Macro parameter value must be a string";
-      case "invalid-reference": return "Macro key is invalid";
+      case "invalid-reference": return MacroParser._invalidKeyMessage(validation.invalidReferenceKey);
       case "unknown-reference": {
         return `Macro parameter "${validation.key}" references unknown key "${validation.dependency}"`;
       }
@@ -221,8 +235,12 @@ export class MacroParser {
     }
   }
 
-  private static readonly _MACRO_CANDIDATE_PATTERN = /{{([^{}]*)}}/g;
-  private static readonly _KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  private static _invalidKeyMessage(key: string): string {
+    return `Macro key ${JSON.stringify(key)} is invalid`;
+  }
+
+  private static readonly _MACRO_CANDIDATE_PATTERN = /mh\{([^{}]*)\}/g;
+  private static readonly _KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*$/;
 }
 
 export type MacroReference = {
@@ -240,7 +258,7 @@ type MacroParamValidationFailure = {
 } & (
   | { kind: "invalid-key"; key: string }
   | { kind: "invalid-value"; key: string }
-  | { kind: "invalid-reference"; key: string }
+  | { kind: "invalid-reference"; key: string; invalidReferenceKey: string }
   | { kind: "unknown-reference"; key: string; dependency: string }
   | { kind: "cycle"; keys: readonly string[] }
 );

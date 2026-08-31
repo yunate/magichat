@@ -4,13 +4,23 @@ import {
   commandConfigSerializer,
 } from "./command";
 import {
+  GLOBAL_CONFIG_KEY,
+  globalConfigSerializer,
+} from "./global";
+import {
   TASK_CENTER_CONFIG_KEY,
   taskCenterConfigSerializer,
 } from "./taskCenter";
+import {
+  TOOLS_CONFIG_KEY,
+  toolsConfigSerializer,
+} from "./tools";
 
 const _CONFIG_TYPE_REGISTRY = {
   [COMMAND_CONFIG_KEY]: commandConfigSerializer,
+  [GLOBAL_CONFIG_KEY]: globalConfigSerializer,
   [TASK_CENTER_CONFIG_KEY]: taskCenterConfigSerializer,
+  [TOOLS_CONFIG_KEY]: toolsConfigSerializer,
 } as const;
 
 export type ConfigKey = keyof typeof _CONFIG_TYPE_REGISTRY;

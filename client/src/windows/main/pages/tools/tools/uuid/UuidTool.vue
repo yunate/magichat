@@ -62,17 +62,17 @@ async function copyOutput(): Promise<void> {
 
 <template>
   <ToolSplitLayout
-    title="UUID / 随机串"
-    hint="生成 UUID v4 或自定义长度、字符集的随机字符串, 随机源为 Web Crypto。"
-    left-label="参数"
-    right-label="生成结果"
+    title="UUID / Random String"
+    hint="Generate UUID v4 values or random strings with a custom length and character set using Web Crypto."
+    left-label="Parameters"
+    right-label="Generated Values"
   >
     <template #toolbar>
-      <button type="button" class="uuid-tool__generate" @click="generate">重新生成</button>
+      <button type="button" class="uuid-tool__generate" @click="generate">Regenerate</button>
     </template>
     <template #left>
       <div class="uuid-tool__form">
-        <div class="uuid-tool__modes" role="group" aria-label="类型">
+        <div class="uuid-tool__modes" role="group" aria-label="Type">
           <button
             type="button"
             class="uuid-tool__mode"
@@ -87,37 +87,37 @@ async function copyOutput(): Promise<void> {
             :class="{ 'uuid-tool__mode--active': mode === 'random' }"
             @click="mode = 'random'"
           >
-            随机字符串
+            Random String
           </button>
         </div>
         <label class="uuid-tool__field">
-          <span>生成数量</span>
+          <span>Quantity</span>
           <input v-model.number="count" type="number" min="1" max="100" class="uuid-tool__input" />
         </label>
         <template v-if="mode === 'random'">
           <label class="uuid-tool__field">
-            <span>字符串长度</span>
+            <span>String Length</span>
             <input v-model.number="length" type="number" min="1" max="256" class="uuid-tool__input" />
           </label>
           <div class="uuid-tool__field">
-            <span id="uuid-charset-label">字符集</span>
+            <span id="uuid-charset-label">Character Set</span>
             <div class="uuid-tool__select">
               <PopupSelect
                 :value="charsetId"
                 :options="charsetOptions"
-                accessible-label="字符集"
+                accessible-label="Character set"
                 labelled-by="uuid-charset-label"
                 @update-value="setCharset"
               />
             </div>
           </div>
         </template>
-        <button type="button" class="uuid-tool__primary" @click="generate">生成</button>
+        <button type="button" class="uuid-tool__primary" @click="generate">Generate</button>
       </div>
     </template>
     <template #rightActions>
       <button type="button" class="uuid-tool__copy" :disabled="output === ''" @click="copyOutput">
-        {{ copied ? "已复制" : "复制" }}
+        {{ copied ? "Copied" : "Copy" }}
       </button>
     </template>
     <template #right>
@@ -126,7 +126,7 @@ async function copyOutput(): Promise<void> {
         class="uuid-tool__output"
         readonly
         spellcheck="false"
-        aria-label="生成结果"
+        aria-label="Generated values"
         :value="output"
       ></textarea>
     </template>
@@ -137,7 +137,7 @@ async function copyOutput(): Promise<void> {
 .uuid-tool__generate {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 13px;
@@ -170,7 +170,7 @@ async function copyOutput(): Promise<void> {
   flex: 1;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: 13px;
@@ -200,7 +200,7 @@ async function copyOutput(): Promise<void> {
 .uuid-tool__input {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 14px;
@@ -215,9 +215,9 @@ async function copyOutput(): Promise<void> {
   margin-top: var(--space-1);
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-primary);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-primary);
-  color: #0f172a;
+  color: var(--color-text-on-light);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -230,7 +230,7 @@ async function copyOutput(): Promise<void> {
 .uuid-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -257,7 +257,7 @@ async function copyOutput(): Promise<void> {
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.8;
   overflow: auto;

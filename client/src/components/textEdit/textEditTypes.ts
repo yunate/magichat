@@ -1,4 +1,4 @@
-import { MacroParser } from "../../../../common/macroParser";
+import { MacroParser, type MacroReference } from "../../../../common/macroParser";
 
 export type TextEditParam = Readonly<{
   key: string;
@@ -53,6 +53,13 @@ export type MacroDisplayDetail = Readonly<{
   error: string | null;
 }>;
 
+export type MacroAnalysis = Readonly<{
+  revision: number;
+  references: readonly MacroReference[];
+  details: ReadonlyMap<string, MacroDisplayDetail>;
+  textResolution: TextEditTextResolution;
+}>;
+
 type MergedTextEditParam = Readonly<{
   rawValue: string;
   sourceType: string;
@@ -71,8 +78,9 @@ export function cloneTextEditParamGroups(
 export function resolveTextEditParamGroup(
   group: TextEditParamGroup,
   additionalScopes: readonly TextEditAdditionalParamScope[] = [],
+  overrideScopes: readonly TextEditAdditionalParamScope[] = [],
 ): ResolvedTextEditParamGroup {
-  const mergedParams = createMergedParams(additionalScopes, group);
+  const mergedParams = createMergedParams(additionalScopes, group, overrideScopes);
   const params = group.params.map((param, index): ResolvedTextEditParam => {
     if (!param.enabled) {
       return {
@@ -125,9 +133,10 @@ export function resolveTextEditText(
   text: string,
   group: TextEditParamGroup | null,
   additionalScopes: readonly TextEditAdditionalParamScope[] = [],
+  overrideScopes: readonly TextEditAdditionalParamScope[] = [],
 ): TextEditTextResolution {
   try {
-    const mergedParams = createMergedParams(additionalScopes, group);
+    const mergedParams = createMergedParams(additionalScopes, group, overrideScopes);
     const value = MacroParser.replaceMacrosInText(text, createMergedParamMap(mergedParams));
     const unresolvedKeys = MacroParser.extractKeys(value, true);
     if (unresolvedKeys.length > 0) throw new Error(`Unknown macro "${unresolvedKeys[0]}"`);
@@ -144,8 +153,9 @@ export function resolveTextEditText(
 export function createMacroDisplayDetails(
   group: TextEditParamGroup | null,
   additionalScopes: readonly TextEditAdditionalParamScope[] = [],
+  overrideScopes: readonly TextEditAdditionalParamScope[] = [],
 ): ReadonlyMap<string, MacroDisplayDetail> {
-  const mergedParams = createMergedParams(additionalScopes, group);
+  const mergedParams = createMergedParams(additionalScopes, group, overrideScopes);
   const details = new Map<string, MacroDisplayDetail>();
   for (const [key, param] of mergedParams) {
     try {
@@ -178,7 +188,7 @@ export function getTextEditParamKeyError(
   const param = params[index];
   if (param === undefined || param.key.length === 0) return "Key is required.";
   if (!MacroParser.validateParamPairs(new Map([[param.key, ""]])).isValid) {
-    return "Key must start with a letter or underscore and contain only letters, numbers, or underscores.";
+    return "Key must start with a letter or underscore and use letters, numbers, underscores, dots, or dashes without empty segments.";
   }
   const previousIndex = params.findIndex((candidate) => candidate.key === param.key);
   return previousIndex === index ? null : `Key duplicates row ${previousIndex + 1}.`;
@@ -191,6 +201,7 @@ function errorMessage(reason: unknown): string {
 function createMergedParams(
   additionalScopes: readonly TextEditAdditionalParamScope[],
   group: TextEditParamGroup | null,
+  overrideScopes: readonly TextEditAdditionalParamScope[],
 ): ReadonlyMap<string, MergedTextEditParam> {
   const mergedParams = new Map<string, MergedTextEditParam>();
   for (const scope of additionalScopes) {
@@ -198,6 +209,9 @@ function createMergedParams(
   }
   if (group !== null) {
     appendParamScope(mergedParams, group.sourceType, group.sourcePath, group.params);
+  }
+  for (const scope of overrideScopes) {
+    appendParamScope(mergedParams, scope.label, scope.sourcePath, scope.params);
   }
   return mergedParams;
 }
@@ -246,5 +260,5 @@ function resolveMergedParam(
   };
 
   appendDependency(rootKey);
-  return MacroParser.replaceMacrosInText(`{{${rootKey}}}`, dependencyValues);
+  return MacroParser.replaceMacrosInText(MacroParser.formatReference(rootKey), dependencyValues);
 }

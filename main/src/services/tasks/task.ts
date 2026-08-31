@@ -4,8 +4,10 @@ import {
   type TaskInfo,
 } from "../../../../common/tasks/taskInfo";
 import type { TaskSpectialInfo, TaskStatus } from "../../../../common/tasks/taskType";
-import { appendLogLines, readLogLines, readTailLogLines } from "../../infra/logFile";
+import { appendRotatingLogLines, readTailLogLines } from "../../infra/logFile";
 import { TaskPaths } from "./taskPaths";
+
+const TASK_LOG_MAX_BYTES = 10 * 1024 * 1024;
 
 export interface TaskCallbacks {
   onUpdated(task: Task): void;
@@ -25,9 +27,11 @@ export abstract class Task {
       throw new Error("Task info and create param types must match");
     }
     this._taskInfo = taskInfo;
+    delete this._taskInfo.displayState;
     this._createParam = taskCreateParam;
     this._callbacks = callbacks;
     this._logFile = TaskPaths.getTaskLogFile(taskInfo.id);
+    this._archivedLogFile = TaskPaths.getTaskArchivedLogFile(taskInfo.id);
   }
 
   get taskInfo(): TaskInfo {
@@ -46,11 +50,9 @@ export abstract class Task {
     return readTailLogLines(this._logFile, limit, "tasks");
   }
 
-  getFullLogs(): string[] {
-    return readLogLines(this._logFile, "tasks");
-  }
   serialize() {
-    return { info: this._taskInfo, params: this._createParam };
+    const { displayState: _displayState, ...persistedInfo } = this._taskInfo;
+    return { info: persistedInfo, params: this._createParam };
   }
 
   seedCreationLog(line: string): void {
@@ -84,6 +86,22 @@ export abstract class Task {
     } else {
       delete this._taskInfo.pinnedAt;
     }
+    this._taskInfo.updatedAt = Date.now();
+    this._callbacks.onUpdated(this);
+  }
+
+  setDisplayState(displayState: string): void {
+    if (this._taskInfo.status !== "running") throw new Error("Task is not running");
+    if (displayState.trim().length === 0) throw new Error("Task state must not be blank");
+    this._taskInfo.displayState = displayState;
+    this._taskInfo.updatedAt = Date.now();
+    this._callbacks.onUpdated(this);
+  }
+
+  clearDisplayState(): void {
+    if (this._taskInfo.status !== "running") throw new Error("Task is not running");
+    if (this._taskInfo.displayState === undefined) return;
+    delete this._taskInfo.displayState;
     this._taskInfo.updatedAt = Date.now();
     this._callbacks.onUpdated(this);
   }
@@ -158,12 +176,19 @@ export abstract class Task {
 
   // Synchronous appends preserve line order within a task.
   private _writeLogLines(stamped: string[]): void {
-    appendLogLines(this._logFile, stamped, "tasks");
+    appendRotatingLogLines(
+      this._logFile,
+      this._archivedLogFile,
+      stamped,
+      TASK_LOG_MAX_BYTES,
+      "tasks",
+    );
   }
 
   protected readonly _callbacks: TaskCallbacks;
   protected _isStopped = false;
   protected _isDisposed = false;
+  private readonly _archivedLogFile: string;
   private readonly _logFile: string;
   private readonly _taskInfo: TaskInfo;
   private readonly _createParam: TaskCreateParam;

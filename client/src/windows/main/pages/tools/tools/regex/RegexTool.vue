@@ -6,30 +6,30 @@ import { runRegex } from "./regex";
 
 const pattern = ref("(\\w+)@(\\w+\\.\\w+)");
 const flags = ref("g");
-const text = ref("联系 alice@example.com 或 bob@test.org 获取更多信息。");
+const text = ref("Contact alice@example.com or bob@test.org for more information.");
 
 const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 </script>
 
 <template>
   <ToolSplitLayout
-    title="正则测试"
-    hint="输入正则与 flags (如 gimsuy) 及测试文本, 右侧显示是否匹配、匹配片段与捕获组。"
-    left-label="正则与文本"
-    right-label="匹配结果"
+    title="Regex Tester"
+    hint="Enter a regular expression, flags such as gimsuy, and test text to inspect matches and capture groups."
+    left-label="Expression & Text"
+    right-label="Matches"
   >
     <template #left>
       <div class="regex-tool__form">
         <div class="regex-tool__fields">
           <label class="regex-tool__field regex-tool__field--pattern">
-            <span>正则</span>
+            <span>Expression</span>
             <input
               v-model="pattern"
               v-select-all
               class="regex-tool__input"
               spellcheck="false"
-              aria-label="正则表达式"
-              placeholder="正则表达式…"
+              aria-label="Regular expression"
+              placeholder="Regular expression..."
             />
           </label>
           <label class="regex-tool__field regex-tool__field--flags">
@@ -48,8 +48,8 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
           v-select-all
           class="regex-tool__text"
           spellcheck="false"
-          aria-label="测试文本"
-          placeholder="在此输入测试文本…"
+          aria-label="Test text"
+          placeholder="Enter test text..."
         ></textarea>
       </div>
     </template>
@@ -58,18 +58,18 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
         <p v-if="!result.ok" class="regex-tool__error">{{ result.error }}</p>
         <template v-else>
           <p class="regex-tool__summary" :class="{ 'regex-tool__summary--hit': result.matched }">
-            {{ result.matched ? `匹配到 ${result.matches.length} 处` : "无匹配" }}
+            {{ result.matched ? `${result.matches.length} matches` : "No matches" }}
           </p>
           <ul v-if="result.matches.length > 0" class="regex-tool__matches">
             <li v-for="(item, matchIndex) in result.matches" :key="matchIndex" class="regex-tool__match">
               <div class="regex-tool__match-head">
                 <span class="regex-tool__badge">#{{ matchIndex + 1 }}</span>
-                <span class="regex-tool__pos">位置 {{ item.index }}</span>
+                <span class="regex-tool__pos">Position {{ item.index }}</span>
               </div>
               <span v-select-all tabindex="0" class="regex-tool__match-text">{{ item.match }}</span>
               <ul v-if="item.groups.length > 0" class="regex-tool__groups">
                 <li v-for="(group, groupIndex) in item.groups" :key="groupIndex">
-                  <span class="regex-tool__group-label">组 {{ groupIndex + 1 }}</span>
+                  <span class="regex-tool__group-label">Group {{ groupIndex + 1 }}</span>
                   <span class="regex-tool__group-value">{{ group || "—" }}</span>
                 </li>
               </ul>
@@ -116,10 +116,10 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 .regex-tool__input {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
 }
 
@@ -134,12 +134,12 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
   width: 100%;
   resize: none;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   outline: none;
   padding: var(--space-3);
   background: var(--color-surface-raised);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   overflow: auto;
@@ -171,7 +171,7 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 }
 
 .regex-tool__summary--hit {
-  color: var(--color-success, #4ade80);
+  color: var(--color-success);
 }
 
 .regex-tool__matches {
@@ -189,7 +189,7 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
 }
 
@@ -201,7 +201,7 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 
 .regex-tool__badge {
   padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   color: var(--color-primary);
   font-size: 11px;
@@ -215,7 +215,7 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 
 .regex-tool__match-text {
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   word-break: break-all;
 }
@@ -248,13 +248,13 @@ const result = computed(() => runRegex(pattern.value, flags.value, text.value));
 
 .regex-tool__group-value {
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   word-break: break-all;
 }
 
 .regex-tool__error {
   margin: 0;
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   font-size: 14px;
 }
 </style>

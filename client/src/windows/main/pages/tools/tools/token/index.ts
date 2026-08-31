@@ -5,5 +5,6 @@ export const tokenTool: ToolDefinition = {
   id: "token",
   title: "Token",
   component: TokenTool,
+  category: "developer",
   order: 3,
 };

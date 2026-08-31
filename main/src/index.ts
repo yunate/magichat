@@ -1,14 +1,18 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu, Tray } from "electron";
 import path from "node:path";
 import { BridgeRouter } from "../../common/ipc_bridge/rpc";
 import { RpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
+import { gApplicationPaths } from "./infra/applicationPaths";
+import { gCliBridge } from "./services/cli/cliBridge";
 import { gTaskManager } from "./services/tasks/taskManager";
 import { gTerminalRuntimeManager } from "./services/terminal/terminalRuntimeManager";
+import { gUacBrokerService } from "./services/uacBroker/uacBrokerService";
 import { WindowFactory } from "./window/windowFactory";
 import { WindowManager } from "./window/windowManager";
 
 let gIsShutdownStarted = false;
 let gIsShutdownComplete = false;
+let gTray: Tray | null = null;
 
 function configureInstanceScope(): void {
   if (app.isPackaged) return;
@@ -26,11 +30,40 @@ function bringPrimaryWindowToFront(): void {
 }
 
 async function shutdown(): Promise<void> {
+  gTray?.destroy();
+  gTray = null;
+  await gCliBridge.stop();
   await WindowManager.getInstance().forEachWindow((window) => window.browserWindow.hide());
   await gTerminalRuntimeManager.disposeAll();
   gTaskManager.disposeAll();
+  await gUacBrokerService.dispose();
   await gTerminalRuntimeManager.clearTemporaryDirectory();
   await WindowManager.getInstance().disposeAll();
+}
+
+function showPrimaryWindow(): void {
+  const browserWindow = BrowserWindow.getAllWindows()[0];
+  if (browserWindow === undefined) return;
+  if (browserWindow.isMinimized()) browserWindow.restore();
+  browserWindow.show();
+  browserWindow.moveTop();
+  browserWindow.focus();
+}
+
+function createTray(): void {
+  const tray = new Tray(gApplicationPaths.appIconPath);
+  tray.setToolTip("MagicHat");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open", click: showPrimaryWindow },
+    {
+      label: "Close",
+      click: () => {
+        void WindowManager.getInstance().forEachWindow((window) => window.requestClose());
+      },
+    },
+  ]));
+  tray.on("double-click", showPrimaryWindow);
+  gTray = tray;
 }
 
 configureInstanceScope();
@@ -41,9 +74,12 @@ if (!hasSingleInstanceLock) {
 } else {
   app.on("second-instance", bringPrimaryWindowToFront);
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     RpcObjectRegistry.register(BridgeRouter.getRouter());
-    void WindowFactory.createWindow();
+    await gCliBridge.start(app.getPath("userData"));
+    gTaskManager.startQueuedTasks();
+    await WindowFactory.createWindow();
+    createTray();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void WindowFactory.createWindow();
     });

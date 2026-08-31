@@ -5,9 +5,9 @@ export interface Charset {
 }
 
 export const CHARSETS: Charset[] = [
-  { id: "alnum", label: "字母数字", chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" },
-  { id: "hex", label: "十六进制", chars: "0123456789abcdef" },
-  { id: "alnumSymbol", label: "字母数字+符号", chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*-_=+" },
+  { id: "alnum", label: "Alphanumeric", chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" },
+  { id: "hex", label: "Hexadecimal", chars: "0123456789abcdef" },
+  { id: "alnumSymbol", label: "Alphanumeric + Symbols", chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*-_=+" },
 ];
 
 export function generateUuidV4(): string {

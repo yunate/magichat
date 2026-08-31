@@ -1,80 +1,99 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { commandItemDataSerializer } from "../../../../../../common/command";
 import type { ScriptType } from "../../../../../../common/tasks/scriptTaskDefinition";
-import type { TreeViewItem } from "../../../../../../common/treeView";
 
 type Props = {
-  item: TreeViewItem;
+  scriptType?: ScriptType;
+  isRunning?: boolean;
 };
 
-type ScriptIcon = Readonly<{
-  label: string;
-  title: string;
-}>;
+const props = withDefaults(defineProps<Props>(), {
+  isRunning: false,
+});
 
-const props = defineProps<Props>();
+const SCRIPT_TYPE_LABELS: Readonly<Record<ScriptType, string>> = {
+  powershell: "PS",
+  node: "JS",
+  python: "PY",
+  cmd: "CMD",
+};
 
-const scriptIcon = computed(() => getScriptIcon(
-  commandItemDataSerializer.fromValue(props.item.properties.data).scriptType,
-));
-
-function getScriptIcon(scriptType: ScriptType): ScriptIcon {
-  switch (scriptType) {
-    case "powershell": return { label: "PS1", title: "PowerShell" };
-    case "bash": return { label: "SH", title: "Bash" };
-    case "node": return { label: "JS", title: "Node.js" };
-    case "python": return { label: "PY", title: "Python" };
-    case "cmd": return { label: "CMD", title: "Command Prompt" };
-  }
-}
+const label = computed(() => props.scriptType === undefined
+  ? "RUN"
+  : SCRIPT_TYPE_LABELS[props.scriptType]);
+const title = computed(() => `${props.scriptType ?? "Command"}${props.isRunning ? " is running" : ""}`);
 </script>
 
 <template>
   <span
     class="command-script-icon"
-    :class="`is-${scriptIcon.label.toLowerCase()}`"
-    :title="scriptIcon.title"
-    aria-hidden="true"
-  >{{ scriptIcon.label }}</span>
+    :class="{ 'is-running': isRunning }"
+    :title="title"
+    :role="isRunning ? 'status' : undefined"
+    :aria-label="isRunning ? title : undefined"
+    :aria-hidden="isRunning ? undefined : true"
+  >{{ label }}</span>
 </template>
 
 <style scoped>
 .command-script-icon {
-  min-width: 20px;
+  position: relative;
+  width: 28px;
+  min-width: 28px;
   height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding-inline: var(--space-1);
   border: 1px solid color-mix(in srgb, currentColor 68%, transparent);
-  border-radius: 4px;
-  color: var(--color-text-muted);
+  border-radius: var(--radius-small);
+  color: var(--color-command-icon);
   background: color-mix(in srgb, currentColor 12%, transparent);
-  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-family);
   font-size: 8px;
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.2px;
 }
 
-.command-script-icon.is-py {
-  color: #e5c07b;
+.command-script-icon.is-running {
+  border-color: transparent;
 }
 
-.command-script-icon.is-js {
-  color: #e8d44d;
+.command-script-icon.is-running::after {
+  --command-icon-orbit-angle: 0deg;
+  position: absolute;
+  inset: -1px;
+  content: "";
+  padding: 1px;
+  border-radius: var(--radius-small);
+  background: conic-gradient(
+    from var(--command-icon-orbit-angle),
+    transparent 0deg,
+    color-mix(in srgb, var(--color-command-running) 28%, transparent) 54deg,
+    color-mix(in srgb, var(--color-command-running) 82%, transparent) 132deg,
+    var(--color-command-running) 174deg,
+    transparent 180deg,
+    color-mix(in srgb, var(--color-command-running) 28%, transparent) 234deg,
+    color-mix(in srgb, var(--color-command-running) 82%, transparent) 312deg,
+    var(--color-command-running) 354deg,
+    transparent 360deg
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: command-script-icon-orbit 2.6s linear infinite;
+  pointer-events: none;
 }
 
-.command-script-icon.is-ps1 {
-  color: #62b4f5;
+@property --command-icon-orbit-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
 }
 
-.command-script-icon.is-cmd {
-  color: #73c991;
-}
-
-.command-script-icon.is-sh {
-  color: #c5e478;
+@keyframes command-script-icon-orbit {
+  to { --command-icon-orbit-angle: 360deg; }
 }
 </style>

@@ -1,44 +1,59 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from "vue";
+import { nextTick, ref, useTemplateRef } from "vue";
+import PopupWindow from "./PopupWindow.vue";
+
+type ShowOptions = Readonly<{
+  actionText?: string;
+  isPersistent?: boolean;
+}>;
 
 const DISPLAY_DURATION_MS = 1500;
 
 const isVisible = ref(false);
+const isPersistent = ref(false);
 const message = ref("");
+const actionText = ref("Close");
+const popupWindow = useTemplateRef<{ restartDismiss: () => void }>("popupWindow");
 
-let hideTimer: number | null = null;
-
-function show(text: string): void {
+function show(text: string, options: ShowOptions = {}): void {
   message.value = text;
+  actionText.value = options.actionText ?? "Close";
+  isPersistent.value = options.isPersistent ?? false;
   isVisible.value = true;
-  if (hideTimer !== null) window.clearTimeout(hideTimer);
-  hideTimer = window.setTimeout(() => {
-    isVisible.value = false;
-    hideTimer = null;
-  }, DISPLAY_DURATION_MS);
+  void nextTick(() => popupWindow.value?.restartDismiss());
+}
+
+function hide(): void {
+  isVisible.value = false;
 }
 
 defineExpose({ show });
-
-onUnmounted(() => {
-  if (hideTimer !== null) window.clearTimeout(hideTimer);
-});
 </script>
 
 <template>
-  <Transition name="popup-toast">
-    <div v-if="isVisible" class="popup-toast" role="status" aria-live="polite">
-      {{ message }}
-    </div>
-  </Transition>
+  <PopupWindow
+    v-if="isVisible"
+    ref="popupWindow"
+    class="popup-toast"
+    :class="{ 'popup-toast--persistent': isPersistent }"
+    style="top: var(--space-3); left: 50%; transform: translateX(-50%)"
+    is-externally-positioned
+    position-type="absolute"
+    :semantic-role="isPersistent ? 'alert' : 'status'"
+    :aria-live="isPersistent ? 'assertive' : 'polite'"
+    :dismiss-delay-ms="isPersistent ? undefined : DISPLAY_DURATION_MS"
+    :fade-duration-ms="isPersistent ? undefined : 300"
+    @dismiss="hide"
+  >
+    <span>{{ message }}</span>
+    <button v-if="isPersistent" type="button" @click="hide">{{ actionText }}</button>
+  </PopupWindow>
 </template>
 
 <style scoped>
 .popup-toast {
   position: absolute;
   z-index: 10;
-  inset-block-start: var(--space-3);
-  inset-inline-start: 50%;
   max-width: min(calc(100% - var(--space-6)), 320px);
   padding: var(--space-2) var(--space-3);
   overflow-wrap: anywhere;
@@ -50,29 +65,44 @@ onUnmounted(() => {
   pointer-events: none;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 24%);
-  transform: translateX(-50%);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-toast);
 }
 
-.popup-toast-enter-active {
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
+.popup-toast--persistent {
+  max-width: min(calc(100% - var(--space-6)), 560px);
+  text-align: start;
+  pointer-events: auto;
 }
 
-.popup-toast-leave-active {
-  transition: opacity 120ms ease-in, transform 120ms ease-in;
+.popup-toast--persistent :deep(.popup-window__content) {
+  gap: var(--space-2);
 }
 
-.popup-toast-enter-from,
-.popup-toast-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -4px);
+.popup-toast--persistent span {
+  min-width: 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .popup-toast-enter-active,
-  .popup-toast-leave-active {
-    transition: none;
-  }
+.popup-toast--persistent button {
+  align-self: flex-end;
+  flex: none;
+  min-height: 30px;
+  padding-inline: var(--space-3);
+  color: var(--color-text);
+  background: var(--color-content-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  font: inherit;
+  cursor: pointer;
 }
+
+.popup-toast--persistent button:hover {
+  border-color: var(--color-primary);
+}
+
+.popup-toast--persistent button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
 </style>

@@ -23,7 +23,7 @@ export function runRegex(pattern: string, flags: string, text: string): RegexRes
   try {
     regex = new RegExp(pattern, flags);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "非法的正则表达式" };
+    return { ok: false, error: error instanceof Error ? error.message : "Invalid regular expression" };
   }
   const matches: RegexMatch[] = [];
   // matchAll requires the global flag and internally advances past zero-length matches, so it

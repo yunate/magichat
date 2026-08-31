@@ -3,6 +3,7 @@ productName: MagicHat
 asar: true
 npmRebuild: false
 removePackageScripts: true
+afterPack: build/after-pack.js
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/
 directories:
@@ -12,12 +13,41 @@ files:
   - build/appIcon.ico
   - client/dist/**
   - dist-electron/**
+  - "!dist-electron/uac-broker/**"
   - node_modules/node-pty/**
   - package.json
+  - THIRD_PARTY_NOTICES.md
+extraResources:
+  - from: dist-electron/uac-broker/index.js
+    to: uac-broker/index.js
+extraFiles:
+  - from: native-tools/ddwhouses/bin/ddwhouses.exe
+    to: native-tools/ddwhouses/bin/ddwhouses.exe
+  - from: native-tools/cli-helper/bin/magichat-cli.exe
+    to: native-tools/cli-helper/bin/magichat-cli.exe
+  - from: native-tools/js-launcher/bin/js-launcher.exe
+    to: native-tools/js-launcher/bin/js-launcher.exe
+  - from: native-tools/cli-helper/cmd
+    to: native-tools/cli-helper/cmd
+    filter:
+      - "*.cmd"
+  - from: native-tools/cli-helper/node/MagicHat.js
+    to: native-tools/cli-helper/node/MagicHat.js
+  - from: native-tools/cli-helper/python/MagicHat.py
+    to: native-tools/cli-helper/python/MagicHat.py
+  - from: native-tools/cli-helper/python/sitecustomize.py
+    to: native-tools/cli-helper/python/sitecustomize.py
+  - from: native-tools/cli-helper/powershell/MagicHat.psm1
+    to: native-tools/cli-helper/powershell/MagicHat.psm1
+  - from: native-tools/cli-helper/powershell/Invoke-MagicHatPowerShellScript.ps1
+    to: native-tools/cli-helper/powershell/Invoke-MagicHatPowerShellScript.ps1
 asarUnpack:
   - node_modules/node-pty/**
 win:
   icon: build/appIcon.ico
+  forceCodeSigning: false
+  signExts:
+    - .exe
   target:
     - target: nsis
       arch:
@@ -26,3 +56,5 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  installerIcon: build/installerIcon.ico
+  include: build/installer.nsh

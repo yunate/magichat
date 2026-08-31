@@ -72,7 +72,7 @@ function clearShowTimer(): void {
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  background: rgb(0 0 0 / 36%);
+  background: var(--color-backdrop-soft);
   backdrop-filter: blur(2px);
 }
 
@@ -86,8 +86,8 @@ function clearShowTimer(): void {
   color: var(--color-text);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
-  box-shadow: 0 16px 48px rgb(0 0 0 / 42%);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-dialog);
   font-size: 13px;
   font-weight: 500;
 }

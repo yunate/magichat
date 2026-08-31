@@ -1,0 +1,13 @@
+:root {
+  --color-backdrop-soft: rgb(15 23 42 / 20%);
+  --color-backdrop: rgb(15 23 42 / 32%);
+  --color-backdrop-strong: rgb(15 23 42 / 40%);
+  --color-backdrop-emphasis: rgb(15 23 42 / 48%);
+  --shadow-toast: 0 4px 12px rgb(15 23 42 / 14%);
+  --shadow-flyout: 0 8px 24px rgb(15 23 42 / 16%);
+  --shadow-popup: 0 12px 32px rgb(15 23 42 / 18%);
+  --shadow-dialog: 0 20px 56px rgb(15 23 42 / 22%);
+  --shadow-dialog-raised: 0 24px 48px rgb(15 23 42 / 24%);
+  --shadow-confirm-dialog: 0 24px 72px rgb(15 23 42 / 26%), 0 1px 0 rgb(255 255 255 / 70%) inset;
+  --shadow-message-panel: -8px 0 24px rgb(15 23 42 / 16%);
+}

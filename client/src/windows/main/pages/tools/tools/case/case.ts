@@ -13,8 +13,8 @@ export function convertCase(input: string): CaseResult[] {
     { label: "snake_case", value: words.join("_") },
     { label: "kebab-case", value: words.join("-") },
     { label: "CONSTANT_CASE", value: words.map((word) => word.toUpperCase()).join("_") },
-    { label: "全小写", value: words.join(" ") },
-    { label: "全大写", value: words.map((word) => word.toUpperCase()).join(" ") },
+    { label: "lowercase", value: words.join(" ") },
+    { label: "UPPERCASE", value: words.map((word) => word.toUpperCase()).join(" ") },
   ];
 }
 

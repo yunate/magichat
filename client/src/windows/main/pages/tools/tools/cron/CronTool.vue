@@ -16,10 +16,10 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
 
 <template>
   <ToolSplitLayout
-    title="Cron 解释"
-    hint="标准 5 字段 cron (分 时 日 月 周), 支持 * 、数字、列表 1,2 、范围 1-5 、步进 */5; 给出说明与接下来的执行时间。"
-    left-label="Cron 表达式"
-    right-label="解释"
+    title="Cron Interpreter"
+    hint="Interpret a standard 5-field cron expression with wildcards, lists, ranges, and steps, then preview upcoming runs."
+    left-label="Cron Expression"
+    right-label="Interpretation"
   >
     <template #left>
       <div class="cron-tool__left">
@@ -28,10 +28,10 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
           v-select-all
           class="cron-tool__input"
           spellcheck="false"
-          aria-label="Cron 表达式"
+          aria-label="Cron expression"
           placeholder="*/5 9-17 * * 1-5"
         />
-        <p class="cron-tool__legend">字段顺序: 分(0-59) 时(0-23) 日(1-31) 月(1-12) 周(0-6, 7=周日)</p>
+        <p class="cron-tool__legend">Fields: minute (0-59), hour (0-23), day (1-31), month (1-12), weekday (0-6, 7=Sunday)</p>
       </div>
     </template>
     <template #right>
@@ -39,16 +39,16 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
         <p v-if="!parsed.ok" class="cron-tool__error">{{ parsed.error }}</p>
         <template v-else>
           <div class="cron-tool__block">
-            <div class="cron-tool__block-head">说明</div>
+            <div class="cron-tool__block-head">Description</div>
             <p v-select-all tabindex="0" class="cron-tool__desc">{{ description }}</p>
           </div>
           <div class="cron-tool__block">
-            <div class="cron-tool__block-head">接下来 {{ NEXT_COUNT }} 次</div>
+            <div class="cron-tool__block-head">Next {{ NEXT_COUNT }} Runs</div>
             <p v-if="!upcoming.ok" class="cron-tool__error cron-tool__error--inline">{{ upcoming.error }}</p>
             <ul v-else class="cron-tool__runs">
               <li v-for="(run, index) in runs" :key="index">
                 <span class="cron-tool__run-index">{{ index + 1 }}</span>
-                <span>{{ run.toLocaleString() }}</span>
+                <span>{{ run.toLocaleString("en-US") }}</span>
               </li>
             </ul>
           </div>
@@ -72,12 +72,12 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
   flex: none;
   width: 100%;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   outline: none;
   padding: var(--space-3);
   background: var(--color-surface-raised);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 16px;
   letter-spacing: 1px;
 }
@@ -109,7 +109,7 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   overflow: hidden;
   background: var(--color-surface-raised);
 }
@@ -153,7 +153,7 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
   align-items: center;
   gap: var(--space-3);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 13px;
 }
 
@@ -166,7 +166,7 @@ const runs = computed(() => (upcoming.value.ok ? upcoming.value.runs : []));
 
 .cron-tool__error {
   margin: 0;
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   font-size: 14px;
 }
 

@@ -1,0 +1,26 @@
+:root {
+  --color-terminal-background: #ffffff;
+  --color-terminal-foreground: #1f1f1f;
+  --color-terminal-cursor: #0078d4;
+  --color-terminal-overview-border: #00000000;
+  --color-terminal-scrollbar: #c8c8c8;
+  --color-terminal-scrollbar-hover: #b4b4b4;
+  --color-terminal-scrollbar-active: #9f9f9f;
+  --color-terminal-selection: #add6ff;
+  --color-terminal-ansi-black: #000000;
+  --color-terminal-ansi-red: #c42b1c;
+  --color-terminal-ansi-green: #107c10;
+  --color-terminal-ansi-yellow: #878a05;
+  --color-terminal-ansi-blue: #0451a5;
+  --color-terminal-ansi-magenta: #af00db;
+  --color-terminal-ansi-cyan: #006d77;
+  --color-terminal-ansi-white: #4f4f4f;
+  --color-terminal-ansi-bright-black: #635959;
+  --color-terminal-ansi-bright-red: #d13438;
+  --color-terminal-ansi-bright-green: #008000;
+  --color-terminal-ansi-bright-yellow: #b6a406;
+  --color-terminal-ansi-bright-blue: #0066bf;
+  --color-terminal-ansi-bright-magenta: #a000c0;
+  --color-terminal-ansi-bright-cyan: #007f8b;
+  --color-terminal-ansi-bright-white: #1f1f1f;
+}

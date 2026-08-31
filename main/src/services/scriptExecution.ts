@@ -35,8 +35,6 @@ export function createScriptExecution(
         extension: ".ps1",
         content,
       };
-    case "bash":
-      return { command: "bash", args: [scriptFile], extension: ".sh", content };
     case "node":
       return { command: "node", args: [scriptFile], extension: ".js", content };
     case "python":
@@ -51,7 +49,6 @@ export function createScriptExecution(
 export function getScriptExtension(scriptType: ScriptType): string {
   switch (scriptType) {
     case "powershell": return ".ps1";
-    case "bash": return ".sh";
     case "node": return ".js";
     case "python": return ".py";
     case "cmd": return ".bat";

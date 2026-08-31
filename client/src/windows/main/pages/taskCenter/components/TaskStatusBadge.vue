@@ -26,7 +26,7 @@ const label = computed(() => STATUS_LABELS[props.status]);
   align-items: center;
   justify-content: center;
   padding: 1px var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;

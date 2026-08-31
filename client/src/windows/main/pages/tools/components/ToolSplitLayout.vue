@@ -1,12 +1,24 @@
 <script setup lang="ts">
-interface Props {
+import { onMounted, onUnmounted, ref } from "vue";
+import SplitContainer from "../../../../../components/SplitContainer.vue";
+
+type Props = {
   title: string;
   hint?: string;
   leftLabel?: string;
   rightLabel?: string;
-}
+};
 
-defineProps<Props>();
+const props = defineProps<Props>();
+const narrowLayoutQuery = window.matchMedia("(max-width: 720px)");
+const isNarrowLayout = ref(narrowLayoutQuery.matches);
+
+onMounted(() => narrowLayoutQuery.addEventListener("change", onNarrowLayoutChange));
+onUnmounted(() => narrowLayoutQuery.removeEventListener("change", onNarrowLayoutChange));
+
+function onNarrowLayoutChange(event: MediaQueryListEvent): void {
+  isNarrowLayout.value = event.matches;
+}
 </script>
 
 <template>
@@ -18,7 +30,12 @@ defineProps<Props>();
     <div v-if="$slots.toolbar" class="tool-split__toolbar">
       <slot name="toolbar" />
     </div>
-    <div class="tool-split__split">
+    <SplitContainer
+      class="tool-split__split"
+      :orientation="isNarrowLayout ? 'horizontal' : 'vertical'"
+      :separator-labels="[`Resize ${props.leftLabel ?? 'left'} and ${props.rightLabel ?? 'right'} panes`]"
+      :has-item-borders="false"
+    >
       <section class="tool-split__pane">
         <div v-if="leftLabel || $slots.leftActions" class="tool-split__pane-label">
           <span>{{ leftLabel }}</span>
@@ -33,7 +50,7 @@ defineProps<Props>();
         </div>
         <slot name="right" />
       </section>
-    </div>
+    </SplitContainer>
   </div>
 </template>
 
@@ -72,29 +89,29 @@ defineProps<Props>();
 .tool-split__split {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  overflow: hidden;
 }
 
 .tool-split__pane {
-  min-width: 0;
+  min-width: 240px;
   min-height: 0;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-small);
   overflow: hidden;
   background: var(--color-surface);
 }
 
 .tool-split__pane-label {
+  height: var(--tool-pane-header-height);
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding-inline: var(--space-3);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.4px;
@@ -105,9 +122,19 @@ defineProps<Props>();
 }
 
 @media (max-width: 720px) {
+  .tool-split {
+    min-width: 0;
+    overflow-y: auto;
+  }
+
   .tool-split__split {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr 1fr;
+    min-height: 443px;
+    flex: none;
+  }
+
+  .tool-split__pane {
+    min-width: 0;
+    min-height: 220px;
   }
 }
 </style>

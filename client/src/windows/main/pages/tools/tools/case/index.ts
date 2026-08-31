@@ -3,7 +3,8 @@ import CaseTool from "./CaseTool.vue";
 
 export const caseTool: ToolDefinition = {
   id: "case",
-  title: "命名转换",
+  title: "Case Converter",
   component: CaseTool,
+  category: "text-data",
   order: 8,
 };

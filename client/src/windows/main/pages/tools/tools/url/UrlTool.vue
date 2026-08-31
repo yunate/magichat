@@ -4,14 +4,14 @@ import { vSelectAll } from "../../../../../../directives/vSelectAll";
 import ToolSplitLayout from "../../components/ToolSplitLayout.vue";
 import { transformUrl, type UrlMode } from "./url";
 
-const DEFAULT_TEXT = "https://example.com/search?q=你好 世界&tag=a+b";
+const DEFAULT_TEXT = "https://example.com/search?q=hello world&tag=a+b";
 
 const mode = ref<UrlMode>("encode");
 const input = ref(DEFAULT_TEXT);
 const copied = ref(false);
 
-const inputLabel = computed(() => (mode.value === "encode" ? "原文" : "已编码"));
-const outputLabel = computed(() => (mode.value === "encode" ? "已编码" : "原文"));
+const inputLabel = computed(() => (mode.value === "encode" ? "Plain Text" : "Encoded Text"));
+const outputLabel = computed(() => (mode.value === "encode" ? "Encoded Text" : "Plain Text"));
 const result = computed(() => transformUrl(input.value, mode.value));
 const output = computed(() => (result.value.ok ? result.value.text : result.value.error));
 
@@ -35,15 +35,15 @@ async function copyResult(): Promise<void> {
 <template>
   <ToolSplitLayout
     title="URL"
-    hint="URL 组件编解码; 中文、空格与特殊字符按 UTF-8 百分号转义往返。"
+    hint="Encode or decode URL components using UTF-8 percent escapes for Unicode text, spaces, and special characters."
     :left-label="inputLabel"
     :right-label="outputLabel"
   >
     <template #toolbar>
       <button type="button" class="url-tool__mode" @click="toggleMode">
-        {{ mode === "encode" ? "编码 → 解码" : "解码 → 编码" }}
+        {{ mode === "encode" ? "Encode → Decode" : "Decode → Encode" }}
       </button>
-      <span class="url-tool__mode-label">当前: {{ mode === "encode" ? "编码" : "解码" }}</span>
+      <span class="url-tool__mode-label">Mode: {{ mode === "encode" ? "Encode" : "Decode" }}</span>
     </template>
     <template #left>
       <textarea
@@ -52,7 +52,7 @@ async function copyResult(): Promise<void> {
         class="url-tool__area"
         spellcheck="false"
         :aria-label="inputLabel"
-        placeholder="在此输入要转换的文本…"
+        placeholder="Enter text to convert..."
       ></textarea>
     </template>
     <template #rightActions>
@@ -62,7 +62,7 @@ async function copyResult(): Promise<void> {
         :disabled="!result.ok || result.text === ''"
         @click="copyResult"
       >
-        {{ copied ? "已复制" : "复制" }}
+        {{ copied ? "Copied" : "Copy" }}
       </button>
     </template>
     <template #right>
@@ -83,7 +83,7 @@ async function copyResult(): Promise<void> {
 .url-tool__mode {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 13px;
@@ -103,7 +103,7 @@ async function copyResult(): Promise<void> {
 .url-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -130,7 +130,7 @@ async function copyResult(): Promise<void> {
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   overflow: auto;
@@ -144,6 +144,6 @@ async function copyResult(): Promise<void> {
 }
 
 .url-tool__area--error {
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
 }
 </style>

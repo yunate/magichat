@@ -34,10 +34,10 @@ async function copyValue(label: string, value: string): Promise<void> {
 
 <template>
   <ToolSplitLayout
-    title="颜色转换"
-    hint="输入任一颜色格式 (#hex / rgb() / hsl()), 右侧给出其它格式与预览色块。"
-    left-label="输入颜色"
-    right-label="转换结果"
+    title="Color Converter"
+    hint="Enter a color in #hex, rgb(), or hsl() format to view the other formats and a color preview."
+    left-label="Color Input"
+    right-label="Converted Values"
   >
     <template #left>
       <div class="color-tool__left">
@@ -46,7 +46,7 @@ async function copyValue(label: string, value: string): Promise<void> {
           v-select-all
           class="color-tool__input"
           spellcheck="false"
-          aria-label="颜色输入"
+          aria-label="Color input"
           placeholder="#38bdf8 / rgb(56,189,248) / hsl(199,92%,60%)"
         />
         <div class="color-tool__preview" :style="previewStyle" aria-hidden="true"></div>
@@ -54,14 +54,14 @@ async function copyValue(label: string, value: string): Promise<void> {
     </template>
     <template #right>
       <div class="color-tool__result">
-        <p v-if="input.trim() === ''" class="color-tool__empty">等待输入…</p>
+        <p v-if="input.trim() === ''" class="color-tool__empty">Waiting for input...</p>
         <p v-else-if="!result.ok" class="color-tool__error">{{ result.error }}</p>
         <ul v-else class="color-tool__rows">
           <li v-for="row in rows" :key="row.label" class="color-tool__row">
             <span class="color-tool__row-label">{{ row.label }}</span>
             <span v-select-all tabindex="0" class="color-tool__row-value">{{ row.value }}</span>
             <button type="button" class="color-tool__copy" @click="copyValue(row.label, row.value)">
-              {{ copiedLabel === row.label ? "已复制" : "复制" }}
+              {{ copiedLabel === row.label ? "Copied" : "Copy" }}
             </button>
           </li>
         </ul>
@@ -84,12 +84,12 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: none;
   width: 100%;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   outline: none;
   padding: var(--space-3);
   background: var(--color-surface-raised);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 15px;
 }
 
@@ -101,7 +101,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: 1;
   min-height: 80px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
 }
 
@@ -129,7 +129,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
 }
 
@@ -145,7 +145,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: 1;
   min-width: 0;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   word-break: break-all;
 }
@@ -159,7 +159,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -173,7 +173,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 
 .color-tool__error {
   margin: 0;
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   font-size: 14px;
 }
 

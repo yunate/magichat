@@ -1,0 +1,13 @@
+:root {
+  --message-bar-height: 40px;
+  --tree-row-height: 32px;
+  --tool-pane-header-height: 44px;
+  --radius-small: 2px;
+  --radius-medium: 6px;
+  --radius-large: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+}

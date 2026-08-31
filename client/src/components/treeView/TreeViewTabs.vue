@@ -14,6 +14,7 @@ type TabDropIndicator = Readonly<{
 const props = withDefaults(defineProps<{
   tabs: readonly DisplayTab[];
   activeTabId: string | null;
+  previewTabId: string | null;
   isMultiline?: boolean;
   isAddVisible?: boolean;
 }>(), {
@@ -26,6 +27,7 @@ defineSlots<{
 }>();
 const emit = defineEmits<{
   activate: [tab: TreeViewTab];
+  promote: [tab: TreeViewTab];
   pin: [tab: TreeViewTab, isPinned: boolean];
   close: [tab: TreeViewTab];
   contextMenu: [event: MouseEvent, tab: TreeViewTab];
@@ -156,11 +158,6 @@ function isTreeViewItem(entity: TreeViewFolder | TreeViewItem): entity is TreeVi
   return "isDraft" in entity.properties;
 }
 
-function pinTab(tab: TreeViewTab): void {
-  if (tab.isPinned) return;
-  emit("pin", tab, true);
-}
-
 function onDrop(event: DragEvent, targetId: string): void {
   event.preventDefault();
   const draggedId = event.dataTransfer?.getData("application/x-tree-view-tab");
@@ -180,6 +177,7 @@ function onDrop(event: DragEvent, targetId: string): void {
         class="tree-tab"
         :class="{
           'is-active': activeTabId === entry.tab.id,
+          'is-preview': previewTabId === entry.tab.id,
           'is-drop-before': dropIndicator?.targetId === entry.tab.id && dropIndicator.position === 'before',
           'is-drop-after': dropIndicator?.targetId === entry.tab.id && dropIndicator.position === 'after',
         }"
@@ -190,7 +188,7 @@ function onDrop(event: DragEvent, targetId: string): void {
         @drop="onDrop($event, entry.tab.id)"
         @contextmenu.prevent="emit('contextMenu', $event, entry.tab)"
       >
-        <button type="button" class="tree-tab__label" @click="emit('activate', entry.tab)" @dblclick="pinTab(entry.tab)">
+        <button type="button" class="tree-tab__label" @click="emit('activate', entry.tab)" @dblclick="emit('promote', entry.tab)">
           <svg v-if="entry.tab.kind === 'folder'" class="tree-tab__folder-icon" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M1.75 4.25h4l1.3 1.5h7.2v6.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-8Z" />
             <path d="M1.75 5.75v-2h4l1.3 1.5" />
@@ -231,12 +229,13 @@ function onDrop(event: DragEvent, targetId: string): void {
 .tree-tabs::-webkit-scrollbar { display: none; }
 .tree-tabs__scrollbar { position: absolute; z-index: 4; right: 0; bottom: 1px; left: 0; height: 6px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
 .tree-tabs-shell:hover .tree-tabs__scrollbar, .tree-tabs-shell:focus-within .tree-tabs__scrollbar, .tree-tabs-shell.is-dragging-scrollbar .tree-tabs__scrollbar { opacity: 1; pointer-events: auto; }
-.tree-tabs__scrollbar-thumb { position: absolute; top: 1px; left: 0; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--color-text-muted) 34%, transparent); cursor: ew-resize; touch-action: none; }
+.tree-tabs__scrollbar-thumb { position: absolute; top: 1px; left: 0; height: 4px; border-radius: var(--radius-large); background: color-mix(in srgb, var(--color-text-muted) 34%, transparent); cursor: ew-resize; touch-action: none; }
 .tree-tabs__scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-text-muted) 52%, transparent); }
-.tree-tabs.is-multiline { max-height: 96px; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; overflow-x: hidden; overflow-y: auto; }
-.tree-tab { position: relative; width: auto; min-width: 0; max-width: 280px; height: var(--tree-row-height); display: flex; align-items: center; flex: 0 0 auto; color: var(--color-text-muted); background: transparent; white-space: nowrap; cursor: grab; transition: color 0.15s ease, background 0.15s ease; }
-.tree-tab:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-surface-raised) 62%, var(--color-surface)); }
-.tree-tab.is-active { color: color-mix(in srgb, var(--color-text) 78%, var(--color-text-muted)); background: var(--color-surface-raised); }
+.tree-tabs.is-multiline { max-height: 96px; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.tree-tabs.is-multiline::-webkit-scrollbar { display: block; }
+.tree-tab { isolation: isolate; position: relative; width: auto; min-width: 0; max-width: 280px; height: var(--tree-row-height); display: flex; align-items: center; flex: 0 0 auto; color: var(--color-text-muted); background: transparent; white-space: nowrap; cursor: grab; transition: color 0.15s ease, background 0.15s ease; }
+.tree-tab:hover { color: var(--color-text); background: var(--color-surface-hover, color-mix(in srgb, var(--color-surface-raised) 62%, var(--color-surface))); }
+.tree-tab.is-active { color: var(--color-text); background: var(--color-surface-selected); }
 .tree-tab.is-drop-before::before, .tree-tab.is-drop-after::after { position: absolute; z-index: 5; top: 0; bottom: 0; width: 2px; content: ""; background: var(--color-primary); pointer-events: none; }
 .tree-tab.is-drop-before::before { left: 0; }
 .tree-tab.is-drop-after::after { right: 0; }
@@ -246,9 +245,10 @@ function onDrop(event: DragEvent, targetId: string): void {
 .tree-tab__item-icon :deep(svg) { width: auto; max-width: 24px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.25; }
 .tree-tab.is-active .tree-tab__item-icon { color: var(--color-primary); }
 .tree-tab__title { min-width: 0; max-width: 172px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-tab.is-preview .tree-tab__title { font-style: italic; }
 .tree-tab__overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .tree-tab__icon, .tree-tab-add { z-index: 3; border: 0; color: var(--color-text-muted); background: transparent; cursor: pointer; }
-.tree-tab__icon { position: relative; width: 20px; height: 24px; display: grid; place-items: center; flex: 0 0 20px; padding: 0; margin-inline-end: var(--space-1); border-radius: 4px; opacity: 1; }
+.tree-tab__icon { position: relative; width: 20px; height: 24px; display: grid; place-items: center; flex: 0 0 20px; padding: 0; margin-inline-end: var(--space-1); border-radius: var(--radius-small); opacity: 1; }
 .tree-tab__icon:hover { color: var(--color-text); }
 .tree-tab__pin { color: var(--color-primary); }
 .tree-tab__pin svg { fill: none; stroke: currentColor; stroke-linejoin: round; stroke-width: 1.4; }
@@ -256,7 +256,7 @@ function onDrop(event: DragEvent, targetId: string): void {
 .tree-tab__icon svg, .tree-tab-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.5; }
 .tree-tab__pin svg { width: 12px; height: 12px; }
 .tree-tab__pin svg { fill: currentColor; }
-.tree-tab-add { position: relative; width: var(--tree-row-height); height: var(--tree-row-height); flex: 0 0 var(--tree-row-height); align-self: center; display: grid; place-items: center; padding: 0; margin-inline: var(--space-2) var(--space-1); border: 1px solid transparent; border-radius: 4px; }
+.tree-tab-add { position: relative; width: var(--tree-row-height); height: var(--tree-row-height); flex: 0 0 var(--tree-row-height); align-self: center; display: grid; place-items: center; padding: 0; margin-inline: var(--space-2) var(--space-1); border: 1px solid transparent; border-radius: var(--radius-small); }
 .tree-tab-add.is-multiline { align-self: flex-start; margin-top: 0; }
 .tree-tab-add:hover { color: var(--color-text); border-color: var(--color-border); background: color-mix(in srgb, var(--color-surface-raised) 72%, transparent); }
 :is(.tree-tab__label, .tree-tab__icon, .tree-tab-add):focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }

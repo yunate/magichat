@@ -20,6 +20,6 @@ export function transformJson(input: string, mode: JsonMode): JsonResult {
     const text = mode === "format" ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
     return { ok: true, text: text ?? "" };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "无法解析 JSON" };
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to parse JSON" };
   }
 }

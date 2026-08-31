@@ -3,7 +3,8 @@ import QrTool from "./QrTool.vue";
 
 export const qrTool: ToolDefinition = {
   id: "qr",
-  title: "二维码",
+  title: "QR Code",
   component: QrTool,
+  category: "image",
   order: 15,
 };

@@ -1,0 +1,83 @@
+{
+  "isSelected": true,
+  "tabs": [
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000011",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "a00a62e2-91a8-46d9-921e-94f8df41579e",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000019",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000017",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000018",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "id": "10000000-0000-4000-8000-000000000001",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "id": "10000000-0000-4000-8000-000000000002",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000016",
+      "isPinned": false
+    }
+  ],
+  "activeTabId": "10000000-0000-4000-8000-000000000019",
+  "previewTabId": null,
+  "ui": {
+    "layout": {
+      "sidebarWidth": 342
+    }
+  },
+  "data": {
+    "selectedEnvGroupId": "de4f2968-ebec-4456-898b-bad45ad19f8d",
+    "envGroups": [
+      {
+        "id": "de4f2968-ebec-4456-898b-bad45ad19f8d",
+        "name": "default",
+        "params": [
+          {
+            "key": "ps1-mhsetenv",
+            "value": "ps1-mhsetenv",
+            "enabled": true
+          },
+          {
+            "key": "cmd-mhsetenv",
+            "value": "cmd-mhsetenv",
+            "enabled": true
+          },
+          {
+            "key": "node-mhsetenv",
+            "value": "node-mhsetenv",
+            "enabled": true
+          },
+          {
+            "key": "py-mhsetenv",
+            "value": "py-mhsetenv",
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

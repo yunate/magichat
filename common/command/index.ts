@@ -1,2 +1,2 @@
 export * from "./commandData";
-export * from "./commandTreeViewRpcApi";
+export * from "./commandStorageRpcApi";

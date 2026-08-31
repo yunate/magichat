@@ -1,23 +1,60 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, shallowRef, useTemplateRef } from "vue";
-import type { CommandFolderData, CommandTreeViewDataProvider } from "../../../../../../common/command";
-import { commandItemDataSerializer } from "../../../../../../common/command";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef } from "vue";
+import {
+  commandFolderDataSerializer,
+  commandItemDataSerializer,
+  commandParamSerializer,
+  commandWorkspaceDataSerializer,
+  type CommandEnvTarget,
+  type CommandEnvUpdate,
+  type CommandFolderData,
+  type CommandItemData,
+  type CommandParam,
+  type CommandParamGroup,
+  type CommandStorageServerRpcApi,
+  type CommandWorkspaceData,
+} from "../../../../../../common/command";
+import {
+  commandConfigSerializer,
+  type CommandConfig,
+} from "../../../../../../common/config/command";
+import type { ScriptType } from "../../../../../../common/tasks/scriptTaskDefinition";
+import type { TerminalRunRequest } from "../../../../../../common/terminal";
+import type { TreeViewFolder, TreeViewItem } from "../../../../../../common/treeView";
 import type { RemoteObject } from "../../../../../../common/ipc_bridge/rpc";
 import {
-  createCommandTreeViewDataProvider,
-  destroyTreeViewDataProvider,
-  initializeTreeViewDataNotifier,
-} from "../../../../bridge/remote_rpc_objects/treeViewDataProvider";
-import { confirmDialog, hasConfirmDialogRequest } from "../../../../components/confirmDialog";
+  disposeCommandClient,
+  initializeCommandClient,
+} from "../../../../bridge/remote_rpc_objects/commandStorage";
+import {
+  confirmActionDialog,
+  confirmDialog,
+  hasConfirmDialogRequest,
+  showAlertDialog,
+} from "../../../../components/confirmDialog";
 import type { ConfirmDialogAction } from "../../../../components/confirmDialogTypes";
 import { runWithOperationProgress } from "../../../../components/operationProgressDialog";
+import { gMessageStore } from "../../../../messages/messageStore";
 import {
   TreeView,
   TreeViewComponent,
-  TreeViewDataNotifierRpcObject,
 } from "../../../../components/treeView";
 import { gMainApplication } from "../../main";
+import {
+  createCommandCliRunRequest,
+  resolveCommandMacroTarget,
+  type CommandMacroTarget,
+} from "./commandCli";
 import CommandScriptIcon from "./CommandScriptIcon.vue";
+import { CommandClientRpcObject } from "./commandClientRpcObject";
+import CommandEnvPanel from "./CommandEnvPanel.vue";
+import {
+  gCommandBeforeAppQuitCallback,
+  gCommandBeforeSettingsSaveCallback,
+  gCommandEnvCallback,
+  gCommandEnvPanelOpen,
+  gCommandRefreshCallback,
+} from "./commandPageCallbacks";
 import { gCommandSettings } from "./commandSettings";
 import CommandTabPage from "./CommandTabPage.vue";
 import type {
@@ -26,21 +63,31 @@ import type {
 } from "./commandTabPageTypes";
 
 type GuardDecision = "save" | "discard" | "cancel";
-type GuardReason = "close-tabs" | "switch-workspace";
+type GuardReason = "close-tabs" | "switch-workspace" | "refresh" | "close-app";
 type RunningGuardDecision = "close-all" | "skip" | "cancel";
-type DeleteStorageDecision = "delete" | "cancel";
 type TabState = Readonly<{
   isDirty: boolean;
   isRunning: boolean;
+  scriptType: ScriptType | null;
 }>;
 
 const treeView = shallowRef<TreeView | null>(null);
 const tabStates = shallowRef<ReadonlyMap<string, TabState>>(new Map());
+const itemScriptTypes = shallowRef<ReadonlyMap<string, ScriptType>>(new Map());
 const error = shallowRef("");
+const currentConfig = ref<CommandConfig>(commandConfigSerializer.getDefault());
+const workspaceData = shallowRef<CommandWorkspaceData>(commandWorkspaceDataSerializer.getDefault());
 const commandPage = useTemplateRef<HTMLElement>("commandPage");
+const envPanel = useTemplateRef<{ requestClose: () => Promise<boolean> }>("envPanel");
+const workspaceName = computed(() => treeView.value?.selectedWorkspaceRef.value?.workspaceName ?? null);
 const tabPages = new Map<string, CommandTabPageApi>();
-let provider: RemoteObject<CommandTreeViewDataProvider> | null = null;
+let commandStorage: RemoteObject<CommandStorageServerRpcApi> | null = null;
 let commandTreeView: TreeView | null = null;
+let unregisterBeforeAppQuitHandler: (() => void) | null = null;
+let unregisterBeforeSettingsSaveHandler: (() => void) | null = null;
+let unregisterEnvHandler: (() => void) | null = null;
+let unregisterRefreshHandler: (() => void) | null = null;
+let workspaceDataOperation: Promise<void> = Promise.resolve();
 const GUARD_ACTIONS: readonly ConfirmDialogAction<GuardDecision>[] = [
   { id: "cancel", label: "Cancel" },
   { id: "discard", label: "Don't Save" },
@@ -51,82 +98,412 @@ const RUNNING_CLOSE_ACTIONS: readonly ConfirmDialogAction<RunningGuardDecision>[
   { id: "skip", label: "Skip" },
   { id: "close-all", label: "Close all", appearance: "primary", isDefault: true },
 ];
-const RUNNING_SINGLE_CLOSE_ACTIONS: readonly ConfirmDialogAction<RunningGuardDecision>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "close-all", label: "Close", appearance: "primary", isDefault: true },
-];
-const RUNNING_SWITCH_ACTIONS: readonly ConfirmDialogAction<RunningGuardDecision>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "close-all", label: "Close all", appearance: "primary", isDefault: true },
-];
-const DELETE_STORAGE_ACTIONS: readonly ConfirmDialogAction<DeleteStorageDecision>[] = [
-  { id: "cancel", label: "Cancel" },
-  { id: "delete", label: "Delete and reload", appearance: "primary" },
-];
 
 onMounted(() => {
+  unregisterBeforeAppQuitHandler = gCommandBeforeAppQuitCallback.register(beforeAppQuit);
+  unregisterBeforeSettingsSaveHandler = gCommandBeforeSettingsSaveCallback.register(
+    beforeSettingsSave,
+  );
+  unregisterEnvHandler = gCommandEnvCallback.register(toggleEnvPanel);
+  unregisterRefreshHandler = gCommandRefreshCallback.register(refreshCurrentRoot);
   window.addEventListener("keydown", onWindowKeydown);
-  void initialize().catch((reason: unknown) => {
-    error.value = errorMessage(reason);
-  });
+  void initializePage();
 });
 
 onUnmounted(() => {
+  unregisterBeforeAppQuitHandler?.();
+  unregisterBeforeAppQuitHandler = null;
+  unregisterBeforeSettingsSaveHandler?.();
+  unregisterBeforeSettingsSaveHandler = null;
+  unregisterEnvHandler?.();
+  unregisterEnvHandler = null;
+  unregisterRefreshHandler?.();
+  unregisterRefreshHandler = null;
+  gCommandEnvPanelOpen.value = false;
   window.removeEventListener("keydown", onWindowKeydown);
   tabPages.clear();
-  const currentProvider = provider;
-  provider = null;
-  if (currentProvider !== null) {
-    void destroyTreeViewDataProvider(currentProvider).catch((reason: unknown) => {
+  const currentTreeView = commandTreeView;
+  commandTreeView = null;
+  if (currentTreeView !== null) {
+    void currentTreeView.dispose().catch((reason: unknown) => {
       console.error("Failed to dispose Command TreeView provider:", reason);
+    });
+  }
+  const currentCommandStorage = commandStorage;
+  commandStorage = null;
+  if (currentCommandStorage !== null) {
+    void disposeCommandClient(currentCommandStorage).catch((reason: unknown) => {
+      console.error("Failed to dispose Command Client:", reason);
     });
   }
 });
 
 async function initialize(): Promise<void> {
-  await gCommandSettings.initialize();
-  const commandProvider = await createCommandTreeViewDataProvider(
-    gMainApplication.window.getPeer(),
+  currentConfig.value = await gCommandSettings.getConfig();
+  commandStorage = await gMainApplication.window.getCommandStorageServerRpcObject();
+  await initializeCommandClient(
+    commandStorage,
+    new CommandClientRpcObject(setEnv, call),
   );
-  provider = commandProvider;
+  const activeRoot = currentConfig.value.roots.find(
+    (root) => root.key === currentConfig.value.activeRootKey,
+  );
+  if (activeRoot === undefined) throw new Error("Command active root does not exist");
+  const storageRoots = await commandStorage.resolveRoots([activeRoot]);
   const model = new TreeView({
-    dataProvider: commandProvider,
-    shouldCreateDefaultWorkspace: true,
-    defaultWorkspaceName: "default",
+    storageRoots,
   });
   commandTreeView = model;
   installTabGuards(model);
-  const notifier = new TreeViewDataNotifierRpcObject(model.controller);
-  await initializeTreeViewDataNotifier(commandProvider, notifier);
   await model.controller.initialize();
   treeView.value = model;
 }
 
+async function loadWorkspaceData(model: TreeView): Promise<void> {
+  itemScriptTypes.value = await loadItemScriptTypes(model);
+  const workspaceRef = model.selectedWorkspaceRef.value;
+  if (workspaceRef === null) {
+    workspaceData.value = commandWorkspaceDataSerializer.getDefault();
+    return;
+  }
+  const dataJson = await model.operations.getEntityData({
+    kind: "workspace",
+    path: workspaceRef.workspacePath,
+  });
+  workspaceData.value = dataJson === null
+    ? commandWorkspaceDataSerializer.getDefault()
+    : commandWorkspaceDataSerializer.fromJson(dataJson);
+}
+
+async function loadItemScriptTypes(model: TreeView): Promise<ReadonlyMap<string, ScriptType>> {
+  const items = collectTreeItems(model.rootFolder.value);
+  const entries = await Promise.all(items.map(async (item): Promise<readonly [string, ScriptType]> => {
+    const dataJson = await model.controller.getEntityData({ kind: "item", path: item.path });
+    const data = dataJson === null
+      ? commandItemDataSerializer.getDefault()
+      : commandItemDataSerializer.fromJson(dataJson);
+    return [item.properties.id, data.scriptType];
+  }));
+  return new Map(entries);
+}
+
+function collectTreeItems(root: TreeViewFolder | null): TreeViewItem[] {
+  if (root === null) return [];
+  return [
+    ...root.items,
+    ...root.folders.flatMap((folder) => collectTreeItems(folder)),
+  ];
+}
+
+async function call(
+  requestedPath: string,
+  sourceCommandPath: string | null,
+): Promise<TerminalRunRequest> {
+  return createCommandCliRunRequest(
+    commandTreeView,
+    getSelectedEnvParams(workspaceData.value),
+    requestedPath,
+    sourceCommandPath,
+  );
+}
+
+function enqueueWorkspaceDataOperation(operation: () => Promise<void>): Promise<void> {
+  const result = workspaceDataOperation.then(operation);
+  workspaceDataOperation = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function setEnv(
+  updates: readonly CommandEnvUpdate[],
+  target: CommandEnvTarget | null,
+): Promise<void> {
+  try {
+    await enqueueWorkspaceDataOperation(async () => {
+      if (updates.length === 0) throw new Error("At least one environment variable is required");
+      for (const update of updates) {
+        commandParamSerializer.validate({ ...update, enabled: true });
+      }
+      const model = commandTreeView;
+      const workspaceRef = model?.selectedWorkspaceRef.value;
+      if (model === null || workspaceRef === null || workspaceRef === undefined) {
+        throw new Error("Command workspace is unavailable");
+      }
+      if (target !== null) {
+        await persistTargetParams(model, resolveCommandMacroTarget(model, target), updates);
+        return;
+      }
+      const dataJson = await model.controller.getEntityData({
+        kind: "workspace",
+        path: workspaceRef.workspacePath,
+      });
+      const current = dataJson === null
+        ? commandWorkspaceDataSerializer.getDefault()
+        : commandWorkspaceDataSerializer.fromJson(dataJson);
+      const nextData: CommandWorkspaceData = {
+        ...current,
+        envGroups: current.envGroups.map((group) => group.id === current.selectedEnvGroupId
+          ? {
+              ...group,
+              params: updates.reduce(
+                (params, update) => updateEnv(params, update.key, update.value),
+                [...group.params],
+              ),
+            }
+          : group),
+      };
+      await persistWorkspaceData(model, workspaceRef.workspacePath, nextData);
+    });
+  } catch (reason: unknown) {
+    gMessageStore.pushMessage("error", errorMessage(reason));
+    throw reason;
+  }
+}
+
+async function persistTargetParams(
+  model: TreeView,
+  target: CommandMacroTarget,
+  updates: readonly CommandEnvUpdate[],
+): Promise<void> {
+  const dataJson = await model.controller.getEntityData(target);
+  if (target.kind === "workspace") {
+    const current = dataJson === null
+      ? commandWorkspaceDataSerializer.getDefault()
+      : commandWorkspaceDataSerializer.fromJson(dataJson);
+    const next: CommandWorkspaceData = {
+      ...current,
+      envGroups: updateSelectedParamGroup(current.envGroups, current.selectedEnvGroupId, updates),
+    };
+    await persistWorkspaceData(model, target.path, next);
+    return;
+  }
+  if (target.kind === "folder") {
+    const current = dataJson === null
+      ? commandFolderDataSerializer.getDefault()
+      : commandFolderDataSerializer.fromJson(dataJson);
+    const next: CommandFolderData = {
+      ...current,
+      paramGroups: updateSelectedParamGroup(current.paramGroups, current.selectedParamGroupId, updates),
+    };
+    await model.controller.updateEntityData(target, commandFolderDataSerializer.toJson(next));
+    notifyPersistedFolderParams(model, target.path, next, updates);
+    return;
+  }
+  const current = dataJson === null
+    ? commandItemDataSerializer.getDefault()
+    : commandItemDataSerializer.fromJson(dataJson);
+  const next: CommandItemData = {
+    ...current,
+    paramGroups: updateSelectedParamGroup(current.paramGroups, current.selectedParamGroupId, updates),
+  };
+  await model.controller.updateEntityData(target, commandItemDataSerializer.toJson(next));
+  const item = model.getItemByPath(target.path);
+  if (item !== null) tabPages.get(item.properties.id)?.applyPersistedParams(next, updates);
+}
+
+function notifyPersistedFolderParams(
+  model: TreeView,
+  folderPath: string,
+  data: CommandFolderData,
+  updates: readonly CommandEnvUpdate[],
+): void {
+  const folder = findTreeFolderByPath(model.rootFolder.value, folderPath);
+  if (folder === null) return;
+  tabPages.get(folder.properties.id)?.applyPersistedParams(data, updates);
+  for (const page of tabPages.values()) {
+    page.applyAncestorFolderData(folder.properties.id, data);
+  }
+}
+
+function findTreeFolderByPath(root: TreeViewFolder | null, path: string): TreeViewFolder | null {
+  if (root === null) return null;
+  const pending = [root];
+  while (pending.length > 0) {
+    const folder = pending.shift();
+    if (folder === undefined) continue;
+    if (folder.path === path) return folder;
+    pending.push(...folder.folders);
+  }
+  return null;
+}
+
+function updateSelectedParamGroup(
+  groups: readonly CommandParamGroup[],
+  selectedGroupId: string,
+  updates: readonly CommandEnvUpdate[],
+): CommandParamGroup[] {
+  return groups.map((group) => group.id === selectedGroupId
+    ? {
+        ...group,
+        params: updates.reduce(
+          (params, update) => updateEnv(params, update.key, update.value),
+          [...group.params],
+        ),
+      }
+    : group);
+}
+
+function saveWorkspaceData(data: CommandWorkspaceData): Promise<void> {
+  return enqueueWorkspaceDataOperation(async () => {
+    commandWorkspaceDataSerializer.validate(data);
+    const model = commandTreeView;
+    const workspaceRef = model?.selectedWorkspaceRef.value;
+    if (model === null || workspaceRef === null || workspaceRef === undefined) {
+      throw new Error("Command workspace is unavailable");
+    }
+    await persistWorkspaceData(model, workspaceRef.workspacePath, data);
+  });
+}
+
+async function persistWorkspaceData(
+  model: TreeView,
+  workspacePath: string,
+  data: CommandWorkspaceData,
+): Promise<void> {
+  const persisted = commandWorkspaceDataSerializer.fromJson(
+    commandWorkspaceDataSerializer.toJson(data),
+  );
+  await model.controller.updateEntityData(
+    { kind: "workspace", path: workspacePath },
+    commandWorkspaceDataSerializer.toJson(persisted),
+  );
+  workspaceData.value = persisted;
+}
+
+function updateEnv(env: readonly CommandParam[], key: string, value: string): CommandParam[] {
+  const index = env.findIndex((param) => param.key === key);
+  if (index < 0) return [...env.map((param) => ({ ...param })), { key, value, enabled: true }];
+  return env.map((param, paramIndex) => paramIndex === index
+    ? { key, value, enabled: true }
+    : { ...param });
+}
+
+function getWorkspaceEnv(): readonly CommandParam[] {
+  return getSelectedEnvParams(workspaceData.value);
+}
+
+function getSelectedEnvParams(data: CommandWorkspaceData): readonly CommandParam[] {
+  const group = data.envGroups.find((candidate) => candidate.id === data.selectedEnvGroupId);
+  if (group === undefined) throw new Error("Selected Workspace Environment group is unavailable");
+  return group.params;
+}
+
+async function toggleEnvPanel(): Promise<void> {
+  if (!gCommandEnvPanelOpen.value) {
+    gCommandEnvPanelOpen.value = true;
+    return;
+  }
+  await envPanel.value?.requestClose();
+}
+
+function closeEnvPanel(): void {
+  gCommandEnvPanelOpen.value = false;
+}
+
+async function prepareEnvPanelClose(): Promise<boolean> {
+  if (!gCommandEnvPanelOpen.value) return true;
+  const panel = envPanel.value;
+  return panel !== null && await panel.requestClose();
+}
+
+async function initializePage(): Promise<void> {
+  try {
+    await initialize();
+  } catch (reason: unknown) {
+    const message = errorMessage(reason);
+    error.value = message;
+    await showAlertDialog({
+      title: "Command failed to load",
+      descriptions: [message],
+    });
+  }
+}
+
+async function updateTreeViewRoots(config: CommandConfig): Promise<boolean> {
+  if (!await prepareEnvPanelClose()) return false;
+  const pageIds = [...tabPages.keys()];
+  const dirtyIds = pageIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+  if (!await prepareToLeave("switch-workspace", dirtyIds)) return false;
+  if (await prepareRunningTerminals("switch-workspace", pageIds) === null) return false;
+  const model = commandTreeView;
+  if (model === null) throw new Error("Command workspace is unavailable");
+  const activeRoot = config.roots.find((root) => root.key === config.activeRootKey);
+  if (activeRoot === undefined) throw new Error("Command active root does not exist");
+  const storageRoots = await requireCommandStorage().resolveRoots([activeRoot]);
+  tabStates.value = new Map();
+  await model.controller.setStorageRoots(storageRoots);
+  await nextTick();
+  tabPages.clear();
+  error.value = "";
+  return true;
+}
+
+async function beforeSettingsSave(current: unknown): Promise<boolean> {
+  try {
+    commandConfigSerializer.validate(current);
+    const nextConfig = commandConfigSerializer.fromJson(
+      commandConfigSerializer.toJson(current),
+    );
+    const isRootConfigChanged = currentConfig.value.activeRootKey !== nextConfig.activeRootKey
+      || JSON.stringify(currentConfig.value.roots) !== JSON.stringify(nextConfig.roots);
+    if (isRootConfigChanged && !await updateTreeViewRoots(nextConfig)) return false;
+    currentConfig.value = nextConfig;
+    return true;
+  } catch (reason: unknown) {
+    gMessageStore.pushMessage("error", errorMessage(reason));
+    throw reason;
+  }
+}
+
+async function refreshCurrentRoot(): Promise<void> {
+  if (!await prepareEnvPanelClose()) return;
+  const model = commandTreeView;
+  if (model === null) throw new Error("Command workspace is unavailable");
+  const pageIds = [...tabPages.keys()];
+  const dirtyIds = pageIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+  const discardedDraftIds = await prepareToLeave("refresh", dirtyIds);
+  if (discardedDraftIds === null) return;
+  if (await prepareRunningTerminals("refresh", pageIds) === null) return;
+  await discardDrafts(discardedDraftIds);
+  await model.controller.initialize();
+  treeView.value = null;
+  await nextTick();
+  tabPages.clear();
+  tabStates.value = new Map();
+  treeView.value = model;
+  error.value = "";
+  gMessageStore.pushMessage("success", "Command root refreshed.");
+}
+
 async function revealCommandStorage(): Promise<void> {
   try {
-    await requireProvider().revealStorage();
+    await requireCommandStorage().revealStorage(requireStorageRootPath());
   } catch (reason: unknown) {
-    error.value = errorMessage(reason);
+    const message = errorMessage(reason);
+    error.value = message;
+    await showAlertDialog({
+      title: "Command data could not be revealed",
+      descriptions: [message],
+    });
   }
 }
 
 async function deleteCommandStorageAndReload(): Promise<void> {
-  const decision = await confirmDialog({
+  const decision = await confirmActionDialog({
     title: "Delete old Command data?",
     descriptions: [
       "All Command workspaces, folders, commands, and parameters will be permanently deleted.",
       "A new default workspace will be created after deletion.",
     ],
-    actions: DELETE_STORAGE_ACTIONS,
-    cancelActionId: "cancel",
+    actionId: "delete",
+    actionLabel: "Delete and reload",
   });
   if (decision === "cancel") return;
   try {
     await runWithOperationProgress("Deleting old Command data...", async () => {
-      const commandProvider = requireProvider();
+      const storage = requireCommandStorage();
       const model = commandTreeView;
       if (model === null) throw new Error("Command workspace is unavailable");
-      await commandProvider.deleteStorage();
+      await storage.deleteStorage(requireStorageRootPath());
       await model.controller.initialize();
       tabPages.clear();
       tabStates.value = new Map();
@@ -134,56 +511,121 @@ async function deleteCommandStorageAndReload(): Promise<void> {
       error.value = "";
     });
   } catch (reason: unknown) {
-    error.value = errorMessage(reason);
+    const message = errorMessage(reason);
+    error.value = message;
+    await showAlertDialog({
+      title: "Command data could not be deleted",
+      descriptions: [message],
+    });
   }
 }
 
-function requireProvider(): RemoteObject<CommandTreeViewDataProvider> {
-  if (provider === null) throw new Error("Command storage is unavailable");
-  return provider;
+function requireCommandStorage(): RemoteObject<CommandStorageServerRpcApi> {
+  if (commandStorage === null) throw new Error("Command storage is unavailable");
+  return commandStorage;
+}
+
+function requireStorageRootPath(): string {
+  const root = commandTreeView?.storageRoots[0];
+  if (root === undefined) throw new Error("Command storage root is unavailable");
+  return root.path;
 }
 
 function installTabGuards(model: TreeView): void {
+  const initialize = model.operations.initialize;
+  const reload = model.operations.reload;
+  const setStorageRoots = model.operations.setStorageRoots;
+  const createWorkspace = model.operations.createWorkspace;
+  const deleteWorkspace = model.operations.deleteWorkspace;
   const closeTabs = model.operations.closeTabs;
   const switchWorkspace = model.operations.switchWorkspace;
+  model.operations.initialize = async (): Promise<void> => {
+    await initialize();
+    await loadWorkspaceData(model);
+  };
+  model.operations.reload = async (): Promise<void> => {
+    await reload();
+    await loadWorkspaceData(model);
+  };
+  model.operations.setStorageRoots = async (storageRoots): Promise<void> => {
+    await setStorageRoots(storageRoots);
+    await loadWorkspaceData(model);
+  };
+  model.operations.createWorkspace = async (workspaceName): Promise<void> => {
+    await createWorkspace(workspaceName);
+    await loadWorkspaceData(model);
+  };
+  model.operations.deleteWorkspace = async (workspacePath): Promise<void> => {
+    if (!await prepareEnvPanelClose()) return;
+    await deleteWorkspace(workspacePath);
+    await loadWorkspaceData(model);
+  };
   model.operations.closeTabs = async (params): Promise<void> => {
-    const dirtyIds = params.tabIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
-    if (!await prepareToLeave("close-tabs", dirtyIds)) return;
+    const unsavedIds = params.tabIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+    const discardedDraftIds = await prepareToLeave("close-tabs", unsavedIds);
+    if (discardedDraftIds === null) return;
     const skippedIds = await prepareRunningTerminals("close-tabs", params.tabIds);
     if (skippedIds === null) return;
     const tabIds = params.tabIds.filter((id) => !skippedIds.has(id));
+    await discardDrafts([...discardedDraftIds].filter((id) => tabIds.includes(id)));
     if (tabIds.length > 0) await closeTabs({ ...params, tabIds });
   };
   model.operations.switchWorkspace = async (workspaceName): Promise<void> => {
+    if (!await prepareEnvPanelClose()) return;
     const pageIds = [...tabPages.keys()];
-    const dirtyIds = pageIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
-    if (!await prepareToLeave("switch-workspace", dirtyIds)) return;
+    const unsavedIds = pageIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+    const discardedDraftIds = await prepareToLeave("switch-workspace", unsavedIds);
+    if (discardedDraftIds === null) return;
     if (await prepareRunningTerminals("switch-workspace", pageIds) === null) return;
+    await discardDrafts(discardedDraftIds);
     await switchWorkspace(workspaceName);
+    await loadWorkspaceData(model);
   };
+}
+
+async function beforeAppQuit(): Promise<boolean> {
+  if (!await prepareEnvPanelClose()) return false;
+  const pageIds = [...tabPages.keys()];
+  const unsavedIds = pageIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+  const discardedDraftIds = await prepareToLeave("close-app", unsavedIds);
+  if (discardedDraftIds === null) return false;
+  if (await prepareRunningTerminals("close-app", pageIds) === null) return false;
+  await discardDrafts(discardedDraftIds);
+  return true;
 }
 
 async function prepareToLeave(
   reason: GuardReason,
-  dirtyIds: readonly string[],
-): Promise<boolean> {
-  if (dirtyIds.length === 0) return true;
+  unsavedIds: readonly string[],
+): Promise<ReadonlySet<string> | null> {
+  if (unsavedIds.length === 0) return new Set();
   const decision = await confirmDialog({
     title: "Unsaved changes",
     descriptions: [
-      dirtyIds.length === 1
+      unsavedIds.length === 1
         ? "This editor has unsaved changes."
-        : `${dirtyIds.length} editors have unsaved changes.`,
-      reason === "switch-workspace" ? "Save before switching workspace?" : "Save before closing?",
+        : `${unsavedIds.length} editors have unsaved changes.`,
+      reason === "switch-workspace"
+        ? "Save before switching workspace?"
+        : reason === "refresh"
+          ? "Save before refreshing?"
+          : "Save before closing?",
     ],
     actions: GUARD_ACTIONS,
     cancelActionId: "cancel",
   });
-  if (decision === "cancel") return false;
+  if (decision === "cancel") return null;
   if (decision === "save") {
-    for (const id of dirtyIds) await tabPages.get(id)?.save();
+    for (const id of unsavedIds) {
+      if (await tabPages.get(id)?.save() === false) return null;
+    }
+    return new Set();
   }
-  return true;
+  return new Set(unsavedIds.filter((id) => tabPages.get(id)?.isDraft() ?? false));
+}
+
+async function discardDrafts(draftIds: ReadonlySet<string> | readonly string[]): Promise<void> {
+  for (const id of draftIds) await tabPages.get(id)?.discardDraft();
 }
 
 async function prepareRunningTerminals(
@@ -194,7 +636,7 @@ async function prepareRunningTerminals(
     .map((id) => tabPages.get(id))
     .filter((page): page is CommandTabPageApi => page?.isRunning() ?? false);
   if (runningPages.length === 0) return new Set();
-  const decision = await confirmDialog({
+  const dialogContent = {
     title: "Commands are running",
     descriptions: [
       runningPages.length === 1
@@ -202,17 +644,27 @@ async function prepareRunningTerminals(
         : `${runningPages.length} running commands will be affected.`,
       reason === "switch-workspace"
         ? "Stop running commands before switching workspace?"
-        : "Stop running commands before closing?",
+        : reason === "refresh"
+          ? "Stop running commands before refreshing?"
+          : "Stop running commands before closing?",
     ],
     details: runningPages.map((page) => ({
       id: page.id,
       label: treeView.value?.getItemById(page.id)?.name ?? "Command",
     })),
-    actions: reason === "switch-workspace"
-      ? RUNNING_SWITCH_ACTIONS
-      : runningPages.length === 1 ? RUNNING_SINGLE_CLOSE_ACTIONS : RUNNING_CLOSE_ACTIONS,
-    cancelActionId: "cancel",
-  });
+  };
+  const decision: RunningGuardDecision = reason === "close-tabs" && runningPages.length > 1
+    ? await confirmDialog({
+      ...dialogContent,
+      actions: RUNNING_CLOSE_ACTIONS,
+      cancelActionId: "cancel",
+    })
+    : await confirmActionDialog({
+      ...dialogContent,
+      actionId: "close-all",
+      actionLabel: reason === "close-tabs" ? "Close" : "Close all",
+      isActionDefault: true,
+    });
   if (decision === "cancel") return null;
   if (decision === "skip" && reason === "close-tabs") {
     return new Set(runningPages.map((page) => page.id));
@@ -238,6 +690,7 @@ function updateTabState(state: CommandTabPageState): void {
   next.set(state.id, {
     isDirty: state.isDirty,
     isRunning: state.isRunning,
+    scriptType: state.scriptType,
   });
   tabStates.value = next;
 }
@@ -273,20 +726,16 @@ function errorMessage(reason: unknown): string {
     <TreeViewComponent
       v-if="treeView !== null"
       :tree-view="treeView"
-      :create-item-data="commandItemDataSerializer.getDefault"
       :is-tab-multiline="true"
       folder-label="Folder"
       item-label="Command"
     >
       <template #itemIcon="{ item }">
-        <span
-          v-if="tabStates.get(item.properties.id)?.isRunning"
-          class="command-running-indicator"
-          role="status"
-          aria-label="Command is running"
-          title="Command is running"
-        ></span>
-        <CommandScriptIcon v-else :item="item" />
+        <CommandScriptIcon
+          :script-type="tabStates.get(item.properties.id)?.scriptType
+            ?? itemScriptTypes.get(item.properties.id)"
+          :is-running="tabStates.get(item.properties.id)?.isRunning"
+        />
       </template>
 
       <template #tabOverlay="{ entity }">
@@ -298,11 +747,16 @@ function errorMessage(reason: unknown): string {
         ></span>
       </template>
 
-      <template #tabPage="{ entity, requestDraftSave }">
+      <template #tabPage="{ entity, isActive, notifyReady, requestDraftSave }">
         <CommandTabPage
           :entity="entity"
+          :is-active="isActive"
+          :notify-ready="notifyReady"
+          :terminal-placement="currentConfig.terminalPlacement"
+          :terminal-initial-path="currentConfig.terminalInitialPath"
           :tree-view="treeView"
           :get-open-folder-data="getOpenFolderData"
+          :get-workspace-env="getWorkspaceEnv"
           :request-draft-save="requestDraftSave"
           @register="registerTabPage"
           @unregister="unregisterTabPage"
@@ -312,7 +766,8 @@ function errorMessage(reason: unknown): string {
     </TreeViewComponent>
 
     <div v-else-if="error.length > 0" class="command-page__error" role="alert">
-      <p>{{ error }}</p>
+      <h2>Error</h2>
+      <pre class="command-page__error-message" aria-label="Error details">{{ error }}</pre>
       <div class="command-page__error-actions">
         <button type="button" @click="revealCommandStorage">Reveal in File Explorer</button>
         <button type="button" class="is-danger" @click="deleteCommandStorageAndReload">
@@ -321,6 +776,15 @@ function errorMessage(reason: unknown): string {
       </div>
     </div>
     <p v-else class="command-page__state" role="status">Loading Command workspace...</p>
+
+    <CommandEnvPanel
+      v-if="gCommandEnvPanelOpen"
+      ref="envPanel"
+      :workspace-name="workspaceName"
+      :data="workspaceData"
+      :save-data="saveWorkspaceData"
+      @close="closeEnvPanel"
+    />
 
   </section>
 </template>
@@ -340,18 +804,41 @@ function errorMessage(reason: unknown): string {
 }
 
 .command-page__error {
-  max-width: min(560px, calc(100% - 32px));
+  width: calc(100% - var(--space-8));
+  max-width: 460px;
+  min-width: 0;
+  flex: none;
   margin: auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--color-text-muted);
-  text-align: center;
+  gap: var(--space-3);
 }
 
-.command-page__error p {
+.command-page__error h2 {
   margin: 0;
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.command-page__error-message {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--color-text-muted);
+  background: var(--color-default-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  font: inherit;
+  line-height: 1.5;
+  user-select: text;
 }
 
 .command-page__error-actions {
@@ -367,7 +854,7 @@ function errorMessage(reason: unknown): string {
   color: var(--color-text);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   cursor: pointer;
 }
@@ -390,7 +877,6 @@ function errorMessage(reason: unknown): string {
 .command-page :deep(.tree-view__breadcrumb) {
   padding-block: 0;
   background: var(--color-surface);
-  border-block-end: 1px solid var(--color-border);
 }
 
 .command-tab-dirty {
@@ -403,28 +889,6 @@ function errorMessage(reason: unknown): string {
   background: var(--color-primary);
   transform: translateY(-50%);
   box-shadow: 0 0 0 2px var(--color-surface-raised);
-}
-
-.command-running-indicator {
-  display: block;
-  width: 14px;
-  height: 14px;
-  margin: 1px;
-  border: 2px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
-  border-block-start-color: var(--color-primary);
-  border-radius: 50%;
-  animation: command-running-spin 0.8s linear infinite;
-}
-
-@keyframes command-running-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .command-running-indicator {
-    animation: none;
-    border-color: var(--color-primary);
-  }
 }
 
 </style>

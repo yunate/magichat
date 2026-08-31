@@ -9,7 +9,7 @@ export interface TasksServerRpcApi {
   deleteTasks(ids: string[]): string[];
   setTaskPin(id: string, isPinned: boolean): void;
   getTaskLogs(id: string): string[];
-  getTaskFullLogs(id: string): string[];
+  revealTaskLog(id: string): void;
   getTaskCreateParams(id: string): TaskCreateParam | null;
   listTaskTemplates(): TaskTemplate[];
   saveTaskTemplate(template: TaskTemplate): TaskTemplate;

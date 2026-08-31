@@ -20,10 +20,15 @@
     "typecheck:common": "npm run typecheck --workspace magichat-common",
     "typecheck:client": "npm run typecheck --workspace magichat-client",
     "typecheck:main": "npm run typecheck --workspace magichat-main",
-    "build": "npm run build:renderer && npm run build:electron",
+    "build": "npm run build:native && npm run build:renderer && npm run build:electron",
+    "build:start": "npm run build:native && node build/build-start.mjs && npm run build:electron",
+    "build:native": ".\\native-tools\\build-all-natives.bat",
     "build:renderer": "npm run build --workspace magichat-client",
     "build:electron": "node build/build-electron.mjs",
-    "package": "npm run build && electron-builder --config electron-builder.yml"
+    "build:cli-native": ".\\native-tools\\cli-helper\\src\\build-native.bat",
+    "cli": ".\\native-tools\\cli-helper\\bin\\magichat-cli.exe",
+    "package": "npm run build && node build/package-electron.mjs",
+    "publish:github": "node build/publish-github-release.mjs"
   },
   "devDependencies": {
     "electron": "^37.0.0",
@@ -31,7 +36,7 @@
     "esbuild": "^0.25.9"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "node-pty": "^1.1.0"

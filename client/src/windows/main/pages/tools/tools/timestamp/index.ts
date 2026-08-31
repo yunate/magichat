@@ -3,7 +3,8 @@ import TimestampTool from "./TimestampTool.vue";
 
 export const timestampTool: ToolDefinition = {
   id: "timestamp",
-  title: "时间戳",
+  title: "Timestamp",
   component: TimestampTool,
+  category: "developer",
   order: 6,
 };

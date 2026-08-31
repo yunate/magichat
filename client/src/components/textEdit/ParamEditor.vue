@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
 import type { CSSProperties } from "vue";
+import { confirmActionDialog } from "../confirmDialog";
+import SplitContainer from "../SplitContainer.vue";
 import MacroTextInput from "./MacroTextInput.vue";
 import type {
   MacroDisplayDetail,
@@ -43,23 +45,25 @@ const draftParam = ref<TextEditParam>({ key: "", value: "", enabled: true });
 const draggedIndex = ref<number | null>(null);
 const dropTarget = ref<Readonly<{ index: number; position: DropPosition }> | null>(null);
 const rowMenu = ref<RowMenu | null>(null);
+const editorWidth = ref(0);
+const valueLineCounts = ref<ReadonlyMap<string, number>>(new Map());
 const composingDraftFields = new Set<ParamField>();
 const editorId = `param-editor-${crypto.randomUUID()}`;
-const DEFAULT_KEY_COLUMN_WIDTH = 360;
-const keyColumnWidth = ref(DEFAULT_KEY_COLUMN_WIDTH);
+const keyColumnWidth = ref<number | null>(null);
 const MIN_KEY_COLUMN_WIDTH = 100;
 const MIN_VALUE_COLUMN_WIDTH = 140;
-const PARAM_GRID_FIXED_WIDTH = 92;
+const PARAM_GRID_FIXED_WIDTH = 91;
 const PARAM_KEY_COLUMN_START = 44;
-const COLUMN_RESIZE_STEP = 16;
-let columnResizeStart: Readonly<{ pointerX: number; width: number }> | null = null;
-let previousColumnResizeCursor = "";
-let previousColumnResizeUserSelect = "";
+const PARAM_ROW_BASE_HEIGHT = 38;
+const PARAM_VALUE_LINE_HEIGHT = 20;
+const PARAM_VALUE_MAX_VISIBLE_LINES = 4;
+let editorResizeObserver: ResizeObserver | null = null;
 
 watch(() => props.group.id, () => {
   rowIds.value = props.group.params.map(() => crypto.randomUUID());
   draftId.value = crypto.randomUUID();
   draftParam.value = { key: "", value: "", enabled: true };
+  valueLineCounts.value = new Map();
   composingDraftFields.clear();
 });
 watch(() => props.group.params.length, (length) => {
@@ -70,22 +74,51 @@ watch(() => props.group.params.length, (length) => {
 const keyErrors = computed(() => props.group.params.map((_param, index) => {
   return getTextEditParamKeyError(props.group.params, index) ?? "";
 }));
-const paramEditorStyle = computed<CSSProperties>(() => ({
-  "--param-key-column-width": `${keyColumnWidth.value}px`,
-  "--param-column-splitter-left": `${PARAM_KEY_COLUMN_START + keyColumnWidth.value}px`,
-}));
+const effectiveKeyColumnWidth = computed(() => Math.min(
+  keyColumnWidth.value ?? Math.max(
+    MIN_KEY_COLUMN_WIDTH,
+    (editorWidth.value - PARAM_GRID_FIXED_WIDTH) / 2,
+  ),
+  maximumKeyColumnWidth(),
+));
+const keyPaneStyle = computed<CSSProperties>(() => keyColumnWidth.value === null
+  ? {}
+  : {
+      flex: `0 1 ${PARAM_KEY_COLUMN_START + effectiveKeyColumnWidth.value}px`,
+      maxWidth: `${PARAM_KEY_COLUMN_START + maximumKeyColumnWidth()}px`,
+    });
+
+function paramRowStyle(rowId: string, value: string, hasError = false): CSSProperties {
+  const lineCount = Math.min(
+    PARAM_VALUE_MAX_VISIBLE_LINES,
+    valueLineCounts.value.get(rowId) ?? value.split(/\r\n?|\n/).length,
+  );
+  const contentHeight = PARAM_ROW_BASE_HEIGHT + (lineCount - 1) * PARAM_VALUE_LINE_HEIGHT;
+  return { height: `${Math.max(hasError ? 56 : 0, contentHeight)}px` };
+}
+
+function updateValueLineCount(rowId: string, lineCount: number): void {
+  if (valueLineCounts.value.get(rowId) === lineCount) return;
+  const next = new Map(valueLineCounts.value);
+  next.set(rowId, lineCount);
+  valueLineCounts.value = next;
+}
 
 onMounted(() => {
+  updateEditorWidth();
+  editorResizeObserver = new ResizeObserver(updateEditorWidth);
+  if (paramEditor.value !== null) editorResizeObserver.observe(paramEditor.value);
   window.addEventListener("pointerdown", closeRowMenu);
   window.addEventListener("scroll", closeRowMenu, true);
   window.addEventListener("keydown", onWindowKeydown);
 });
 
 onUnmounted(() => {
+  editorResizeObserver?.disconnect();
+  editorResizeObserver = null;
   window.removeEventListener("pointerdown", closeRowMenu);
   window.removeEventListener("scroll", closeRowMenu, true);
   window.removeEventListener("keydown", onWindowKeydown);
-  stopColumnResize();
 });
 
 function updateParam<KField extends keyof TextEditParam>(
@@ -133,6 +166,24 @@ async function copyParam(index: number): Promise<void> {
   }
 }
 
+async function requestAllParamsDelete(): Promise<void> {
+  rowMenu.value = null;
+  const deleteCount = props.group.params.length - props.fixedParamCount;
+  if (deleteCount <= 0) return;
+  const decision = await confirmActionDialog({
+    title: "Delete all parameters?",
+    descriptions: [
+      `Delete all ${deleteCount} editable parameter${deleteCount === 1 ? "" : "s"} from "${props.group.name}"?`,
+    ],
+    actionId: "delete",
+    actionLabel: "Delete all",
+  });
+  if (decision !== "delete") return;
+  emit("update", props.group.params
+    .slice(0, props.fixedParamCount)
+    .map((param) => ({ ...param })));
+}
+
 function requestParamDelete(index: number): void {
   if (isFixedParam(index)) return;
   rowMenu.value = null;
@@ -144,7 +195,7 @@ function openRowMenu(event: MouseEvent, index: number): void {
   event.preventDefault();
   event.stopPropagation();
   const menuWidth = 160;
-  const menuHeight = 104;
+  const menuHeight = 140;
   const margin = 8;
   rowMenu.value = {
     index,
@@ -161,49 +212,6 @@ function onWindowKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape") closeRowMenu();
 }
 
-function startColumnResize(event: PointerEvent): void {
-  if (props.readonly) return;
-  if (event.button !== 0) return;
-  event.preventDefault();
-  columnResizeStart = { pointerX: event.clientX, width: keyColumnWidth.value };
-  previousColumnResizeCursor = document.body.style.cursor;
-  previousColumnResizeUserSelect = document.body.style.userSelect;
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-  window.addEventListener("pointermove", resizeKeyColumn);
-  window.addEventListener("pointerup", stopColumnResize);
-  window.addEventListener("pointercancel", stopColumnResize);
-}
-
-function resizeKeyColumn(event: PointerEvent): void {
-  if (columnResizeStart === null) return;
-  setKeyColumnWidth(columnResizeStart.width + event.clientX - columnResizeStart.pointerX);
-}
-
-function stopColumnResize(): void {
-  if (columnResizeStart === null) return;
-  columnResizeStart = null;
-  document.body.style.cursor = previousColumnResizeCursor;
-  document.body.style.userSelect = previousColumnResizeUserSelect;
-  window.removeEventListener("pointermove", resizeKeyColumn);
-  window.removeEventListener("pointerup", stopColumnResize);
-  window.removeEventListener("pointercancel", stopColumnResize);
-}
-
-function resizeKeyColumnByKey(event: KeyboardEvent): void {
-  const width = keyColumnWidth.value;
-  let nextWidth: number;
-  switch (event.key) {
-    case "ArrowLeft": nextWidth = width - COLUMN_RESIZE_STEP; break;
-    case "ArrowRight": nextWidth = width + COLUMN_RESIZE_STEP; break;
-    case "Home": nextWidth = MIN_KEY_COLUMN_WIDTH; break;
-    case "End": nextWidth = maximumKeyColumnWidth(); break;
-    default: return;
-  }
-  event.preventDefault();
-  setKeyColumnWidth(nextWidth);
-}
-
 function setKeyColumnWidth(width: number): void {
   keyColumnWidth.value = Math.round(Math.min(
     maximumKeyColumnWidth(),
@@ -211,12 +219,19 @@ function setKeyColumnWidth(width: number): void {
   ));
 }
 
+function resizeKeyColumn(_index: number, separatorPosition: number): void {
+  setKeyColumnWidth(separatorPosition - PARAM_KEY_COLUMN_START);
+}
+
 function maximumKeyColumnWidth(): number {
-  const editorWidth = paramEditor.value?.clientWidth ?? 0;
   return Math.max(
     MIN_KEY_COLUMN_WIDTH,
-    editorWidth - PARAM_GRID_FIXED_WIDTH - MIN_VALUE_COLUMN_WIDTH,
+    editorWidth.value - PARAM_GRID_FIXED_WIDTH - MIN_VALUE_COLUMN_WIDTH,
   );
+}
+
+function updateEditorWidth(): void {
+  editorWidth.value = paramEditor.value?.clientWidth ?? 0;
 }
 
 function removeParam(index: number): void {
@@ -267,7 +282,7 @@ function onDraftKeyInput(event: Event): void {
 
 function onDraftValueInput(event: Event): void {
   const control = event.target;
-  if (!(control instanceof HTMLInputElement)) return;
+  if (!(control instanceof HTMLTextAreaElement)) return;
   updateDraftParam(
     "value",
     control.value,
@@ -284,7 +299,7 @@ function onDraftCompositionStart(field: ParamField): void {
 function onDraftCompositionEnd(field: ParamField, event: CompositionEvent): void {
   composingDraftFields.delete(field);
   const control = event.target;
-  if (!(control instanceof HTMLInputElement)) return;
+  if (!isTextControl(control)) return;
   updateDraftParam(
     field,
     control.value,
@@ -307,7 +322,7 @@ async function restorePromotedDraftFocus(
   control.setSelectionRange(caret, caret);
 }
 
-function isTextControl(element: HTMLElement | null): element is TextControl {
+function isTextControl(element: EventTarget | null): element is TextControl {
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
 }
 
@@ -409,7 +424,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function inputValue(event: Event): string {
-  return event.target instanceof HTMLInputElement ? event.target.value : "";
+  return isTextControl(event.target) ? event.target.value : "";
 }
 
 function onParamKeyPaste(event: ClipboardEvent, index: number): void {
@@ -430,136 +445,169 @@ defineExpose({
   <section
     ref="paramEditor"
     class="param-editor"
-    :style="paramEditorStyle"
     :aria-label="`${group.name} parameters`"
   >
-    <button
-      v-if="!props.readonly"
-      type="button"
-      class="param-editor__column-splitter"
-      role="separator"
-      aria-label="Resize parameter key and value columns"
-      aria-orientation="vertical"
-      :aria-valuemin="MIN_KEY_COLUMN_WIDTH"
-      :aria-valuemax="maximumKeyColumnWidth()"
-      :aria-valuenow="keyColumnWidth"
-      @pointerdown="startColumnResize"
-      @keydown="resizeKeyColumnByKey"
-    ></button>
-    <span
-      v-else
-      class="param-editor__column-divider"
-      aria-hidden="true"
-    ></span>
-    <div class="param-editor__rows">
-      <div
-        v-for="(param, index) in group.params"
-        :key="rowIds[index]"
-        class="param-row"
-        :class="{
-          'is-fixed': isFixedParam(index),
-          'is-dragging': draggedIndex === index,
-          'is-drop-before': dropTarget?.index === index && dropTarget.position === 'before',
-          'is-drop-after': dropTarget?.index === index && dropTarget.position === 'after',
-        }"
-        @dragover="onDragOver($event, index)"
-        @dragleave="onDragLeave"
-        @drop="onDrop"
-        @contextmenu="openRowMenu($event, index)"
-      >
-        <label class="param-row__selection">
-          <span class="sr-only">Enable parameter {{ index + 1 }}</span>
-          <input
-            type="checkbox"
-            :checked="param.enabled"
-            :disabled="props.readonly"
-            :aria-label="`Enable parameter ${index + 1}`"
-            :title="param.enabled ? 'Disable parameter' : 'Enable parameter'"
-            @change="updateParam(index, 'enabled', checkboxValue($event))"
-          />
-        </label>
-        <label class="param-row__field">
-          <span class="sr-only">Parameter {{ index + 1 }} key</span>
-          <input
-            :id="`${editorId}-${rowIds[index]}-key`"
-            type="text"
-            :value="param.key"
-            :aria-invalid="keyErrors[index]?.length > 0"
-            :aria-describedby="keyErrors[index] ? `param-error-${rowIds[index]}` : undefined"
-            :readonly="props.readonly || isFixedParam(index)"
-            :title="isFixedParam(index) ? 'Generated from script content' : undefined"
-            placeholder="key"
-            @input="updateParam(index, 'key', inputValue($event))"
-            @paste="onParamKeyPaste($event, index)"
-          />
-          <span
-            v-if="keyErrors[index]"
-            :id="`param-error-${rowIds[index]}`"
-            class="param-row__error"
-            role="alert"
-          >{{ keyErrors[index] }}</span>
-        </label>
-        <label class="param-row__field">
-          <span class="sr-only">Parameter {{ index + 1 }} value</span>
-          <MacroTextInput
-            :id="`${editorId}-${rowIds[index]}-value`"
-            :value="param.value"
-            :macro-details="macroDetails"
-            :readonly="props.readonly"
-            :accessible-label="`Parameter ${index + 1} value`"
-            placeholder="value"
-            @input="updateParam(index, 'value', inputValue($event))"
-            @paste="onPaste"
-          />
-        </label>
-        <button
-          v-if="!props.readonly && !isFixedParam(index)"
-          type="button"
-          class="param-row__drag"
-          draggable="true"
-          :aria-label="`Drag parameter ${index + 1}`"
-          title="Drag to reorder"
-          @click="openRowMenu($event, index)"
-          @dragstart="onDragStart($event, index)"
-          @dragend="stopDragging"
-        >⋮⋮</button>
-        <span v-else-if="!props.readonly" class="param-row__fixed-marker" title="Fixed script macro" aria-label="Fixed script macro">◆</span>
-        <span v-else aria-hidden="true"></span>
+    <SplitContainer
+      class="param-editor__layout"
+      orientation="vertical"
+      :separator-labels="['Resize parameter key and value columns']"
+      :is-disabled="props.readonly"
+      @resize="resizeKeyColumn"
+    >
+      <div class="param-editor__keys" :style="keyPaneStyle">
+        <div
+          v-for="(param, index) in group.params"
+          :key="rowIds[index]"
+          class="param-row param-row--key"
+          :style="paramRowStyle(rowIds[index] ?? '', param.value, keyErrors[index]?.length > 0)"
+          :class="{
+            'has-error': keyErrors[index]?.length > 0,
+            'is-fixed': isFixedParam(index),
+            'is-dragging': draggedIndex === index,
+            'is-drop-before': dropTarget?.index === index && dropTarget.position === 'before',
+            'is-drop-after': dropTarget?.index === index && dropTarget.position === 'after',
+          }"
+          @dragover="onDragOver($event, index)"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+          @contextmenu="openRowMenu($event, index)"
+        >
+          <label class="param-row__selection">
+            <span class="sr-only">Enable parameter {{ index + 1 }}</span>
+            <input
+              type="checkbox"
+              :checked="param.enabled"
+              :disabled="props.readonly"
+              :aria-label="`Enable parameter ${index + 1}`"
+              :title="param.enabled ? 'Disable parameter' : 'Enable parameter'"
+              @change="updateParam(index, 'enabled', checkboxValue($event))"
+            />
+          </label>
+          <label class="param-row__field param-row__field--key">
+            <span class="sr-only">Parameter {{ index + 1 }} key</span>
+            <input
+              :id="`${editorId}-${rowIds[index]}-key`"
+              type="text"
+              :value="param.key"
+              :aria-invalid="keyErrors[index]?.length > 0"
+              :aria-describedby="keyErrors[index] ? `param-error-${rowIds[index]}` : undefined"
+              :readonly="props.readonly || isFixedParam(index)"
+              :title="isFixedParam(index) ? 'Generated from script content' : undefined"
+              placeholder="key"
+              @input="updateParam(index, 'key', inputValue($event))"
+              @paste="onParamKeyPaste($event, index)"
+            />
+            <span
+              v-if="keyErrors[index]"
+              :id="`param-error-${rowIds[index]}`"
+              class="param-row__error"
+              role="alert"
+              :title="keyErrors[index]"
+            >{{ keyErrors[index] }}</span>
+          </label>
+        </div>
+        <div
+          v-if="!props.readonly"
+          :key="draftId"
+          class="param-row param-row--key param-row--draft"
+          :style="paramRowStyle(draftId, draftParam.value)"
+        >
+          <span class="param-row__draft-spacer" aria-hidden="true"></span>
+          <label class="param-row__field param-row__field--key">
+            <span class="sr-only">New parameter key</span>
+            <input
+              :id="`${editorId}-${draftId}-key`"
+              type="text"
+              :value="draftParam.key"
+              placeholder="key"
+              @input="onDraftKeyInput"
+              @paste="onPaste"
+              @compositionstart="onDraftCompositionStart('key')"
+              @compositionend="onDraftCompositionEnd('key', $event)"
+            />
+          </label>
+        </div>
       </div>
-      <div v-if="!props.readonly" :key="draftId" class="param-row param-row--draft">
-        <span class="param-row__draft-spacer" aria-hidden="true"></span>
-        <label class="param-row__field">
-          <span class="sr-only">New parameter key</span>
-          <input
-            :id="`${editorId}-${draftId}-key`"
-            type="text"
-            :value="draftParam.key"
-            placeholder="key"
-            @input="onDraftKeyInput"
-            @paste="onPaste"
-            @compositionstart="onDraftCompositionStart('key')"
-            @compositionend="onDraftCompositionEnd('key', $event)"
-          />
-        </label>
-        <label class="param-row__field">
-          <span class="sr-only">New parameter value</span>
-          <MacroTextInput
-            :id="`${editorId}-${draftId}-value`"
-            :value="draftParam.value"
-            :macro-details="macroDetails"
-            accessible-label="New parameter value"
-            placeholder="value"
-            @input="onDraftValueInput"
-            @paste="onPaste"
-            @compositionstart="onDraftCompositionStart('value')"
-            @compositionend="onDraftCompositionEnd('value', $event)"
-          />
-        </label>
-        <span aria-hidden="true"></span>
+
+      <div class="param-editor__values">
+        <div
+          v-for="(param, index) in group.params"
+          :key="rowIds[index]"
+          class="param-row param-row--value"
+          :style="paramRowStyle(rowIds[index] ?? '', param.value, keyErrors[index]?.length > 0)"
+          :class="{
+            'has-error': keyErrors[index]?.length > 0,
+            'is-dragging': draggedIndex === index,
+            'is-drop-before': dropTarget?.index === index && dropTarget.position === 'before',
+            'is-drop-after': dropTarget?.index === index && dropTarget.position === 'after',
+          }"
+          @dragover="onDragOver($event, index)"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+          @contextmenu="openRowMenu($event, index)"
+        >
+          <label class="param-row__field param-row__field--value">
+            <span class="sr-only">Parameter {{ index + 1 }} value</span>
+            <MacroTextInput
+              :id="`${editorId}-${rowIds[index]}-value`"
+              :value="param.value"
+              :macro-details="macroDetails"
+              :readonly="props.readonly"
+              :accessible-label="`Parameter ${index + 1} value`"
+              placeholder="value"
+              @height-change="updateValueLineCount(rowIds[index] ?? '', $event)"
+              @input="updateParam(index, 'value', inputValue($event))"
+              @paste="onPaste"
+            />
+          </label>
+          <button
+            v-if="!props.readonly && !isFixedParam(index)"
+            type="button"
+            class="param-row__drag"
+            draggable="true"
+            :aria-label="`Drag parameter ${index + 1}`"
+            title="Drag to reorder or click for actions"
+            @click="openRowMenu($event, index)"
+            @dragstart="onDragStart($event, index)"
+            @dragend="stopDragging"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="4" r="1.25" />
+              <circle cx="8" cy="8" r="1.25" />
+              <circle cx="8" cy="12" r="1.25" />
+            </svg>
+          </button>
+          <span v-else-if="!props.readonly" class="param-row__fixed-marker" title="Fixed script macro" aria-label="Fixed script macro">◆</span>
+          <span v-else class="param-row__action-spacer" aria-hidden="true"></span>
+        </div>
+        <div
+          v-if="!props.readonly"
+          :key="draftId"
+          class="param-row param-row--value param-row--draft"
+          :style="paramRowStyle(draftId, draftParam.value)"
+        >
+          <label class="param-row__field param-row__field--value">
+            <span class="sr-only">New parameter value</span>
+            <MacroTextInput
+              :id="`${editorId}-${draftId}-value`"
+              :value="draftParam.value"
+              :macro-details="macroDetails"
+              accessible-label="New parameter value"
+              placeholder="value"
+              @height-change="updateValueLineCount(draftId, $event)"
+              @input="onDraftValueInput"
+              @paste="onPaste"
+              @compositionstart="onDraftCompositionStart('value')"
+              @compositionend="onDraftCompositionEnd('value', $event)"
+            />
+          </label>
+          <span class="param-row__action-spacer" aria-hidden="true"></span>
+        </div>
       </div>
-    </div>
+    </SplitContainer>
     <Teleport to="body">
       <div
+      :has-item-borders="false"
         v-if="rowMenu !== null"
         class="param-row-menu"
         :style="{ left: `${rowMenu.x}px`, top: `${rowMenu.y}px` }"
@@ -570,6 +618,7 @@ defineExpose({
         <button type="button" role="menuitem" @click="copyParam(rowMenu.index)">Copy</button>
         <button type="button" role="menuitem" @click="copyAll">Copy all</button>
         <button v-if="!isFixedParam(rowMenu.index)" type="button" class="is-danger" role="menuitem" @click="requestParamDelete(rowMenu.index)">Delete</button>
+        <button v-if="group.params.length > fixedParamCount" type="button" class="is-danger" role="menuitem" @click="requestAllParamsDelete">Delete all</button>
       </div>
     </Teleport>
   </section>
@@ -578,49 +627,21 @@ defineExpose({
 <style scoped>
 .param-editor {
   position: relative;
+  min-height: 100%;
   min-width: 0;
   color: var(--color-text);
 }
 
-.param-editor__column-splitter,
-.param-editor__column-divider {
+.param-editor::before {
   position: absolute;
-  z-index: 6;
-  top: 0;
-  bottom: 0;
-  left: var(--param-column-splitter-left);
-  width: 5px;
-  min-height: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  touch-action: none;
-}
-
-.param-editor__column-splitter {
-  cursor: col-resize !important;
-}
-
-.param-editor__column-splitter::before,
-.param-editor__column-divider::before {
-  position: absolute;
+  z-index: 5;
   inset-block: 0;
-  left: 2px;
-  width: 1px;
+  left: 0;
+  box-sizing: border-box;
+  width: 44px;
   content: "";
-  background: var(--color-border);
-}
-
-.param-editor__column-splitter:hover::before,
-.param-editor__column-splitter:focus-visible::before {
-  left: 1px;
-  width: 2px;
-  background: var(--color-primary);
-}
-
-.param-editor__column-splitter:focus-visible {
-  outline: 0;
+  border-inline-end: 1px solid var(--color-border);
+  pointer-events: none;
 }
 
 .param-editor button {
@@ -629,7 +650,7 @@ defineExpose({
   color: var(--color-text);
   background: transparent;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   cursor: pointer;
 }
 
@@ -644,10 +665,6 @@ defineExpose({
   outline-offset: 1px;
 }
 
-.param-editor button.param-editor__column-splitter:focus-visible {
-  outline: 0;
-}
-
 .param-row input:not([type="checkbox"]):focus-visible {
   background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-raised));
   outline: 0;
@@ -658,23 +675,48 @@ defineExpose({
   cursor: not-allowed;
 }
 
-.param-editor__rows {
+.param-editor__layout {
+  width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+.param-editor__keys,
+.param-editor__values {
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  border-block-start: 1px solid var(--color-border);
+}
+
+.param-editor__keys {
+  min-width: 144px;
+  flex: 1 1 0;
+}
+
+.param-editor__values {
+  min-width: 184px;
+  flex: 1 1 0;
 }
 
 .param-row {
   position: relative;
   display: grid;
-  grid-template-columns: 36px minmax(100px, var(--param-key-column-width, 2fr)) minmax(140px, 1fr) 36px;
   align-items: start;
-  gap: var(--space-1);
+  gap: 0;
+  height: 38px;
   padding: var(--space-1);
-  border-block-start: 1px solid color-mix(in srgb, var(--color-border) 64%, transparent);
+  border: 0;
+  border-block-end: 1px solid var(--color-border);
 }
 
-.param-row:first-child {
-  border-block-start: 0;
+.param-row--key {
+  grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.param-row--value {
+  grid-template-columns: minmax(140px, 1fr) 36px;
 }
 
 .param-row.is-dragging {
@@ -701,9 +743,10 @@ defineExpose({
   bottom: -1px;
 }
 
-.param-row__drag,
 .param-row__selection,
-.param-row__fixed-marker {
+.param-row__draft-spacer,
+.param-row__fixed-marker,
+.param-row__action-spacer {
   width: 36px;
   height: 28px;
   display: grid;
@@ -723,9 +766,40 @@ defineExpose({
   cursor: default;
 }
 
-.param-row__drag {
+.param-editor .param-row__drag {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  padding: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-medium);
   cursor: grab !important;
-  letter-spacing: -3px;
+  opacity: 0.72;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.param-editor .param-row__drag svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  fill: currentColor;
+}
+
+.param-editor .param-row__drag:hover:not(:disabled),
+.param-editor .param-row__drag:focus-visible {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 24%, transparent);
+  opacity: 1;
+}
+
+.param-editor .param-row__drag:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  cursor: grabbing !important;
 }
 
 .param-row__selection input {
@@ -735,7 +809,7 @@ defineExpose({
   height: 16px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 72%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-small);
   background: transparent;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -757,13 +831,22 @@ defineExpose({
   top: 3px;
   left: 3px;
   content: "";
-  border-bottom: 2px solid #ffffff;
-  border-left: 2px solid #ffffff;
+  border-bottom: 2px solid var(--color-text-on-accent);
+  border-left: 2px solid var(--color-text-on-accent);
   transform: rotate(-45deg);
 }
 
 .param-row__field {
   min-width: 0;
+}
+
+.param-row__field--key {
+  padding-inline: var(--space-2) var(--space-1);
+}
+
+.param-row__field--value {
+  height: 100%;
+  padding-inline: var(--space-1);
 }
 
 .param-row input:not([type="checkbox"]) {
@@ -773,10 +856,10 @@ defineExpose({
   color: var(--color-text);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-input);
+  border-radius: var(--radius-small);
 }
 
-.param-row input:not([type="checkbox"]):hover {
+.param-row input:not([type="checkbox"]):hover:not(:focus-visible) {
   background: color-mix(in srgb, var(--color-surface-raised) 45%, transparent);
 }
 
@@ -785,7 +868,11 @@ defineExpose({
 }
 
 .param-row--draft {
-  border-block-start-color: color-mix(in srgb, var(--color-border) 38%, transparent);
+  border-block-end-color: color-mix(
+    in srgb,
+    var(--color-border) 64%,
+    transparent
+  );
 }
 
 .param-row--draft :is(input, .macro-input) {
@@ -795,9 +882,12 @@ defineExpose({
 .param-row__error {
   display: block;
   padding: var(--space-1) var(--space-2) 0;
+  overflow: hidden;
   color: var(--color-danger);
   font-size: 11px;
   line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sr-only {
@@ -822,8 +912,8 @@ defineExpose({
   color: var(--color-text);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 36%);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-popup);
 }
 
 .param-row-menu button {
@@ -832,7 +922,7 @@ defineExpose({
   color: var(--color-text);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   text-align: start;
   cursor: pointer;
@@ -848,18 +938,4 @@ defineExpose({
   color: var(--color-danger);
 }
 
-@media (max-width: 560px) {
-  .param-editor__column-splitter,
-  .param-editor__column-divider {
-    display: none;
-  }
-
-  .param-row {
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
-  }
-
-  .param-row__field:nth-of-type(2) {
-    grid-column: 2;
-  }
-}
 </style>

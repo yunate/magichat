@@ -3,7 +3,8 @@ import CronTool from "./CronTool.vue";
 
 export const cronTool: ToolDefinition = {
   id: "cron",
-  title: "Cron 解释",
+  title: "Cron Interpreter",
   component: CronTool,
+  category: "developer",
   order: 12,
 };

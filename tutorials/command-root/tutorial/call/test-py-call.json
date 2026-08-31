@@ -1,0 +1,16 @@
+{
+  "isDraft": false,
+  "id": "10000000-0000-4000-8000-000000000019",
+  "data": {
+    "scriptType": "python",
+    "content": "mhcall(\"tutorial/set-env/ps1-mhsetenv.mh\")\nprint(\"ps1 call ps1.\")\n\nmhcall(\"tutorial/set-env/cmd-mhsetenv.mh\")\nprint(\"ps1 call cmd.\")\n\nmhcall(\"tutorial/set-env/node-mhsetenv.mh\")\nprint(\"ps1 call node.\")\n\nmhcall(\"tutorial/set-env/py-mhsetenv.mh\")\nprint(\"ps1 call python.\")",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

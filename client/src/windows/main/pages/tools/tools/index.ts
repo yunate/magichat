@@ -14,6 +14,7 @@ import { cronTool } from "./cron";
 import { yamlTool } from "./yaml";
 import { qrTool } from "./qr";
 import { imageOcrTool } from "./imageOcr";
+import { fileOccupancyTool } from "./fileOccupancy";
 
 gToolsRegistry.registerTool(markdownTool);
 gToolsRegistry.registerTool(base64Tool);
@@ -30,3 +31,4 @@ gToolsRegistry.registerTool(cronTool);
 gToolsRegistry.registerTool(yamlTool);
 gToolsRegistry.registerTool(qrTool);
 gToolsRegistry.registerTool(imageOcrTool);
+gToolsRegistry.registerTool(fileOccupancyTool);

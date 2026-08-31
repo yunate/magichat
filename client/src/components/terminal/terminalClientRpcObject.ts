@@ -3,11 +3,9 @@ import type { TerminalClientRpcApi } from "../../../../common/terminal";
 export class TerminalClientRpcObject implements TerminalClientRpcApi {
   public constructor(
     onOutput: (data: string) => void,
-    onRunCompleted: (runId: string) => void,
     onRuntimeError: (message: string) => void,
   ) {
     this._onOutput = onOutput;
-    this._onRunCompleted = onRunCompleted;
     this._onRuntimeError = onRuntimeError;
   }
 
@@ -19,11 +17,6 @@ export class TerminalClientRpcObject implements TerminalClientRpcApi {
     this._onRuntimeError(message);
   }
 
-  public runCompleted(runId: string): void {
-    this._onRunCompleted(runId);
-  }
-
   private readonly _onOutput: (data: string) => void;
-  private readonly _onRunCompleted: (runId: string) => void;
   private readonly _onRuntimeError: (message: string) => void;
 }

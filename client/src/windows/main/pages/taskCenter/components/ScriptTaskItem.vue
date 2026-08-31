@@ -19,7 +19,7 @@ const emit = defineEmits<{
   runNew: [id: string];
   select: [payload: { id: string; isChecked: boolean }];
   pin: [payload: { id: string; isPinned: boolean }];
-  viewFullLogs: [id: string];
+  revealLog: [id: string];
   viewed: [id: string];
 }>();
 </script>
@@ -38,7 +38,7 @@ const emit = defineEmits<{
     @run-new="emit('runNew', $event)"
     @select="emit('select', $event)"
     @pin="emit('pin', $event)"
-    @view-full-logs="emit('viewFullLogs', $event)"
+    @reveal-log="emit('revealLog', $event)"
     @viewed="emit('viewed', $event)"
   >
     <template #detail>

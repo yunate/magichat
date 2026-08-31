@@ -1,0 +1,21 @@
+{
+  "id": "10000000-0000-4000-8000-000000000004",
+  "isExpanded": true,
+  "folderOrder": [],
+  "itemOrder": [
+    "test-ps-call",
+    "test-cmd-call",
+    "test-node-call",
+    "test-py-call"
+  ],
+  "data": {
+    "selectedParamGroupId": "folder",
+    "paramGroups": [
+      {
+        "id": "folder",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

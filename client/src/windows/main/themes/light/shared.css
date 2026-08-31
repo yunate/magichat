@@ -1,0 +1,22 @@
+:root {
+  color-scheme: light;
+  --color-content-bg: #fcfcfc;
+  --color-default-bg: #fcfcfc;
+  --color-bg: var(--color-content-bg);
+  --color-surface: var(--color-default-bg);
+  --color-surface-raised: #efefef;
+  --color-surface-hover: var(--color-surface-selected);
+  --color-surface-selected: #efefef;
+  --color-divider: #d4d4d4;
+  --color-border: var(--color-divider);
+  --color-text: #1f1f1f;
+  --color-text-muted: #616161;
+  --color-text-on-accent: #ffffff;
+  --color-text-on-danger: #ffffff;
+  --color-primary: #0078d4;
+  --color-primary-emphasis: #006cbe;
+  --color-accent: #8a6d00;
+  --color-danger: #c42b1c;
+  --color-success: #2e7d32;
+  --color-warning: #8a6d00;
+}

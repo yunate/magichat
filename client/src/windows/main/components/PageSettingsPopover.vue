@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, useTemplateRef } from "vue";
 import type { PageDefinition } from "../pages/types";
 
 type Props = {
@@ -8,12 +8,26 @@ type Props = {
 
 defineProps<Props>();
 const emit = defineEmits<{ close: [] }>();
+const settingsComponent = useTemplateRef<{
+  getCurrent?: () => unknown | Promise<unknown>;
+  save?: () => void | Promise<void>;
+}>("settingsComponent");
+
+defineExpose({ getCurrent, save });
 
 onMounted(() => window.addEventListener("keydown", onWindowKeydown));
 onUnmounted(() => window.removeEventListener("keydown", onWindowKeydown));
 
 function onWindowKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape") emit("close");
+}
+
+async function save(): Promise<void> {
+  await settingsComponent.value?.save?.();
+}
+
+async function getCurrent(): Promise<unknown> {
+  return await settingsComponent.value?.getCurrent?.();
 }
 </script>
 
@@ -25,7 +39,11 @@ function onWindowKeydown(event: KeyboardEvent): void {
         <button type="button" aria-label="Close settings" title="Close" @click="emit('close')">×</button>
       </header>
       <div class="page-settings-panel__content">
-        <component v-if="page?.settingsComponent" :is="page.settingsComponent" />
+        <component
+          v-if="page?.settingsComponent"
+          :is="page.settingsComponent"
+          ref="settingsComponent"
+        />
         <p v-else>No settings are available for this page.</p>
       </div>
     </aside>
@@ -70,7 +88,7 @@ function onWindowKeydown(event: KeyboardEvent): void {
   color: var(--color-text-muted);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   font-size: 20px;
   cursor: pointer;

@@ -3,7 +3,8 @@ import ColorTool from "./ColorTool.vue";
 
 export const colorTool: ToolDefinition = {
   id: "color",
-  title: "颜色转换",
+  title: "Color Converter",
   component: ColorTool,
+  category: "developer",
   order: 11,
 };

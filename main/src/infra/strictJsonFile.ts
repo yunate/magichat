@@ -6,13 +6,15 @@ export function readStrictJsonFile(filePath: string): unknown {
   let content: string;
   try {
     content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    throw new Error("TreeView JSON file could not be read");
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`TreeView JSON file could not be read: ${filePath}. ${message}`);
   }
   try {
     return JSON.parse(content) as unknown;
-  } catch {
-    throw new Error("TreeView JSON file is invalid");
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`TreeView JSON file is invalid: ${filePath}. ${message}`);
   }
 }
 

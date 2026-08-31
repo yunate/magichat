@@ -19,6 +19,7 @@ type TaskInfoFields<K extends TaskType> = {
   updatedAt: number;
   finishedAt?: number;
   pinnedAt?: number;
+  displayState?: string;
   tasksSpectialInfo?: TaskSpectialInfo<K>;
 };
 
@@ -56,6 +57,9 @@ export class TaskInfoSerializer extends ISerializer<TaskInfo> {
     }
     if (value.pinnedAt !== undefined && !isNonNegativeFiniteNumber(value.pinnedAt)) {
       throw new Error("Task pinnedAt must be a non-negative finite number");
+    }
+    if (value.displayState !== undefined) {
+      ValidateUtils.ensureString(value.displayState);
     }
     if (value.tasksSpectialInfo !== undefined) {
       const taskSerializer: TaskSerializerEntry = getTaskSerializer(value.type);

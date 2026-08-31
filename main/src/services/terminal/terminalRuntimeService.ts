@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { type Stats, unwatchFile, watchFile } from "node:fs";
 import fs from "node:fs/promises";
 import * as inspector from "node:inspector";
 import os from "node:os";
 import path from "node:path";
 import type { IDisposable, IPty } from "node-pty";
 import { spawn } from "node-pty";
+import {
+  CLI_PAGE_COMMAND,
+  CLI_TERMINAL_ID_ENVIRONMENT_KEY,
+} from "../../../../common/cli";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import { isScriptType, type ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
@@ -17,31 +20,30 @@ import {
   type TerminalServerRpcApi,
   type TerminalType,
 } from "../../../../common/terminal";
+import { TreeViewPath } from "../../../../common/treeView";
 import { ValidateUtils } from "../../../../common/validator";
+import { gApplicationPaths } from "../../infra/applicationPaths";
+import { PathUtil } from "../../utils/pathUtil";
+import { createCliEnvironment } from "../cli/cliEnvironment";
 import { createScriptExecution } from "../scriptExecution";
+import { resolveTerminalInitialPath } from "./terminalInitialPath";
 import { gTerminalRuntimeManager } from "./terminalRuntimeManager";
 
 const MAX_COLUMNS = 1000;
 const MAX_ROWS = 500;
 const MAX_INPUT_LENGTH = 1024 * 1024;
-const COMPLETION_FILE_CHECK_INTERVAL_MS = 100;
-const RUN_START_TIMEOUT_MS = 3000;
+const SCRIPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type ActiveRun = Readonly<{
-  id: string;
+type PreparedRun = Readonly<{
+  scriptType: ScriptType;
   scriptPath: string;
-  wrapperPath: string;
-  startPath: string;
-  completionPath: string;
-  startListener: (current: Stats, previous: Stats) => void;
-  completionListener: (current: Stats, previous: Stats) => void;
-  startTimer: ReturnType<typeof setTimeout>;
+  commandPath: string;
 }>;
 
 export class TerminalRuntimeService implements TerminalServerRpcApi {
   public constructor(peer: BridgePeer) {
     this._peer = peer;
-    gTerminalRuntimeManager.add(this);
+    gTerminalRuntimeManager.add(this._id, this);
     peer.onDisconnect(() => {
       void this.dispose().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -62,18 +64,33 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     });
   }
 
+  public isOwnedBy(peer: BridgePeer): boolean {
+    return this._peer === peer;
+  }
+
   public createPty(
     terminalType: TerminalType,
     columns: number,
     rows: number,
+    initialPath: string,
   ): Promise<TerminalPtyInfo> {
     return this._enqueue(async () => {
       this._ensureInitialized();
       this._ensureTerminalType(terminalType);
       this._ensureDimensions(columns, rows);
+      const resolvedInitialPath = resolveTerminalInitialPath(initialPath);
+      try {
+        await fs.mkdir(resolvedInitialPath, { recursive: true });
+        PathUtil.ensureFolderExist(resolvedInitialPath);
+      } catch (reason: unknown) {
+        const message = reason instanceof Error ? reason.message : String(reason);
+        throw new Error(
+          `Terminal initial folder could not be created. Path: ${JSON.stringify(resolvedInitialPath)}. Reason: ${message}`,
+        );
+      }
       if (this._isActive()) throw new Error("Terminal is already active");
       this._terminalType = terminalType;
-      return this._createPty(columns, rows);
+      return this._createPty(columns, rows, resolvedInitialPath);
     });
   }
 
@@ -82,53 +99,20 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
       this._ensureInitialized();
       this._validateRunRequest(request);
       if (!this._isActive()) throw new Error("Terminal is not active");
-      if (this._activeRun !== null) throw new Error("A Terminal command is already running");
-      const expectedTerminalType = request.scriptType === "cmd" ? "cmd" : "powershell";
-      if (this._terminalType !== expectedTerminalType) {
-        throw new Error("Terminal type does not match the script type");
-      }
-      await fs.mkdir(gTerminalRuntimeManager.temporaryDirectory, { recursive: true });
-      const basePath = path.join(gTerminalRuntimeManager.temporaryDirectory, randomUUID());
-      const execution = createScriptExecution(request.scriptType, request.scriptContent, basePath);
-      const scriptPath = `${basePath}${execution.extension}`;
-      const wrapperPath = `${basePath}.run${this._terminalType === "cmd" ? ".bat" : ".ps1"}`;
-      const startPath = `${basePath}.started`;
-      const completionPath = `${basePath}.complete`;
-      await fs.writeFile(scriptPath, execution.content, "utf8");
-      this._temporaryFiles.add(scriptPath);
-      await fs.writeFile(
-        wrapperPath,
-        this._createWrapper(
-          request.scriptType,
-          execution.command,
-          path.basename(scriptPath),
-          path.basename(startPath),
-          path.basename(completionPath),
-        ),
-        "utf8",
-      );
-      this._temporaryFiles.add(wrapperPath);
-      this._temporaryFiles.add(startPath);
-      this._temporaryFiles.add(completionPath);
-      const run = this._createActiveRun(
-        request.runId,
-        scriptPath,
-        wrapperPath,
-        startPath,
-        completionPath,
-      );
-      this._activeRun = run;
-      watchFile(startPath, {
-        interval: COMPLETION_FILE_CHECK_INTERVAL_MS,
-        persistent: false,
-      }, run.startListener);
-      watchFile(completionPath, {
-        interval: COMPLETION_FILE_CHECK_INTERVAL_MS,
-        persistent: false,
-      }, run.completionListener);
-      const invocation = `${this._createInvocation(wrapperPath)}\r`;
+      const preparedRun = await this._prepareRun(request);
+      const invocation = `${this._createRunInvocation(preparedRun)}\r`;
       const pty = this._requirePty();
       pty.write(invocation);
+    });
+  }
+
+  public prepareRun(request: TerminalRunRequest): Promise<string> {
+    return this._enqueue(async () => {
+      this._ensureInitialized();
+      this._validateRunRequest(request);
+      if (!this._isActive()) throw new Error("Terminal is not active");
+      const preparedRun = await this._prepareRun(request);
+      return `${preparedRun.scriptType}|${preparedRun.scriptPath}|${preparedRun.commandPath}`;
     });
   }
 
@@ -136,7 +120,6 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     return this._enqueue(() => {
       if (!this._isActive()) return;
       this._requirePty().write("\x03");
-      this._cancelActiveRun();
     });
   }
 
@@ -150,13 +133,19 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     return this._enqueue(() => this._isActive());
   }
 
+  public clear(): Promise<void> {
+    return this._enqueue(() => {
+      if (!this._isActive()) return;
+      this._requirePty().clear();
+    });
+  }
+
   public write(data: string): Promise<void> {
     return this._enqueue(() => {
       this._ensureInitialized();
       ValidateUtils.ensureString(data);
       if (data.length > MAX_INPUT_LENGTH) throw new Error("Terminal input is too large");
       this._requirePty().write(data);
-      if (data.includes("\x03")) this._cancelActiveRun();
     });
   }
 
@@ -179,7 +168,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
         await BridgeRouter.destroyRemoteObj(notifier);
       }
       await this._deleteTemporaryFiles();
-      gTerminalRuntimeManager.remove(this);
+      gTerminalRuntimeManager.remove(this._id, this);
     });
   }
 
@@ -189,40 +178,21 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     return result;
   }
 
-  private async _createPty(columns: number, rows: number): Promise<TerminalPtyInfo> {
+  private async _createPty(
+    columns: number,
+    rows: number,
+    initialPath: string,
+  ): Promise<TerminalPtyInfo> {
     if (process.platform !== "win32") throw new Error("Terminal is only supported on Windows");
     const terminalType = this._terminalType;
     if (terminalType === null) throw new Error("Terminal type is not configured");
-    const executable = terminalType === "cmd" ? "cmd.exe" : "powershell.exe";
-    const args = terminalType === "cmd"
-      ? ["/Q", "/K"]
-      : [
-          "-NoLogo",
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-NoExit",
-          "-Command",
-          "Set-PSReadLineOption -HistorySaveStyle SaveAtExit",
-        ];
-    await fs.mkdir(gTerminalRuntimeManager.temporaryDirectory, { recursive: true });
-    const environment = {
-      ...process.env,
-      TERM: "xterm-256color",
-      ...(terminalType === "cmd" ? { PROMPT: "CMD $P$G" } : {}),
-    };
 
     // ConPTY can deadlock during its native spawn handshake while the inspector is attached.
     const backend = inspector.url() === undefined ? "conpty" : "winpty";
     const buildNumber = this._getWindowsBuildNumber();
-    const ptyOptions = {
-      cols: columns,
-      rows,
-      cwd: gTerminalRuntimeManager.temporaryDirectory,
-      env: environment,
-      useConpty: backend === "conpty",
-    };
-    const pty = spawn(executable, args, ptyOptions);
+    const pty = terminalType === "cmd"
+      ? this._createCmdPty(columns, rows, initialPath, backend === "conpty")
+      : this._createPowerShellPty(columns, rows, initialPath, backend === "conpty");
     this._pty = pty;
     this._dataSubscription = pty.onData((data) => this._onPtyData(data));
     this._exitSubscription = pty.onExit(() => this._onPtyExit(pty));
@@ -230,6 +200,81 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
       backend,
       buildNumber,
     };
+  }
+
+  private _createPowerShellPty(
+    columns: number,
+    rows: number,
+    initialPath: string,
+    useConpty: boolean,
+  ): IPty {
+    const modulePath = this._quotePowerShellArgument(gApplicationPaths.cliPowerShellModulePath);
+    const args = [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-NoExit",
+      "-Command",
+      `Set-PSReadLineOption -HistorySaveStyle SaveAtExit; Import-Module -Name ${modulePath}`,
+    ];
+    const environment = createCliEnvironment({
+      ...process.env,
+      TERM: "xterm-256color",
+      [CLI_TERMINAL_ID_ENVIRONMENT_KEY]: this._id,
+    }, { page: CLI_PAGE_COMMAND });
+    return this._spawnPty(
+      "powershell.exe",
+      args,
+      environment,
+      columns,
+      rows,
+      initialPath,
+      useConpty,
+    );
+  }
+
+  private _createCmdPty(
+    columns: number,
+    rows: number,
+    initialPath: string,
+    useConpty: boolean,
+  ): IPty {
+    const environment = createCliEnvironment({
+      ...process.env,
+      TERM: "xterm-256color",
+      [CLI_TERMINAL_ID_ENVIRONMENT_KEY]: this._id,
+      PROMPT: "CMD $P$G",
+    }, { page: CLI_PAGE_COMMAND });
+    return this._spawnPty(
+      "cmd.exe",
+      ["/Q", "/K"],
+      environment,
+      columns,
+      rows,
+      initialPath,
+      useConpty,
+    );
+  }
+
+  private _spawnPty(
+    executable: string,
+    args: readonly string[],
+    environment: NodeJS.ProcessEnv,
+    columns: number,
+    rows: number,
+    initialPath: string,
+    useConpty: boolean,
+  ): IPty {
+    const ptyOptions = {
+      cols: columns,
+      rows,
+      cwd: initialPath,
+      env: environment,
+      useConpty,
+      useConptyDll: false,
+    };
+    return spawn(executable, [...args], ptyOptions);
   }
 
   private _getWindowsBuildNumber(): number {
@@ -241,7 +286,6 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
   }
 
   private _disposePty(): void {
-    this._rejectActiveRun(new Error("Terminal command ended before its completion file was created"));
     const pty = this._pty;
     this._pty = null;
     this._dataSubscription?.dispose();
@@ -262,91 +306,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     this._exitSubscription?.dispose();
     this._dataSubscription = null;
     this._exitSubscription = null;
-    this._rejectActiveRun(new Error("Terminal process exited before the command completed"));
     this._notifyRuntimeError("Terminal process exited unexpectedly");
-  }
-
-  private _createActiveRun(
-    runId: string,
-    scriptPath: string,
-    wrapperPath: string,
-    startPath: string,
-    completionPath: string,
-  ): ActiveRun {
-    return {
-      id: runId,
-      scriptPath,
-      wrapperPath,
-      startPath,
-      completionPath,
-      startListener: (current) => {
-        if (current.isFile()) this._markActiveRunStarted(runId);
-      },
-      completionListener: (current) => {
-        if (current.isFile()) this._resolveActiveRun(runId);
-      },
-      startTimer: setTimeout(() => {
-        this._rejectActiveRunById(runId, new Error("Terminal command helper did not start"));
-      }, RUN_START_TIMEOUT_MS),
-    };
-  }
-
-  private _markActiveRunStarted(runId: string): void {
-    const activeRun = this._activeRun;
-    if (activeRun === null || activeRun.id !== runId) return;
-    this._stopStartWatch(activeRun);
-  }
-
-  private _rejectActiveRunById(runId: string, error: Error): void {
-    if (this._activeRun?.id !== runId) return;
-    this._rejectActiveRun(error);
-  }
-
-  private _resolveActiveRun(runId: string): void {
-    const activeRun = this._activeRun;
-    if (activeRun === null || activeRun.id !== runId) return;
-    this._activeRun = null;
-    this._stopCompletionWatch(activeRun);
-    this._notifyRunCompleted(activeRun.id);
-    void this._deleteRunFiles(activeRun);
-  }
-
-  private _cancelActiveRun(): void {
-    const activeRun = this._activeRun;
-    if (activeRun === null) return;
-    this._activeRun = null;
-    this._stopCompletionWatch(activeRun);
-    this._notifyRunCompleted(activeRun.id);
-    void this._deleteRunFiles(activeRun);
-  }
-
-  private _rejectActiveRun(error: Error): void {
-    const activeRun = this._activeRun;
-    if (activeRun === null) return;
-    this._activeRun = null;
-    this._stopCompletionWatch(activeRun);
-    this._notifyRunCompleted(activeRun.id);
-    this._notifyRuntimeError(error.message);
-    void this._deleteRunFiles(activeRun);
-  }
-
-  private _stopCompletionWatch(run: ActiveRun): void {
-    this._stopStartWatch(run);
-    unwatchFile(run.completionPath, run.completionListener);
-  }
-
-  private _stopStartWatch(run: ActiveRun): void {
-    clearTimeout(run.startTimer);
-    unwatchFile(run.startPath, run.startListener);
-  }
-
-  private async _deleteRunFiles(run: ActiveRun): Promise<void> {
-    await Promise.all([
-      this._deleteTemporaryFile(run.scriptPath),
-      this._deleteTemporaryFile(run.wrapperPath),
-      this._deleteTemporaryFile(run.startPath),
-      this._deleteTemporaryFile(run.completionPath),
-    ]);
   }
 
   private _notifyOutput(data: string): void {
@@ -359,12 +319,6 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     const notifier = this._notifier;
     if (notifier === null || !this._isNotifierEnabled) return;
     void notifier.runtimeError(message).catch((error: unknown) => this._disableNotifier(error));
-  }
-
-  private _notifyRunCompleted(runId: string): void {
-    const notifier = this._notifier;
-    if (notifier === null || !this._isNotifierEnabled) return;
-    void notifier.runCompleted(runId).catch((error: unknown) => this._disableNotifier(error));
   }
 
   private _disableNotifier(error: unknown): void {
@@ -405,41 +359,52 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
 
   private _validateRunRequest(value: unknown): asserts value is TerminalRunRequest {
     ValidateUtils.ensureRecord(value);
-    ValidateUtils.ensureNonBlankString(value.runId);
+    ValidateUtils.ensureNonBlankString(value.scriptId);
+    if (!SCRIPT_ID_PATTERN.test(value.scriptId)) throw new Error("Terminal script ID must be a UUID v4");
+    ValidateUtils.ensureNonBlankString(value.commandPath);
+    TreeViewPath.normalize(value.commandPath, "Terminal Command path");
     if (!isScriptType(value.scriptType)) throw new Error("Script type is invalid");
     ValidateUtils.ensureString(value.scriptContent);
     if (value.scriptContent.length > MAX_INPUT_LENGTH) throw new Error("Script content is too large");
   }
 
-  private _createWrapper(
-    scriptType: ScriptType,
-    command: string,
-    scriptFileName: string,
-    startFileName: string,
-    completionFileName: string,
-  ): string {
-    if (this._terminalType === "cmd") {
-      const escapedScriptFileName = scriptFileName.replace(/"/g, "\"\"");
-      const escapedStartFileName = startFileName.replace(/"/g, "\"\"");
-      const escapedCompletionFileName = completionFileName.replace(/"/g, "\"\"");
-      return `@type nul > "${escapedStartFileName}"\r\n@call "${escapedScriptFileName}"\r\n@type nul > "${escapedCompletionFileName}"\r\n`;
-    }
-    const escapedScriptFileName = scriptFileName.replace(/'/g, "''");
-    const escapedStartFileName = startFileName.replace(/'/g, "''");
-    const escapedCompletionFileName = completionFileName.replace(/'/g, "''");
-    if (scriptType === "powershell") {
-      return `[System.IO.File]::WriteAllText('.\\${escapedStartFileName}', '')\ntry {\n  & '.\\${escapedScriptFileName}'\n} finally {\n  [System.IO.File]::WriteAllText('.\\${escapedCompletionFileName}', '')\n}\n`;
-    }
-    const escapedCommand = command.replace(/'/g, "''");
-    return `[System.IO.File]::WriteAllText('.\\${escapedStartFileName}', '')\ntry {\n  & '${escapedCommand}' '.\\${escapedScriptFileName}'\n} finally {\n  [System.IO.File]::WriteAllText('.\\${escapedCompletionFileName}', '')\n}\n`;
+  private async _prepareRun(request: TerminalRunRequest): Promise<PreparedRun> {
+    await fs.mkdir(gTerminalRuntimeManager.temporaryDirectory, { recursive: true });
+    const basePath = path.join(gTerminalRuntimeManager.temporaryDirectory, request.scriptId);
+    const execution = createScriptExecution(request.scriptType, request.scriptContent, basePath);
+    const scriptPath = `${basePath}${execution.extension}`;
+    await this._writeTemporaryFile(scriptPath, execution.content);
+    return {
+      scriptType: request.scriptType,
+      scriptPath,
+      commandPath: request.commandPath,
+    };
   }
 
-  private _createInvocation(wrapperPath: string): string {
-    const wrapperFileName = path.basename(wrapperPath);
+  private _createRunInvocation(preparedRun: PreparedRun): string {
     if (this._terminalType === "cmd") {
-      return `call "${wrapperFileName.replace(/"/g, "\"\"")}"`;
+      return `call mhrun ${preparedRun.scriptType} ${this._quoteCmdArgument(preparedRun.scriptPath)} ${this._quoteCmdArgument(preparedRun.commandPath)}`;
     }
-    return `& '.\\${wrapperFileName.replace(/'/g, "''")}'`;
+    return `mhrun ${preparedRun.scriptType} ${this._quotePowerShellArgument(preparedRun.scriptPath)} ${this._quotePowerShellArgument(preparedRun.commandPath)}`;
+  }
+
+  private _quoteCmdArgument(value: string): string {
+    return `"${value.replace(/%/g, "%%").replace(/"/g, "\"\"")}"`;
+  }
+
+  private _quotePowerShellArgument(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+
+  private async _writeTemporaryFile(filePath: string, content: string): Promise<void> {
+    let existingContent: string | null = null;
+    try {
+      existingContent = await fs.readFile(filePath, "utf8");
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (existingContent !== content) await fs.writeFile(filePath, content, "utf8");
+    this._temporaryFiles.add(filePath);
   }
 
   private async _deleteTemporaryFile(filePath: string): Promise<void> {
@@ -456,6 +421,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     await Promise.all([...this._temporaryFiles].map((filePath) => this._deleteTemporaryFile(filePath)));
   }
 
+  private readonly _id = randomUUID();
   private readonly _peer: BridgePeer;
   private readonly _temporaryFiles = new Set<string>();
   private _queue: Promise<void> = Promise.resolve();
@@ -464,7 +430,6 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
   private _dataSubscription: IDisposable | null = null;
   private _exitSubscription: IDisposable | null = null;
   private _terminalType: TerminalType | null = null;
-  private _activeRun: ActiveRun | null = null;
   private _isNotifierEnabled = true;
   private _isInitialized = false;
   private _isDisposed = false;

@@ -5,8 +5,9 @@ import {
   getConfirmDialogRequest,
   resolveConfirmDialog,
 } from "./confirmDialog";
+import PopupWindow from "./PopupWindow.vue";
 
-const dialog = useTemplateRef<HTMLElement>("dialog");
+const dialog = useTemplateRef<InstanceType<typeof PopupWindow>>("dialog");
 const titleId = `confirm-dialog-title-${useId()}`;
 const descriptionId = `confirm-dialog-description-${useId()}`;
 const request = computed(() => getConfirmDialogRequest());
@@ -18,8 +19,9 @@ watch(request, (currentRequest, previousRequest) => {
   }
   if (currentRequest !== null) {
     void nextTick(() => {
-      const defaultAction = dialog.value?.querySelector<HTMLElement>("[data-default-action]");
-      (defaultAction ?? dialog.value)?.focus();
+      const dialogElement = dialog.value?.getElement();
+      const defaultAction = dialogElement?.querySelector<HTMLElement>("[data-default-action]");
+      (defaultAction ?? dialogElement)?.focus();
     });
     return;
   }
@@ -41,15 +43,16 @@ function onKeydown(event: KeyboardEvent): void {
     if (currentRequest !== null) resolveConfirmDialog(currentRequest.cancelActionId);
     return;
   }
-  if (event.key !== "Tab" || dialog.value === null) return;
-  const focusable = Array.from(dialog.value.querySelectorAll<HTMLElement>(
+  const dialogElement = dialog.value?.getElement();
+  if (event.key !== "Tab" || dialogElement === null || dialogElement === undefined) return;
+  const focusable = Array.from(dialogElement.querySelectorAll<HTMLElement>(
     'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
   ));
   const first = focusable[0];
   const last = focusable.at(-1);
   if (first === undefined || last === undefined) {
     event.preventDefault();
-    dialog.value.focus();
+    dialogElement.focus();
     return;
   }
   if (event.shiftKey && document.activeElement === first) {
@@ -68,19 +71,20 @@ function onKeydown(event: KeyboardEvent): void {
     class="confirm-dialog-backdrop"
     @pointerdown.self="resolveConfirmDialog(request.cancelActionId)"
   >
-    <section
+    <PopupWindow
       ref="dialog"
       class="confirm-dialog"
-      role="dialog"
-      aria-modal="true"
+      modal
       :aria-labelledby="titleId"
       :aria-describedby="descriptionId"
       tabindex="-1"
       @keydown="onKeydown"
     >
-      <header class="confirm-dialog__header">
-        <h2 :id="titleId">{{ request.title }}</h2>
-      </header>
+      <template #header>
+        <header class="confirm-dialog__header">
+          <h2 :id="titleId">{{ request.title }}</h2>
+        </header>
+      </template>
       <div :id="descriptionId" class="confirm-dialog__content">
         <div class="confirm-dialog__message">
           <p v-for="description in request.descriptions" :key="description">{{ description }}</p>
@@ -89,17 +93,19 @@ function onKeydown(event: KeyboardEvent): void {
           </ul>
         </div>
       </div>
-      <footer>
-        <button
-          v-for="action in request.actions"
-          :key="action.id"
-          type="button"
-          :class="{ 'is-primary': action.appearance === 'primary' }"
-          :data-default-action="action.isDefault ? '' : undefined"
-          @click="resolveConfirmDialog(action.id)"
-        >{{ action.label }}</button>
-      </footer>
-    </section>
+      <template #footer>
+        <footer>
+          <button
+            v-for="action in request.actions"
+            :key="action.id"
+            type="button"
+            :class="{ 'is-primary': action.appearance === 'primary' }"
+            :data-default-action="action.isDefault ? '' : undefined"
+            @click="resolveConfirmDialog(action.id)"
+          >{{ action.label }}</button>
+        </footer>
+      </template>
+    </PopupWindow>
   </div>
 </template>
 
@@ -111,18 +117,13 @@ function onKeydown(event: KeyboardEvent): void {
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  background: rgb(0 0 0 / 64%);
+  background: var(--color-backdrop-emphasis);
   backdrop-filter: blur(3px);
 }
 
 .confirm-dialog {
   width: min(480px, calc(100vw - 32px));
-  overflow: hidden;
-  color: var(--color-text);
-  background: color-mix(in srgb, var(--color-surface-raised) 96%, var(--color-primary));
-  border: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-text-muted));
-  border-radius: var(--radius-md, 8px);
-  box-shadow: 0 24px 72px rgb(0 0 0 / 48%), 0 1px 0 rgb(255 255 255 / 4%) inset;
+  box-shadow: var(--shadow-confirm-dialog);
 }
 
 .confirm-dialog__header {
@@ -130,7 +131,7 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   padding: var(--space-4) var(--space-5, 20px);
-  border-block-end: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-block-end: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-text-muted));
   text-align: left;
 }
 
@@ -148,16 +149,19 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   justify-content: flex-start;
   padding: var(--space-5, 20px);
-  border-block-end: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-block-end: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-text-muted));
   text-align: left;
 }
 
 .confirm-dialog__message {
   width: 100%;
+  min-width: 0;
 }
 
 .confirm-dialog__content p {
   margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: color-mix(in srgb, var(--color-text) 78%, var(--color-text-muted));
   font-size: 14px;
   font-weight: 400;
@@ -177,17 +181,20 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--color-text);
   background: color-mix(in srgb, var(--color-bg) 48%, transparent);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   list-style: none;
 }
 
 .confirm-dialog__details li {
   position: relative;
   min-height: 30px;
+  min-width: 0;
   display: flex;
   align-items: center;
   padding-inline: var(--space-3) var(--space-2);
-  border-radius: calc(var(--radius-sm) - 2px);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border-radius: var(--radius-small);
   font-size: 14px;
   line-height: 1.45;
   text-align: left;
@@ -205,7 +212,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .confirm-dialog__details li + li {
-  border-block-start: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent);
+  border-block-start: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-text-muted));
 }
 
 .confirm-dialog footer {
@@ -225,7 +232,7 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--color-text);
   background: color-mix(in srgb, var(--color-surface-raised) 88%, var(--color-text) 4%);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   font-size: 13px;
   font-weight: 500;

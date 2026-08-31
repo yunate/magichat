@@ -1,43 +1,37 @@
-import { readonly, ref, type Ref } from "vue";
 import {
   COMMAND_CONFIG_KEY,
   commandConfigSerializer,
+  type CommandConfig,
+  type CommandRootConfig,
   type TerminalPlacement,
 } from "../../../../../../common/config/command";
 import { gMainApplication } from "../../main";
 
 export type { TerminalPlacement } from "../../../../../../common/config/command";
+export type { CommandRootConfig } from "../../../../../../common/config/command";
 
 class CommandSettings {
-  public get isInitialized(): Readonly<Ref<boolean>> {
-    return readonly(this._isInitialized);
+  public async getConfig(): Promise<CommandConfig> {
+    const config = this._config ?? await this._initialize();
+    return structuredClone(config);
   }
 
-  public get terminalPlacement(): Readonly<Ref<TerminalPlacement>> {
-    return readonly(this._terminalPlacement);
+  public async saveConfig(config: CommandConfig): Promise<void> {
+    const configJson = commandConfigSerializer.toJson(config);
+    const configRpcObject = await gMainApplication.window.getConfigServerRpcObject();
+    await configRpcObject.setJson(COMMAND_CONFIG_KEY, configJson);
+    this._config = commandConfigSerializer.fromJson(configJson);
   }
 
-  public async initialize(): Promise<void> {
-    if (this._isInitialized.value) return;
+  private async _initialize(): Promise<CommandConfig> {
+    if (this._config !== null) return this._config;
     const configRpcObject = await gMainApplication.window.getConfigServerRpcObject();
     const configJson = await configRpcObject.getJson(COMMAND_CONFIG_KEY);
-    const config = commandConfigSerializer.fromJson(configJson);
-    this._terminalPlacement.value = config.terminalPlacement;
-    this._isInitialized.value = true;
+    this._config = commandConfigSerializer.fromJson(configJson);
+    return this._config;
   }
 
-  public async setTerminalPlacement(value: TerminalPlacement): Promise<void> {
-    if (!this._isInitialized.value) throw new Error("Command settings are not initialized");
-    const configRpcObject = await gMainApplication.window.getConfigServerRpcObject();
-    await configRpcObject.setJson(
-      COMMAND_CONFIG_KEY,
-      commandConfigSerializer.toJson({ terminalPlacement: value }),
-    );
-    this._terminalPlacement.value = value;
-  }
-
-  private readonly _isInitialized = ref(false);
-  private readonly _terminalPlacement = ref<TerminalPlacement>("right");
+  private _config: CommandConfig | null = null;
 }
 
 export const gCommandSettings = new CommandSettings();

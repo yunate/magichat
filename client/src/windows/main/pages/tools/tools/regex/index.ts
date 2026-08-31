@@ -3,7 +3,8 @@ import RegexTool from "./RegexTool.vue";
 
 export const regexTool: ToolDefinition = {
   id: "regex",
-  title: "正则测试",
+  title: "Regex Tester",
   component: RegexTool,
+  category: "text-data",
   order: 10,
 };

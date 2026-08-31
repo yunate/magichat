@@ -15,6 +15,10 @@ export class TaskPaths {
     return path.join(TaskPaths.getTaskDirectory(taskId), "log.txt");
   }
 
+  public static getTaskArchivedLogFile(taskId: string): string {
+    return path.join(TaskPaths.getTaskDirectory(taskId), "log.1");
+  }
+
   private static _ensureSafeTaskId(taskId: string): void {
     if (taskId.length === 0 || taskId.includes("/") || taskId.includes("\\") || taskId.includes("..")) {
       throw new Error(`invalid task id segment: ${taskId}`);

@@ -1,47 +1,78 @@
 <script setup lang="ts" generic="TEntry">
-import { shallowRef, watch } from "vue";
+import { ref, shallowRef, watch } from "vue";
 
 type Props = {
   entries: readonly TEntry[];
   activeKey: string | null;
   getEntryKey: (entry: TEntry) => string;
+  deferDisplayUntilReady?: boolean;
 };
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  deferDisplayUntilReady: false,
+});
 defineSlots<{
-  default(props: { entry: TEntry; isActive: boolean }): unknown;
+  default(props: { entry: TEntry; isActive: boolean; notifyReady: () => void }): unknown;
 }>();
 
 const mountedKeys = shallowRef<ReadonlySet<string>>(new Set());
+const readyKeys = shallowRef<ReadonlySet<string>>(new Set());
+const renderedEntries = shallowRef<readonly TEntry[]>([]);
+const displayedKey = ref<string | null>(null);
 
 watch(
   [() => props.entries, () => props.activeKey],
-  ([entries, activeKey]) => {
-    const entryKeys = entries.map(props.getEntryKey);
-    const availableKeys = new Set(entryKeys);
-    const nextKeys = new Set(
-      [...mountedKeys.value].filter((entryKey) => availableKeys.has(entryKey)),
-    );
-    if (activeKey !== null && availableKeys.has(activeKey)) nextKeys.add(activeKey);
-    mountedKeys.value = nextKeys;
-  },
+  () => synchronizeEntries(),
   { immediate: true },
 );
+
+function synchronizeEntries(): void {
+  const currentKeys = new Set(props.entries.map(props.getEntryKey));
+  const previousDisplayedEntry = displayedKey.value === null
+    ? undefined
+    : renderedEntries.value.find((entry) => props.getEntryKey(entry) === displayedKey.value);
+  const isActiveReady = props.activeKey !== null
+    && (!props.deferDisplayUntilReady || readyKeys.value.has(props.activeKey));
+  const shouldRetainDisplayed = !isActiveReady && previousDisplayedEntry !== undefined
+    && !currentKeys.has(props.getEntryKey(previousDisplayedEntry));
+  renderedEntries.value = shouldRetainDisplayed
+    ? [...props.entries, previousDisplayedEntry]
+    : props.entries;
+  const renderedKeys = new Set(renderedEntries.value.map(props.getEntryKey));
+  const activeKeys = props.activeKey === null ? [] : [props.activeKey];
+  mountedKeys.value = new Set(
+    [...mountedKeys.value, ...activeKeys].filter((key) => renderedKeys.has(key)),
+  );
+  readyKeys.value = new Set([...readyKeys.value].filter((key) => renderedKeys.has(key)));
+  if (isActiveReady) {
+    displayedKey.value = props.activeKey;
+  } else if (displayedKey.value !== null && !renderedKeys.has(displayedKey.value)) {
+    displayedKey.value = null;
+  }
+}
+
+function notifyReady(key: string): void {
+  readyKeys.value = new Set([...readyKeys.value, key]);
+  if (props.activeKey !== key) return;
+  displayedKey.value = key;
+  synchronizeEntries();
+}
 </script>
 
 <template>
   <div class="persistent-stack">
-    <template v-for="entry in props.entries" :key="props.getEntryKey(entry)">
+    <template v-for="entry in renderedEntries" :key="props.getEntryKey(entry)">
       <div
         v-if="mountedKeys.has(props.getEntryKey(entry))"
         class="persistent-stack__pane"
-        :class="{ 'is-active': props.getEntryKey(entry) === props.activeKey }"
-        :inert="props.getEntryKey(entry) !== props.activeKey"
-        :aria-hidden="props.getEntryKey(entry) === props.activeKey ? undefined : true"
+        :class="{ 'is-active': props.getEntryKey(entry) === displayedKey }"
+        :inert="props.getEntryKey(entry) !== displayedKey"
+        :aria-hidden="props.getEntryKey(entry) === displayedKey ? undefined : true"
       >
         <slot
           :entry="entry"
           :is-active="props.getEntryKey(entry) === props.activeKey"
+          :notify-ready="() => notifyReady(props.getEntryKey(entry))"
         ></slot>
       </div>
     </template>

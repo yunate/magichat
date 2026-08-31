@@ -30,7 +30,7 @@ defineSlots<{
 }>();
 
 const emit = defineEmits<{
-  activate: [selection: TreeViewSelection, openMode: "normal" | "pinned", isAdditive: boolean];
+  activate: [selection: TreeViewSelection, openMode: "preview" | "normal" | "pinned", isAdditive: boolean];
   toggle: [folder: TreeViewFolder];
   contextMenu: [event: MouseEvent | KeyboardEvent, selection: TreeViewSelection];
   beginRename: [selection: TreeViewSelection];
@@ -78,6 +78,20 @@ function setRenameInput(element: Element | ComponentPublicInstance | null): void
   focusRenameInput();
 }
 
+function onItemClick(event: MouseEvent, item: TreeViewItem): void {
+  const isAdditive = event.ctrlKey || event.metaKey;
+  emit("activate", { kind: "item", id: item.properties.id }, "preview", isAdditive);
+}
+
+function onItemDoubleClick(item: TreeViewItem): void {
+  emit("activate", { kind: "item", id: item.properties.id }, "normal", false);
+}
+
+function onFolderDoubleClick(folder: TreeViewFolder): void {
+  emit("activate", { kind: "folder", id: folder.properties.id }, "normal", false);
+  emit("toggle", folder);
+}
+
 function focusRenameInput(): void {
   const key = renameTargetKey.value;
   if (key.length === 0 || renameInput.value === null || lastFocusedRenameKey.value === key) return;
@@ -102,6 +116,15 @@ function onRenameKeydown(event: KeyboardEvent): void {
 
 function commitRename(selection: TreeViewSelection): void {
   emit("rename", selection, renameValue.value.trim());
+}
+
+function commitRenameOnEnter(event: KeyboardEvent): void {
+  if (event.currentTarget instanceof HTMLInputElement) event.currentTarget.blur();
+}
+
+function cancelRename(event: KeyboardEvent, originalName: string): void {
+  renameValue.value = originalName;
+  if (event.currentTarget instanceof HTMLInputElement) event.currentTarget.blur();
 }
 
 function onContextKey(event: KeyboardEvent, selection: TreeViewSelection): void {
@@ -182,7 +205,7 @@ function onDrop(
 
 function forwardActivate(
   selection: TreeViewSelection,
-  openMode: "normal" | "pinned",
+  openMode: "preview" | "normal" | "pinned",
   isAdditive: boolean,
 ): void {
   emit("activate", selection, openMode, isAdditive);
@@ -234,8 +257,8 @@ function isSelected(selection: TreeViewSelection): boolean {
       }"
       :style="{ paddingInlineStart: folderPadding }"
       :draggable="renameTarget?.kind !== 'folder' || renameTarget.id !== folder.properties.id"
-      @click="emit('activate', { kind: 'folder', id: folder.properties.id }, 'normal', $event.ctrlKey || $event.metaKey)"
-      @dblclick="emit('toggle', folder)"
+      @click="emit('activate', { kind: 'folder', id: folder.properties.id }, 'preview', $event.ctrlKey || $event.metaKey)"
+      @dblclick="onFolderDoubleClick(folder)"
       @contextmenu.prevent.stop="emit('contextMenu', $event, { kind: 'folder', id: folder.properties.id })"
       @dragstart="onDragStart($event, 'folder', folder.path)"
       @dragover="onDragOver($event, 'folder', folder.properties.id, true)"
@@ -260,8 +283,8 @@ function isSelected(selection: TreeViewSelection): boolean {
           :value="renameValue"
           @input="onRenameInput"
           @keydown="onRenameKeydown"
-          @keydown.enter.prevent="commitRename({ kind: 'folder', id: folder.properties.id })"
-          @keydown.escape.prevent="emit('rename', { kind: 'folder', id: folder.properties.id }, folder.name)"
+          @keydown.enter.prevent="commitRenameOnEnter"
+          @keydown.escape.prevent="cancelRename($event, folder.name)"
           @blur="commitRename({ kind: 'folder', id: folder.properties.id })"
           @click.stop
           @dragstart.prevent.stop
@@ -271,7 +294,7 @@ function isSelected(selection: TreeViewSelection): boolean {
           type="button"
           class="tree-row__name"
           :title="folder.name"
-          @click.stop="emit('activate', { kind: 'folder', id: folder.properties.id }, 'normal', $event.ctrlKey || $event.metaKey)"
+          @click.stop="emit('activate', { kind: 'folder', id: folder.properties.id }, 'preview', $event.ctrlKey || $event.metaKey)"
           @keydown="onContextKey($event, { kind: 'folder', id: folder.properties.id })"
         ><span class="tree-row__name-text">{{ folder.name }}</span></button>
         <div class="tree-row__overlay">
@@ -327,8 +350,8 @@ function isSelected(selection: TreeViewSelection): boolean {
           }"
           :style="{ paddingInlineStart: itemPadding }"
           :draggable="renameTarget?.kind !== 'item' || renameTarget.id !== item.properties.id"
-          @click="emit('activate', { kind: 'item', id: item.properties.id }, 'normal', $event.ctrlKey || $event.metaKey)"
-          @dblclick="emit('activate', { kind: 'item', id: item.properties.id }, 'pinned', false)"
+          @click="onItemClick($event, item)"
+          @dblclick="onItemDoubleClick(item)"
           @contextmenu.prevent.stop="emit('contextMenu', $event, { kind: 'item', id: item.properties.id })"
           @dragstart="onDragStart($event, 'item', item.path)"
           @dragover="onDragOver($event, 'item', item.properties.id, false)"
@@ -356,8 +379,8 @@ function isSelected(selection: TreeViewSelection): boolean {
               :value="renameValue"
               @input="onRenameInput"
               @keydown="onRenameKeydown"
-              @keydown.enter.prevent="commitRename({ kind: 'item', id: item.properties.id })"
-              @keydown.escape.prevent="emit('rename', { kind: 'item', id: item.properties.id }, item.name)"
+              @keydown.enter.prevent="commitRenameOnEnter"
+              @keydown.escape.prevent="cancelRename($event, item.name)"
               @blur="commitRename({ kind: 'item', id: item.properties.id })"
               @click.stop
               @dragstart.prevent.stop
@@ -367,7 +390,8 @@ function isSelected(selection: TreeViewSelection): boolean {
               type="button"
               class="tree-row__name"
               :title="item.name"
-              @click.stop="emit('activate', { kind: 'item', id: item.properties.id }, 'normal', $event.ctrlKey || $event.metaKey)"
+              @click.stop="onItemClick($event, item)"
+              @dblclick.stop="onItemDoubleClick(item)"
               @keydown="onContextKey($event, { kind: 'item', id: item.properties.id })"
             ><span class="tree-row__name-text">{{ item.name }}</span></button>
             <div class="tree-row__overlay">
@@ -396,13 +420,13 @@ function isSelected(selection: TreeViewSelection): boolean {
 .tree-node__children { position: relative; }
 .tree-node__children.has-guide > li { position: relative; }
 .tree-node__children.has-guide > li::before { position: absolute; z-index: 6; top: -6px; bottom: 0; left: var(--tree-guide-left); width: 1px; content: ""; background: color-mix(in srgb, var(--color-border) 80%, var(--color-surface)); pointer-events: none; }
-.tree-node__children.has-guide:has(> li > .tree-row.is-item.is-selected) > li::before { background: color-mix(in srgb, var(--color-text-muted) 72%, var(--color-surface)); }
+.tree-node__children.has-guide:has(> li > .tree-row.is-item.is-selected) > li::before { background: color-mix(in srgb, var(--color-text) 25%, var(--color-surface)); }
 .tree-node__children.has-guide > li:last-child::before { bottom: calc((var(--tree-row-height) - 16px) / 2); }
-.tree-row { position: relative; width: 100%; min-width: 0; height: var(--tree-row-height); display: flex; align-items: center; gap: var(--space-1); padding-inline-end: var(--space-2); border-radius: 2px; color: var(--color-text-muted); font-size: 13px; line-height: 1.4; cursor: pointer; }
-.tree-row.is-folder { font-weight: 600; }
+.tree-row { position: relative; width: 100%; min-width: 0; height: var(--tree-row-height); display: flex; align-items: center; gap: var(--space-1); padding-inline-end: var(--space-2); border-radius: var(--radius-small); color: var(--color-text-muted); font-size: 13px; line-height: 1.4; cursor: pointer; }
+.tree-row.is-folder { gap: 0; font-weight: 600; }
 .tree-row.is-item { font-weight: 400; }
-.tree-row:hover, .tree-row:focus-within { color: var(--color-text); background: color-mix(in srgb, var(--color-surface-raised) 62%, var(--color-surface)); }
-.tree-row.is-selected { color: color-mix(in srgb, var(--color-text) 78%, var(--color-text-muted)); background: var(--color-surface-raised); }
+.tree-row:hover, .tree-row:focus-within { color: var(--color-text); background: var(--color-surface-hover, color-mix(in srgb, var(--color-surface-raised) 62%, var(--color-surface))); }
+.tree-row.is-selected { color: var(--color-text); background: var(--color-surface-selected); }
 .tree-row.is-drop-before::before, .tree-row.is-drop-after::after { position: absolute; z-index: 4; right: 0; left: 0; height: 2px; content: ""; background: var(--color-primary); pointer-events: none; }
 .tree-row.is-drop-before::before { top: -1px; }
 .tree-row.is-drop-after::after { bottom: -1px; }
@@ -415,7 +439,7 @@ function isSelected(selection: TreeViewSelection): boolean {
 .tree-row__name { min-width: 0; flex: 1; align-self: stretch; display: flex; align-items: center; padding: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .tree-row__name-text { min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-row__overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
-.tree-row__actions { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; padding: 0; visibility: hidden; pointer-events: none; border-radius: 4px; }
+.tree-row__actions { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; padding: 0; visibility: hidden; pointer-events: none; border-radius: var(--radius-small); }
 .tree-row:hover .tree-row__actions, .tree-row:focus-within .tree-row__actions { visibility: visible; pointer-events: auto; }
 .tree-row__actions:hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 .tree-row__dots { display: flex; align-items: center; gap: 2px; }

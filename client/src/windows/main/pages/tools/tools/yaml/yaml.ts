@@ -20,7 +20,7 @@ export function transformYaml(input: string, mode: YamlMode): YamlResult {
   try {
     return mode === "toYaml" ? _jsonToYaml(trimmed) : _yamlToJson(input);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "转换失败" };
+    return { ok: false, error: error instanceof Error ? error.message : "Conversion failed" };
   }
 }
 
@@ -31,6 +31,6 @@ function _jsonToYaml(input: string): YamlResult {
 
 function _yamlToJson(input: string): YamlResult {
   const parsed: unknown = load(input);
-  if (parsed === undefined) return { ok: false, error: "YAML 为空或仅含注释" };
+  if (parsed === undefined) return { ok: false, error: "YAML is empty or contains only comments" };
   return { ok: true, text: JSON.stringify(parsed, null, 2) };
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef } from "vue";
 import type { CSSProperties } from "vue";
+import PopupWindow from "./PopupWindow.vue";
 
 export type PopupSelectOption = Readonly<{
   value: string;
@@ -14,17 +15,23 @@ const props = withDefaults(defineProps<{
   labelledBy?: string;
   disabled?: boolean;
   isOptionRemovalEnabled?: boolean;
+  isIndicatorVisible?: boolean;
+  menuWidth?: number;
 }>(), {
   disabled: false,
   isOptionRemovalEnabled: false,
+  isIndicatorVisible: true,
 });
 const emit = defineEmits<{
   updateValue: [value: string];
   removeOption: [value: string];
 }>();
+defineSlots<{
+  trigger(props: { selectedLabel: string }): unknown;
+}>();
 
 const trigger = useTemplateRef<HTMLButtonElement>("trigger");
-const menu = useTemplateRef<HTMLElement>("menu");
+const menu = useTemplateRef<{ getElement: () => HTMLElement | null }>("menu");
 const optionElements = ref<HTMLButtonElement[]>([]);
 const anchor = shallowRef<DOMRect | null>(null);
 const isOpen = ref(false);
@@ -34,18 +41,26 @@ const menuId = `popup-select-${crypto.randomUUID()}`;
 const selectedLabel = computed(() => props.options.find(
   (option) => option.value === props.value,
 )?.label ?? props.value);
+const isMenuAbove = computed(() => {
+  const bounds = anchor.value;
+  if (bounds === null) return false;
+  const margin = 8;
+  const menuHeight = Math.min(240, props.options.length * 30 + 8);
+  return bounds.bottom + menuHeight > window.innerHeight - margin;
+});
 const menuStyle = computed<CSSProperties>(() => {
   const bounds = anchor.value;
   if (bounds === null) return {};
   const margin = 8;
   const menuHeight = Math.min(240, props.options.length * 30 + 8);
-  const top = bounds.bottom + menuHeight <= window.innerHeight - margin
-    ? bounds.bottom
-    : Math.max(margin, bounds.top - menuHeight);
+  const menuWidth = props.menuWidth ?? bounds.width;
+  const top = isMenuAbove.value
+    ? Math.max(margin, bounds.top - menuHeight + 1)
+    : bounds.bottom - 1;
   return {
     top: `${top}px`,
-    left: `${Math.min(bounds.left, window.innerWidth - bounds.width - margin)}px`,
-    width: `${bounds.width}px`,
+    left: `${Math.max(margin, Math.min(bounds.left, window.innerWidth - menuWidth - margin))}px`,
+    width: `${menuWidth}px`,
   };
 });
 
@@ -137,7 +152,7 @@ function setOptionElement(element: unknown, index: number): void {
 
 function onWindowPointerDown(event: PointerEvent): void {
   if (!isOpen.value || !(event.target instanceof Node)) return;
-  if (trigger.value?.contains(event.target) || menu.value?.contains(event.target)) return;
+  if (trigger.value?.contains(event.target) || menu.value?.getElement()?.contains(event.target)) return;
   closeMenu(false);
 }
 
@@ -151,6 +166,7 @@ function closeFromViewportChange(): void {
     ref="trigger"
     type="button"
     class="popup-select__trigger"
+    :class="{ 'is-menu-above': isOpen && isMenuAbove }"
     :disabled="disabled"
     :aria-label="accessibleLabel"
     :aria-labelledby="labelledBy"
@@ -160,18 +176,22 @@ function closeFromViewportChange(): void {
     @click="toggleMenu"
     @keydown="onTriggerKeydown"
   >
-    <span>{{ selectedLabel }}</span>
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+    <slot name="trigger" :selected-label="selectedLabel">
+      <span>{{ selectedLabel }}</span>
+    </slot>
+    <svg v-if="isIndicatorVisible" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
   </button>
 
   <Teleport to="body">
-    <div
+    <PopupWindow
       v-if="isOpen"
       :id="menuId"
       ref="menu"
       class="popup-select__menu"
+      :class="isMenuAbove ? 'is-above' : 'is-below'"
       :style="menuStyle"
-      role="listbox"
+      is-externally-positioned
+      semantic-role="listbox"
       :aria-label="accessibleLabel"
       :aria-labelledby="labelledBy"
     >
@@ -208,7 +228,7 @@ function closeFromViewportChange(): void {
           </svg>
         </button>
       </div>
-    </div>
+    </PopupWindow>
   </Teleport>
 </template>
 
@@ -224,7 +244,7 @@ function closeFromViewportChange(): void {
   color: var(--color-text);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -236,6 +256,16 @@ function closeFromViewportChange(): void {
 .popup-select__trigger[aria-expanded="true"] {
   border-color: var(--color-border);
   background: var(--color-surface-raised);
+}
+
+.popup-select__trigger[aria-expanded="true"]:not(.is-menu-above) {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.popup-select__trigger[aria-expanded="true"].is-menu-above {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
 }
 
 .popup-select__trigger:focus-visible {
@@ -271,18 +301,30 @@ function closeFromViewportChange(): void {
 }
 
 .popup-select__menu {
-  position: fixed;
   z-index: 500;
   max-height: 240px;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-popup);
+}
+
+.popup-select__menu.is-below {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
+.popup-select__menu.is-above {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.popup-select__menu :deep(.popup-window__content) {
   padding: var(--space-1);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
-  color: var(--color-text);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 36%);
 }
 
 .popup-select__option {
@@ -307,7 +349,7 @@ function closeFromViewportChange(): void {
   color: var(--color-text-muted);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-small);
   font: inherit;
   text-align: start;
   cursor: pointer;

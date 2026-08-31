@@ -1,9 +1,23 @@
 import { shallowRef } from "vue";
 import type { ConfirmDialogAction, ConfirmDialogOptions } from "./confirmDialogTypes";
 
+export type AlertDialogOptions = Pick<
+  ConfirmDialogOptions<string>,
+  "title" | "descriptions" | "details"
+>;
+export type ConfirmActionDialogOptions<TActionId extends string> = AlertDialogOptions & Readonly<{
+  actionId: TActionId;
+  actionLabel: string;
+  isActionDefault?: boolean;
+}>;
+
 type ConfirmDialogRequest = ConfirmDialogOptions<string> & Readonly<{
   complete: (actionId: string) => void;
 }>;
+
+const CLOSE_ACTIONS: readonly ConfirmDialogAction<"close">[] = [
+  { id: "close", label: "Close", appearance: "primary", isDefault: true },
+];
 
 class ConfirmDialogController {
   public confirm<TActionId extends string>(options: ConfirmDialogOptions<TActionId>): Promise<TActionId> {
@@ -61,6 +75,35 @@ export function confirmDialog<TActionId extends string>(
   options: ConfirmDialogOptions<TActionId>,
 ): Promise<TActionId> {
   return gConfirmDialogController.confirm(options);
+}
+
+export async function showAlertDialog(options: AlertDialogOptions): Promise<void> {
+  await confirmDialog({
+    ...options,
+    actions: CLOSE_ACTIONS,
+    cancelActionId: "close",
+  });
+}
+
+export function confirmActionDialog<TActionId extends string>(
+  options: ConfirmActionDialogOptions<TActionId>,
+): Promise<TActionId | "cancel"> {
+  const actions: readonly ConfirmDialogAction<TActionId | "cancel">[] = [
+    { id: "cancel", label: "Cancel" },
+    {
+      id: options.actionId,
+      label: options.actionLabel,
+      appearance: "primary",
+      isDefault: options.isActionDefault,
+    },
+  ];
+  return confirmDialog({
+    title: options.title,
+    descriptions: options.descriptions,
+    details: options.details,
+    actions,
+    cancelActionId: "cancel",
+  });
 }
 
 export function getConfirmDialogRequest(): ConfirmDialogRequest | null {

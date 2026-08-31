@@ -30,7 +30,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
 <template>
   <ToolSplitLayout
     title="Token"
-    hint="左侧粘贴 JWT，右侧实时解析 Header 与 Payload；base64url 按 UTF-8 正确解码，签名仅原样展示。"
+    hint="Paste a JWT on the left to decode its Header and Payload as UTF-8 base64url. The signature is displayed without verification."
     left-label="JWT"
   >
     <template #left>
@@ -40,7 +40,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
         class="token-tool__input"
         spellcheck="false"
         aria-label="JWT"
-        placeholder="在此粘贴 header.payload.signature 形式的 JWT…"
+        placeholder="Paste a header.payload.signature JWT here..."
       ></textarea>
     </template>
     <template #right>
@@ -54,7 +54,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
                 class="token-tool__copy"
                 @click="copyText('header', result.header)"
               >
-                {{ copiedKey === "header" ? "已复制" : "复制" }}
+                {{ copiedKey === "header" ? "Copied" : "Copy" }}
               </button>
             </div>
             <pre v-select-all tabindex="0" class="token-tool__output" aria-label="Header JSON">{{ result.header }}</pre>
@@ -67,7 +67,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
                 class="token-tool__copy"
                 @click="copyText('payload', result.payload)"
               >
-                {{ copiedKey === "payload" ? "已复制" : "复制" }}
+                {{ copiedKey === "payload" ? "Copied" : "Copy" }}
               </button>
             </div>
             <pre v-select-all tabindex="0" class="token-tool__output" aria-label="Payload JSON">{{ result.payload }}</pre>
@@ -80,8 +80,8 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
           </div>
           <div class="token-tool__block">
             <div class="token-tool__pane-label">Signature</div>
-            <pre v-select-all tabindex="0" class="token-tool__output token-tool__output--muted" aria-label="签名">{{ result.signature }}</pre>
-            <p class="token-tool__note">签名为二进制，需密钥验证，无法解码。</p>
+            <pre v-select-all tabindex="0" class="token-tool__output token-tool__output--muted" aria-label="Signature">{{ result.signature }}</pre>
+            <p class="token-tool__note">The binary signature requires a key for verification and cannot be decoded.</p>
           </div>
         </template>
         <p v-else class="token-tool__error">{{ result.error }}</p>
@@ -107,18 +107,19 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   overflow: hidden;
   background: var(--color-surface-raised);
 }
 
 .token-tool__pane-label {
+  height: var(--tool-pane-header-height);
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding-inline: var(--space-3);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.4px;
@@ -131,7 +132,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
 .token-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -153,7 +154,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   overflow: auto;
@@ -171,7 +172,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
   padding: var(--space-3) var(--space-4);
   background: var(--color-surface);
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -217,7 +218,7 @@ async function copyText(key: "header" | "payload", text: string): Promise<void> 
 .token-tool__error {
   margin: 0;
   padding: var(--space-4);
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   font-size: 14px;
 }
 </style>

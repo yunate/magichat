@@ -1,0 +1,25 @@
+{
+    "version":  1,
+    "projects":  [
+                     {
+                         "name":  "cli-helper",
+                         "inputPaths":  [
+                                            "cli-helper/src"
+                                        ],
+                         "buildScript":  "cli-helper/src/build-native.bat",
+                         "targetExecutable":  "cli-helper/bin/magichat-cli.exe",
+                         "sourceHash":  "739a9b40981f80896616a7d3b3a8814ce8b7289862e1c9122f3dd59e493d9c8f",
+                         "targetHash":  "195f0a0d2aea1baddac76da05d28f7d56ed8a4accf32faf0cf96d85bf9dc517b"
+                     },
+                     {
+                         "name":  "js-launcher",
+                         "inputPaths":  [
+                                            "js-launcher/src"
+                                        ],
+                         "buildScript":  "js-launcher/src/build-native.bat",
+                         "targetExecutable":  "js-launcher/bin/js-launcher.exe",
+                         "sourceHash":  "53a95f132e5fc54a78d3cd323beded95253b083b545c8b34e84111c20c7c58b3",
+                         "targetHash":  "5b84f4384484deac47ca4908873d4b69f08a67064ae855babec9b79c3a67989f"
+                     }
+                 ]
+}

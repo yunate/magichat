@@ -5,14 +5,18 @@ import {
   parseBridgeConnectAccept,
 } from "../../../common/ipc_bridge/messagePortProtocol";
 import type { ConfigServerRpcApi } from "../../../common/config/configRpcApi";
+import type { CommandStorageServerRpcApi } from "../../../common/command";
 import type { TasksServerRpcApi } from "../../../common/tasks/tasksRpcApi";
+import type { ThemeServerRpcApi } from "../../../common/theme/themeRpcApi";
 import type { WindowServerRpcApi } from "../../../common/window/windowRpcApi";
 import { BridgeRouter, type RemoteObject } from "../../../common/ipc_bridge/rpc";
 import {
   createConfigServerRpcObject,
   createTasksServerRpcObject,
+  createThemeServerRpcObject,
   createWindowServerRpcObject,
 } from "../bridge/remote_rpc_objects/remoteServerRpcObjects";
+import { createCommandStorageServerRpcObject } from "../bridge/remote_rpc_objects/commandStorage";
 import { RpcObjectRegistry } from "../bridge/rpc_object_registry/registerRpcObjects";
 
 export class Window {
@@ -26,7 +30,9 @@ export class Window {
     router.startDispatchMessage(instance);
 
     this._configServerRpcObject = createConfigServerRpcObject(instance);
+    this._commandStorageServerRpcObject = createCommandStorageServerRpcObject(instance);
     this._tasksServerRpcObject = createTasksServerRpcObject(instance);
+    this._themeServerRpcObject = createThemeServerRpcObject(instance);
     this._windowServerRpcObject = createWindowServerRpcObject(instance);
     await (await this._windowServerRpcObject).rendererReady();
     return instance;
@@ -39,11 +45,25 @@ export class Window {
     return this._configServerRpcObject;
   }
 
+  public getCommandStorageServerRpcObject(): Promise<RemoteObject<CommandStorageServerRpcApi>> {
+    if (!this._commandStorageServerRpcObject) {
+      throw new Error("Window bridge is not initialized");
+    }
+    return this._commandStorageServerRpcObject;
+  }
+
   public getTasksServerRpcObject(): Promise<RemoteObject<TasksServerRpcApi>> {
     if (!this._tasksServerRpcObject) {
       throw new Error("Window bridge is not initialized");
     }
     return this._tasksServerRpcObject;
+  }
+
+  public getThemeServerRpcObject(): Promise<RemoteObject<ThemeServerRpcApi>> {
+    if (!this._themeServerRpcObject) {
+      throw new Error("Window bridge is not initialized");
+    }
+    return this._themeServerRpcObject;
   }
 
   public getWindowServerRpcObject(): Promise<RemoteObject<WindowServerRpcApi>> {
@@ -79,7 +99,9 @@ export class Window {
   }
 
   private _configServerRpcObject: Promise<RemoteObject<ConfigServerRpcApi>> | null = null;
+  private _commandStorageServerRpcObject: Promise<RemoteObject<CommandStorageServerRpcApi>> | null = null;
   private _tasksServerRpcObject: Promise<RemoteObject<TasksServerRpcApi>> | null = null;
+  private _themeServerRpcObject: Promise<RemoteObject<ThemeServerRpcApi>> | null = null;
   private _windowServerRpcObject: Promise<RemoteObject<WindowServerRpcApi>> | null = null;
   private _peer: BridgePeer | null = null;
 }

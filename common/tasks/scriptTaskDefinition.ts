@@ -4,7 +4,7 @@ import { ValidateUtils } from "../validator";
 
 export const SCRIPT_TASK_KEY = "script";
 
-export const SCRIPT_TYPES = ["powershell", "bash", "node", "python", "cmd"] as const;
+export const SCRIPT_TYPES = ["powershell", "node", "python", "cmd"] as const;
 export type ScriptType = (typeof SCRIPT_TYPES)[number];
 
 export interface ScriptTaskInfo {
@@ -102,7 +102,6 @@ function validateScriptVariables(
 
 export function isScriptType(value: unknown): value is ScriptType {
   return value === "powershell"
-    || value === "bash"
     || value === "node"
     || value === "python"
     || value === "cmd";

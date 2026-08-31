@@ -26,7 +26,7 @@ const emit = defineEmits<{
   runNew: [id: string];
   delete: [ids: string[]];
   pin: [payload: { id: string; isPinned: boolean }];
-  viewFullLogs: [id: string];
+  revealLog: [id: string];
   viewed: [id: string];
   markAllViewed: [];
 }>();
@@ -249,7 +249,7 @@ function logsFor(id: string): readonly string[] {
           @run-new="emit('runNew', $event)"
           @select="onSelect"
           @pin="emit('pin', $event)"
-          @view-full-logs="emit('viewFullLogs', $event)"
+          @reveal-log="emit('revealLog', $event)"
           @viewed="emit('viewed', $event)"
         />
       </ul>
@@ -292,7 +292,7 @@ function logsFor(id: string): readonly string[] {
 .task-list__mark-viewed {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 13px;
@@ -323,7 +323,7 @@ function logsFor(id: string): readonly string[] {
 .task-list__delete {
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--color-danger) 55%, transparent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   color: var(--color-danger);
   font-size: 13px;
@@ -371,7 +371,7 @@ function logsFor(id: string): readonly string[] {
   margin-inline-start: auto;
   padding: var(--space-2);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -411,7 +411,7 @@ function logsFor(id: string): readonly string[] {
 .task-list__input {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 14px;

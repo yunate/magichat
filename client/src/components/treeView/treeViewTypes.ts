@@ -4,7 +4,7 @@ export type TreeViewSelection = {
 };
 
 export type TreeViewActivateParams = TreeViewSelection & {
-  openMode?: "normal" | "pinned";
+  openMode?: "preview" | "normal" | "pinned";
 };
 
 export type TreeViewCloseTabsParams = {

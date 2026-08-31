@@ -1,0 +1,16 @@
+{
+  "isDraft": false,
+  "id": "10000000-0000-4000-8000-000000000014",
+  "data": {
+    "scriptType": "python",
+    "content": "mhsetenv({\"py-mhsetenv\": \"py-mhsetenv\"})\nprint(\"py-mhsetenv\")",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

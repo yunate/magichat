@@ -1,5 +1,6 @@
 import { ISerializer } from "../serializer";
 import { ValidateUtils } from "../validator";
+import { dirname } from "pathe";
 import type {
   TreeViewFolder,
   TreeViewFolderProperties,
@@ -8,7 +9,8 @@ import type {
   TreeViewTab,
   TreeViewWorkspace,
 } from "./treeViewTypes";
-import { getTreeViewParentPath } from "./treeViewValidation";
+import { TREE_VIEW_ITEM_FILE_EXTENSION } from "./treeViewTypes";
+import { TreeViewPath } from "./treeViewPath";
 
 function ensureExactRecord(
   value: unknown,
@@ -41,59 +43,41 @@ function ensureStringArray(value: unknown, description: string): asserts value i
 }
 
 export class TreeViewFolderPropertiesSerializer extends ISerializer<TreeViewFolderProperties> {
-  public constructor(dataSerializer: ISerializer<unknown>) {
-    super();
-    this._dataSerializer = dataSerializer;
-    this._default = {
-      id: "00000000-0000-4000-8000-000000000000",
-      isExpanded: true,
-      folderOrder: [],
-      itemOrder: [],
-      data: dataSerializer.getDefault(),
-    };
-  }
-
   public getDefault(): TreeViewFolderProperties {
-    return structuredClone(this._default);
+    return structuredClone(TreeViewFolderPropertiesSerializer._DEFAULT);
   }
 
   public validate(value: unknown): asserts value is TreeViewFolderProperties {
-    ensureExactRecord(value, Object.keys(this._default), "TreeView folder properties");
+    ensureExactRecord(value, Object.keys(TreeViewFolderPropertiesSerializer._DEFAULT), "TreeView folder properties");
     ensureIdentifier(value.id, "TreeView folder id");
     ValidateUtils.ensureBoolean(value.isExpanded, "TreeView folder isExpanded must be a boolean");
     ensureStringArray(value.folderOrder, "TreeView folder folderOrder");
     ensureStringArray(value.itemOrder, "TreeView folder itemOrder");
-    this._dataSerializer.validate(value.data);
   }
 
-  private readonly _dataSerializer: ISerializer<unknown>;
-  private readonly _default: TreeViewFolderProperties;
+  private static readonly _DEFAULT: TreeViewFolderProperties = {
+    id: "00000000-0000-4000-8000-000000000000",
+    isExpanded: true,
+    folderOrder: [],
+    itemOrder: [],
+  };
 }
 
 export class TreeViewItemPropertiesSerializer extends ISerializer<TreeViewItemProperties> {
-  public constructor(dataSerializer: ISerializer<unknown>) {
-    super();
-    this._dataSerializer = dataSerializer;
-    this._default = {
-      id: "00000000-0000-4000-8000-000000000000",
-      isDraft: false,
-      data: dataSerializer.getDefault(),
-    };
-  }
-
   public getDefault(): TreeViewItemProperties {
-    return structuredClone(this._default);
+    return structuredClone(TreeViewItemPropertiesSerializer._DEFAULT);
   }
 
   public validate(value: unknown): asserts value is TreeViewItemProperties {
-    ensureExactRecord(value, Object.keys(this._default), "TreeView item properties");
+    ensureExactRecord(value, Object.keys(TreeViewItemPropertiesSerializer._DEFAULT), "TreeView item properties");
     ensureIdentifier(value.id, "TreeView item id");
     ValidateUtils.ensureBoolean(value.isDraft, "TreeView item isDraft must be a boolean");
-    this._dataSerializer.validate(value.data);
   }
 
-  private readonly _dataSerializer: ISerializer<unknown>;
-  private readonly _default: TreeViewItemProperties;
+  private static readonly _DEFAULT: TreeViewItemProperties = {
+    id: "00000000-0000-4000-8000-000000000000",
+    isDraft: false,
+  };
 }
 
 export class TreeViewItemSerializer extends ISerializer<TreeViewItem> {
@@ -104,7 +88,7 @@ export class TreeViewItemSerializer extends ISerializer<TreeViewItem> {
 
   public getDefault(): TreeViewItem {
     return {
-      path: "workspace/item",
+      path: "C:/workspace/item.mh",
       name: "item",
       properties: this._propertiesSerializer.getDefault(),
     };
@@ -112,10 +96,12 @@ export class TreeViewItemSerializer extends ISerializer<TreeViewItem> {
 
   public validate(value: unknown): asserts value is TreeViewItem {
     ensureExactRecord(value, Object.keys(this.getDefault()), "TreeView item");
-    ValidateUtils.ensureNonBlankString(value.path, "TreeView item path must be nonblank");
+    const itemPath = TreeViewPath.normalize(value.path, "TreeView item path");
     ValidateUtils.ensureNonBlankString(value.name, "TreeView item name must be nonblank");
-    if (!value.path.includes("/") || value.name !== value.path.slice(value.path.lastIndexOf("/") + 1)) {
-      throw new Error("TreeView item path must include its workspace and match its name");
+    const fileName = itemPath.slice(itemPath.lastIndexOf("/") + 1);
+    if (!fileName.endsWith(TREE_VIEW_ITEM_FILE_EXTENSION)
+      || value.name !== fileName.slice(0, -TREE_VIEW_ITEM_FILE_EXTENSION.length)) {
+      throw new Error("TreeView item path must be an MH file matching its name");
     }
     this._propertiesSerializer.validate(value.properties);
   }
@@ -135,7 +121,7 @@ export class TreeViewFolderSerializer extends ISerializer<TreeViewFolder> {
 
   public getDefault(): TreeViewFolder {
     return {
-      path: "workspace",
+      path: "C:/workspace",
       name: "workspace",
       properties: this._propertiesSerializer.getDefault(),
       folders: [],
@@ -149,23 +135,23 @@ export class TreeViewFolderSerializer extends ISerializer<TreeViewFolder> {
 
   private _validateFolder(value: unknown): asserts value is TreeViewFolder {
     ensureExactRecord(value, Object.keys(this.getDefault()), "TreeView folder");
-    ValidateUtils.ensureNonBlankString(value.path, "TreeView folder path must be nonblank");
+    const folderPath = TreeViewPath.normalize(value.path, "TreeView folder path");
     ValidateUtils.ensureNonBlankString(value.name, "TreeView folder name must be nonblank");
-    if (value.name !== value.path.slice(value.path.lastIndexOf("/") + 1)) {
+    if (value.name !== folderPath.slice(folderPath.lastIndexOf("/") + 1)) {
       throw new Error("TreeView folder path must match its name");
     }
     this._propertiesSerializer.validate(value.properties);
     ValidateUtils.ensureArray(value.folders, "TreeView folders must be an array");
     for (const folder of value.folders) {
       this._validateFolder(folder);
-      if (getTreeViewParentPath(folder.path) !== value.path) {
+      if (dirname(folder.path) !== folderPath) {
         throw new Error("TreeView child folder path must include its workspace and parent folder");
       }
     }
     ValidateUtils.ensureArray(value.items, "TreeView items must be an array");
     for (const item of value.items) {
       this._itemSerializer.validate(item);
-      if (getTreeViewParentPath(item.path) !== value.path) {
+      if (dirname(item.path) !== folderPath) {
         throw new Error("TreeView item path must include its workspace and parent folder");
       }
     }
@@ -195,16 +181,22 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
     return structuredClone(TreeViewWorkspaceSerializer._DEFAULT);
   }
 
+  public override fromValue(value: unknown): TreeViewWorkspace {
+    return super.fromValue(this._migrateLegacyValue(value));
+  }
+
   public validate(value: unknown): asserts value is TreeViewWorkspace {
     ensureExactRecord(value, Object.keys(TreeViewWorkspaceSerializer._DEFAULT), "TreeView workspace");
     ValidateUtils.ensureBoolean(value.isSelected, "TreeView workspace isSelected must be a boolean");
     ValidateUtils.ensureArray(value.tabs, "TreeView workspace tabs must be an array");
     const tabIds = new Set<string>();
+    const pinnedTabIds = new Set<string>();
     let foundUnpinned = false;
     for (const tab of value.tabs) {
       TreeViewWorkspaceSerializer._TAB_SERIALIZER.validate(tab);
       if (tabIds.has(tab.id)) throw new Error("TreeView tab ids must be unique");
       tabIds.add(tab.id);
+      if (tab.isPinned) pinnedTabIds.add(tab.id);
       if (!tab.isPinned) foundUnpinned = true;
       else if (foundUnpinned) throw new Error("Pinned TreeView tabs must precede unpinned tabs");
     }
@@ -213,6 +205,15 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
       if (!tabIds.has(value.activeTabId)) throw new Error("TreeView active tab id must reference a tab");
     } else if (tabIds.size > 0) {
       throw new Error("TreeView active tab id is required when tabs exist");
+    }
+    if (value.previewTabId !== null) {
+      ensureIdentifier(value.previewTabId, "TreeView preview tab id");
+      if (!tabIds.has(value.previewTabId)) {
+        throw new Error("TreeView preview tab id must reference a tab");
+      }
+      if (pinnedTabIds.has(value.previewTabId)) {
+        throw new Error("TreeView preview tab must not be pinned");
+      }
     }
     ensureExactRecord(value.ui, Object.keys(TreeViewWorkspaceSerializer._DEFAULT.ui), "TreeView workspace ui");
     ensureExactRecord(
@@ -226,13 +227,26 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
     }
   }
 
+  private _migrateLegacyValue(value: unknown): unknown {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    const actualKeys = Object.keys(value);
+    if (actualKeys.length !== TreeViewWorkspaceSerializer._LEGACY_KEYS.length
+      || !TreeViewWorkspaceSerializer._LEGACY_KEYS.every((key) => actualKeys.includes(key))) {
+      return value;
+    }
+    return { ...value, previewTabId: null };
+  }
+
   private static readonly _TAB_SERIALIZER: TreeViewTabSerializer = new TreeViewTabSerializer();
   private static readonly _DEFAULT: TreeViewWorkspace = {
     isSelected: false,
     tabs: [],
     activeTabId: null,
+    previewTabId: null,
     ui: { layout: { sidebarWidth: 240 } },
   };
+  private static readonly _LEGACY_KEYS = Object.keys(TreeViewWorkspaceSerializer._DEFAULT)
+    .filter((key) => key !== "previewTabId");
 }
 
 export const treeViewWorkspaceSerializer: ISerializer<TreeViewWorkspace> =

@@ -8,8 +8,8 @@ import { toReadable, toTimestamp, type TimestampUnit } from "./timestamp";
 type Mode = "toDate" | "toTimestamp";
 
 const UNIT_OPTIONS: readonly Readonly<{ value: TimestampUnit; label: string }>[] = [
-  { value: "seconds", label: "秒" },
-  { value: "milliseconds", label: "毫秒" },
+  { value: "seconds", label: "Seconds" },
+  { value: "milliseconds", label: "Milliseconds" },
 ];
 
 const mode = ref<Mode>("toDate");
@@ -17,9 +17,9 @@ const unit = ref<TimestampUnit>("seconds");
 const input = ref(String(Math.floor(Date.now() / 1000)));
 const copiedLabel = ref("");
 
-const inputLabel = computed(() => (mode.value === "toDate" ? "时间戳" : "日期"));
+const inputLabel = computed(() => (mode.value === "toDate" ? "Timestamp" : "Date"));
 const inputPlaceholder = computed(() =>
-  mode.value === "toDate" ? "在此输入 Unix 时间戳…" : "在此输入日期, 如 2024-01-01 12:00…",
+  mode.value === "toDate" ? "Enter a Unix timestamp..." : "Enter a date, such as 2024-01-01 12:00...",
 );
 
 const result = computed(() =>
@@ -57,20 +57,20 @@ async function copyValue(label: string, value: string): Promise<void> {
 
 <template>
   <ToolSplitLayout
-    title="时间戳"
-    hint="Unix 时间戳与可读日期互转, 支持秒 / 毫秒, 同时给出本地、UTC 与 ISO 8601。"
+    title="Timestamp"
+    hint="Convert between Unix timestamps and readable dates in seconds or milliseconds, with local, UTC, and ISO 8601 output."
     :left-label="inputLabel"
-    right-label="结果"
+    right-label="Result"
   >
     <template #toolbar>
-      <div class="ts-tool__modes" role="group" aria-label="方向">
+      <div class="ts-tool__modes" role="group" aria-label="Conversion direction">
         <button
           type="button"
           class="ts-tool__mode"
           :class="{ 'ts-tool__mode--active': mode === 'toDate' }"
           @click="setMode('toDate')"
         >
-          时间戳 → 日期
+          Timestamp → Date
         </button>
         <button
           type="button"
@@ -78,22 +78,22 @@ async function copyValue(label: string, value: string): Promise<void> {
           :class="{ 'ts-tool__mode--active': mode === 'toTimestamp' }"
           @click="setMode('toTimestamp')"
         >
-          日期 → 时间戳
+          Date → Timestamp
         </button>
       </div>
       <div v-if="mode === 'toDate'" class="ts-tool__unit">
-        <span id="timestamp-unit-label">单位</span>
+        <span id="timestamp-unit-label">Unit</span>
         <div class="ts-tool__unit-select">
           <PopupSelect
             :value="unit"
             :options="UNIT_OPTIONS"
-            accessible-label="时间戳单位"
+            accessible-label="Timestamp unit"
             labelled-by="timestamp-unit-label"
             @update-value="setUnit"
           />
         </div>
       </div>
-      <button type="button" class="ts-tool__now" @click="fillNow">当前时间</button>
+      <button type="button" class="ts-tool__now" @click="fillNow">Current Time</button>
     </template>
     <template #left>
       <input
@@ -108,7 +108,7 @@ async function copyValue(label: string, value: string): Promise<void> {
     <template #right>
       <div class="ts-tool__result">
         <p v-if="!result.ok" class="ts-tool__error">{{ result.error }}</p>
-        <p v-else-if="result.rows.length === 0" class="ts-tool__empty">等待输入…</p>
+        <p v-else-if="result.rows.length === 0" class="ts-tool__empty">Waiting for input...</p>
         <ul v-else class="ts-tool__rows">
           <li v-for="row in result.rows" :key="row.label" class="ts-tool__row">
             <span class="ts-tool__row-label">{{ row.label }}</span>
@@ -118,7 +118,7 @@ async function copyValue(label: string, value: string): Promise<void> {
               class="ts-tool__copy"
               @click="copyValue(row.label, row.value)"
             >
-              {{ copiedLabel === row.label ? "已复制" : "复制" }}
+              {{ copiedLabel === row.label ? "Copied" : "Copy" }}
             </button>
           </li>
         </ul>
@@ -136,7 +136,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 .ts-tool__mode {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: 13px;
@@ -170,7 +170,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 .ts-tool__now {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: transparent;
   color: var(--color-text);
   font-size: 13px;
@@ -189,7 +189,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 15px;
 }
 
@@ -221,7 +221,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
 }
 
@@ -237,7 +237,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: 1;
   min-width: 0;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   word-break: break-all;
 }
@@ -251,7 +251,7 @@ async function copyValue(label: string, value: string): Promise<void> {
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -266,7 +266,7 @@ async function copyValue(label: string, value: string): Promise<void> {
 .ts-tool__error {
   margin: 0;
   padding: var(--space-3);
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   font-size: 14px;
 }
 

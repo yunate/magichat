@@ -4,8 +4,8 @@ Registers main RPC objects and creates connection-scoped renderer event proxies.
 
 ## Structure
 
-- `rpc_object_registry/` registers `gConfigManager`, `gTaskManager`, and the Window owned by the caller's bridge peer.
-- `remote_rpc_objects/` contains the TaskEvents client proxy factory and broadcaster. Each Window holds its proxy Promise; broadcasts retain per-window error isolation.
+- `rpc_object_registry/` registers `gConfigManager`, `gThemeManager`, `gTaskManager`, and the Window owned by the caller's bridge peer.
+- `remote_rpc_objects/` contains TaskEvents and Window client proxy factories. Each Window holds its proxy Promises; Task broadcasts retain per-window error isolation, while Window close requests return control to the renderer's standard close flow.
 - Task service behavior is documented in [`../services/tasks/AI_CONTEXT.md`](../services/tasks/AI_CONTEXT.md).
 
 ## Boundaries
@@ -15,4 +15,5 @@ Registers main RPC objects and creates connection-scoped renderer event proxies.
 - Renderer readiness is acknowledged through the Window RPC object after client-side proxies are created; it does not use a second raw IPC channel.
 - RPC registerName strings equal their interface names.
 - Config values cross the RPC boundary as JSON strings and are validated by the shared serializer selected by `config_key`.
+- Theme listing exposes validated theme directories plus the bundled `dark` theme. Theme resolution accepts one validated folder name, reads only the fixed theme stylesheet files, and returns bundled `dark` when the configured folder does not exist.
 - Validation failures return stable bridge errors without internal stack details.

@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ConfigServerRpcApi } from "../../../common/config/configRpcApi";
 import { COMMAND_CONFIG_KEY } from "../../../common/config/command";
+import { GLOBAL_CONFIG_KEY } from "../../../common/config/global";
 import { TASK_CENTER_CONFIG_KEY } from "../../../common/config/taskCenter";
+import { TOOLS_CONFIG_KEY } from "../../../common/config/tools";
 import {
   getConfigSerializer,
   isConfigKey,
@@ -17,7 +19,9 @@ const CONFIG_DIRECTORY = path.join(gApplicationPaths.dataDir, "config");
 
 const CONFIG_FILES: Readonly<Record<ConfigKey, string>> = {
   [COMMAND_CONFIG_KEY]: "command.json",
+  [GLOBAL_CONFIG_KEY]: "global.json",
   [TASK_CENTER_CONFIG_KEY]: "taskCenter.json",
+  [TOOLS_CONFIG_KEY]: "tools.json",
 };
 
 export class ConfigManager implements ConfigServerRpcApi {

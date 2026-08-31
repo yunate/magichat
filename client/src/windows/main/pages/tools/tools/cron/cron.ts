@@ -40,14 +40,14 @@ interface FieldSpec {
 }
 
 const FIELD_SPECS: FieldSpec[] = [
-  { min: 0, max: 59, name: "分钟" },
-  { min: 0, max: 23, name: "小时" },
-  { min: 1, max: 31, name: "日" },
-  { min: 1, max: 12, name: "月" },
-  { min: 0, max: 6, name: "星期", alias7: true },
+  { min: 0, max: 59, name: "minute" },
+  { min: 0, max: 23, name: "hour" },
+  { min: 1, max: 31, name: "day" },
+  { min: 1, max: 12, name: "month" },
+  { min: 0, max: 6, name: "weekday", alias7: true },
 ];
 
-const DOW_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // Cap the forward search so a valid-but-never-matching expression (e.g. Feb 30) fails instead of looping.
 const MAX_SCAN_MINUTES = 366 * 24 * 60 * 4;
@@ -55,14 +55,14 @@ const MAX_SCAN_MINUTES = 366 * 24 * 60 * 4;
 export function parseCron(expr: string): CronParseResult {
   const tokens = expr.trim().split(/\s+/).filter((token) => token !== "");
   if (tokens.length !== 5) {
-    return { ok: false, error: "请输入 5 个字段: 分 时 日 月 周" };
+    return { ok: false, error: "Enter 5 fields: minute hour day month weekday" };
   }
   const sets: Set<number>[] = [];
   for (let i = 0; i < FIELD_SPECS.length; i += 1) {
     const spec = FIELD_SPECS[i];
     const values = _parseField(tokens[i], spec);
-    if (values === null) return { ok: false, error: `字段 "${tokens[i]}" (${spec.name}) 无法解析` };
-    if (values.size === 0) return { ok: false, error: `字段 "${tokens[i]}" (${spec.name}) 没有有效值` };
+    if (values === null) return { ok: false, error: `Cannot parse field "${tokens[i]}" (${spec.name})` };
+    if (values.size === 0) return { ok: false, error: `Field "${tokens[i]}" (${spec.name}) has no valid values` };
     sets.push(values);
   }
   return {
@@ -83,11 +83,11 @@ export function describeCron(expr: string): string {
   if (!parsed.ok) return parsed.error;
   const { raw, minutes, hours, daysOfMonth, months, daysOfWeek } = parsed.fields;
   const parts = [
-    `分钟: ${_fieldText(raw[0], minutes)}`,
-    `小时: ${_fieldText(raw[1], hours)}`,
-    `日: ${raw[2] === "*" ? "每天" : _formatSet(daysOfMonth)}`,
-    `月: ${_fieldText(raw[3], months)}`,
-    `星期: ${raw[4] === "*" ? "不限" : _formatDow(daysOfWeek)}`,
+    `Minute: ${_fieldText(raw[0], minutes)}`,
+    `Hour: ${_fieldText(raw[1], hours)}`,
+    `Day: ${raw[2] === "*" ? "every day" : _formatSet(daysOfMonth)}`,
+    `Month: ${_fieldText(raw[3], months)}`,
+    `Weekday: ${raw[4] === "*" ? "any" : _formatDow(daysOfWeek)}`,
   ];
   return parts.join("; ");
 }
@@ -105,7 +105,7 @@ export function calculateNextRuns(expr: string, count: number, from: number = Da
     cursor.setMinutes(cursor.getMinutes() + 1);
   }
   if (runs.length < count) {
-    return { ok: false, error: "未来 4 年内找不到足够的执行时间, 请检查表达式" };
+    return { ok: false, error: "Not enough runs were found in the next 4 years. Check the expression." };
   }
   return { ok: true, runs };
 }
@@ -175,7 +175,7 @@ function _matchesDay(date: Date, fields: CronFields): boolean {
 }
 
 function _fieldText(raw: string, set: Set<number>): string {
-  return raw === "*" ? "每一个" : _formatSet(set);
+  return raw === "*" ? "every value" : _formatSet(set);
 }
 
 function _formatSet(set: Set<number>): string {

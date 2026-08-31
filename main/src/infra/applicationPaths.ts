@@ -20,11 +20,41 @@ export class ApplicationPaths {
       "preload",
       "index.js",
     );
-    this.appIconPath = path.join(this.repoRoot, "build", "appIcon.ico");
+    const nativeToolsDirectory = app.isPackaged
+      ? path.join(path.dirname(process.execPath), "native-tools")
+      : path.join(this.repoRoot, "native-tools");
+    this.nativeToolsDirectoryPath = nativeToolsDirectory;
+    this.jsLauncherExecutablePath = path.join(
+      nativeToolsDirectory,
+      "js-launcher",
+      "bin",
+      "js-launcher.exe",
+    );
+    const cliDirectory = path.join(nativeToolsDirectory, "cli-helper");
+    this.cliCommandDirectoryPath = path.join(cliDirectory, "cmd");
+    this.cliPythonDirectoryPath = path.join(cliDirectory, "python");
+    this.cliExecutablePath = path.join(cliDirectory, "bin", "magichat-cli.exe");
+    this.cliNodeHelperPath = path.join(cliDirectory, "node", "MagicHat.js");
+    this.cliPowerShellModulePath = path.join(
+      cliDirectory,
+      "powershell",
+      "MagicHat.psm1",
+    );
+    this.uacBrokerEntryPath = app.isPackaged
+      ? path.join(process.resourcesPath, "uac-broker", "index.js")
+      : path.join(this.repoRoot, "dist-electron", "uac-broker", "index.js");
+    this.appIconPath = path.join(
+      this.repoRoot,
+      "build",
+      app.isPackaged ? "appIcon.ico" : "debugAppIcon.ico",
+    );
     this.dataDir = path.join(
       app.isPackaged ? app.getPath("userData") : this.repoRoot,
       "data",
     );
+    this.themesDir = app.isPackaged
+      ? path.join(this.dataDir, "themes")
+      : path.join(this.repoRoot, "client", "src", "windows", "main", "themes");
   }
 
   public readonly repoRoot: string;
@@ -33,7 +63,16 @@ export class ApplicationPaths {
   public readonly rendererEntryPath: string;
   public readonly rendererEntryUrl: string;
   public readonly preloadEntryPath: string;
+  public readonly nativeToolsDirectoryPath: string;
+  public readonly jsLauncherExecutablePath: string;
+  public readonly cliCommandDirectoryPath: string;
+  public readonly cliPythonDirectoryPath: string;
+  public readonly cliExecutablePath: string;
+  public readonly cliNodeHelperPath: string;
+  public readonly cliPowerShellModulePath: string;
+  public readonly uacBrokerEntryPath: string;
   public readonly appIconPath: string;
+  public readonly themesDir: string;
   public readonly dataDir: string;
 
   private static _instance: ApplicationPaths | null = null;

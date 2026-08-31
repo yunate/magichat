@@ -4,15 +4,24 @@ setlocal
 
 set "ROOT=%~dp0"
 set "DEBUG=false"
+set "REBUILD=false"
+:parse_arguments
+if "%~1"=="" goto arguments_parsed
 if /I "%~1"=="debug" set "DEBUG=true"
-set "VITE_MAGICHAT_DEBUG=true"
+if /I "%~1"=="rebuild" set "REBUILD=true"
+shift
+goto parse_arguments
+
+:arguments_parsed
+set "ENV_DEBUG=true"
+set "MAGICHAT_START_REBUILD=%REBUILD%"
 
 :: Ensure Node.js is installed
 call "%ROOT%scripts\ensure-node.bat" || exit /b 1
 
 cd /d "%ROOT%"
 call npm install --prefer-offline --no-audit --no-fund || exit /b 1
-call npm run build || exit /b 1
+call npm run build:start || exit /b 1
 
 set "NODE_OPTIONS=--enable-source-maps"
 if "%DEBUG%"=="true" (

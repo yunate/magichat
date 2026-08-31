@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { dirname, join, relative } from "pathe";
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
 import type {
   TreeViewFolder,
   TreeViewItem,
   TreeViewTab,
 } from "../../../../common/treeView";
-import { getTreeViewParentPath } from "../../../../common/treeView";
+import { TREE_VIEW_ITEM_FILE_EXTENSION } from "../../../../common/treeView";
+import { confirmActionDialog } from "../confirmDialog";
+import ContextMenu from "../ContextMenu.vue";
+import type { ContextMenuArea, ContextMenuPosition } from "../contextMenuTypes";
 import PopupToast from "../PopupToast.vue";
 import PopupSelect from "../PopupSelect.vue";
+import SplitContainer from "../SplitContainer.vue";
 import type { TreeView } from "./TreeView";
 import type { TreeViewSelection } from "./treeViewTypes";
 import PersistentStack from "../PersistentStack.vue";
@@ -18,8 +23,8 @@ import TreeViewTabs from "./TreeViewTabs.vue";
 type MenuState = {
   kind: "folder" | "item" | "tab";
   id: string;
-  x: number;
-  y: number;
+  position: ContextMenuPosition;
+  area: ContextMenuArea;
 } | null;
 
 type WorkspaceDialogState = {
@@ -41,7 +46,6 @@ type TreeViewDragSource = {
 
 const props = withDefaults(defineProps<{
   treeView: TreeView;
-  createItemData: () => unknown;
   folderLabel?: string;
   itemLabel?: string;
   isTabMultiline?: boolean;
@@ -64,26 +68,34 @@ defineSlots<{
     tab: TreeViewTab;
     entity: TreeViewFolder | TreeViewItem;
     isActive: boolean;
-    requestDraftSave: () => void;
+    notifyReady: () => void;
+    requestDraftSave: () => Promise<boolean>;
   }): unknown;
 }>();
 
 const menu = ref<MenuState>(null);
+const treeViewElement = useTemplateRef<HTMLElement>("treeViewElement");
 const renameTarget = ref<TreeViewSelection | null>(null);
 const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
 const isSidebarCollapsed = ref(false);
 const sidebarWidth = ref(240);
-const resizeStart = ref<{ pointerX: number; width: number } | null>(null);
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const draftDialog = ref<DraftDialogState | null>(null);
+let resolveDraftDialog: ((isSaved: boolean) => void) | null = null;
 const selectedNodes = ref<readonly TreeViewSelection[]>([]);
 
 const workspace = computed(() => props.treeView.workspace.value);
 const rootFolder = computed(() => props.treeView.rootFolder.value);
-const workspaceOptions = computed(() => props.treeView.workspaceNames.value.length === 0
+const hasWorkspace = computed(() => props.treeView.workspaceRefs.value.length > 0);
+const workspaceOptions = computed(() => props.treeView.workspaceRefs.value.length === 0
   ? [{ value: "", label: "No workspace" }]
-  : props.treeView.workspaceNames.value.map((name) => ({ value: name, label: name })));
-const tabPageKeyPrefix = computed(() => props.treeView.selectedWorkspaceName.value ?? "");
+  : props.treeView.workspaceRefs.value.map((workspaceRef) => ({
+      value: workspaceRef.workspacePath,
+      label: props.treeView.storageRoots.length === 1
+        ? workspaceRef.workspaceName
+        : `${workspaceRef.rootKey} / ${workspaceRef.workspaceName}`,
+    })));
+const tabPageKeyPrefix = computed(() => props.treeView.selectedWorkspaceRef.value?.workspacePath ?? "");
 const isTabContentVisible = computed(() => props.isFolderTabVisible || props.isItemTabVisible);
 const tabs = computed(() => workspace.value?.tabs.flatMap((tab) => {
   if (tab.kind === "folder" && !props.isFolderTabVisible) return [];
@@ -100,10 +112,14 @@ const contextMenuTab = computed(() => {
   if (target?.kind !== "tab") return null;
   return tabs.value.find((entry) => entry.tab.id === target.id)?.tab ?? null;
 });
-const breadcrumbSegments = computed<readonly string[]>(() => {
+const breadcrumbPath = computed(() => {
   const entry = activeEntry.value;
-  if (entry === null) return [];
-  return entry.entity.path.split("/");
+  const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
+  if (entry === null || workspacePath === undefined) return "";
+  return relative(dirname(workspacePath), entry.entity.path);
+});
+const breadcrumbSegments = computed<readonly string[]>(() => {
+  return breadcrumbPath.value.length === 0 ? [] : breadcrumbPath.value.split("/");
 });
 const activeDraft = computed(() => {
   const entry = activeEntry.value;
@@ -129,11 +145,9 @@ function getTabPageKey(tab: TreeViewTab): string {
 }
 
 watch(workspace, (value) => {
-  if (resizeStart.value === null && value !== null) {
-    sidebarWidth.value = value.ui.layout.sidebarWidth;
-  }
+  if (value !== null) sidebarWidth.value = value.ui.layout.sidebarWidth;
 }, { immediate: true });
-watch(() => props.treeView.selectedWorkspaceName.value, () => {
+watch(() => props.treeView.selectedWorkspaceRef.value?.workspacePath, () => {
   selectedNodes.value = selectionArray(props.treeView.selection.value);
 }, { immediate: true });
 watch(() => props.treeView.selection.value, (selection) => {
@@ -153,7 +167,7 @@ function report(operation: Promise<unknown>): void {
 
 function activate(
   selection: TreeViewSelection,
-  openMode: "normal" | "pinned",
+  openMode: "preview" | "normal" | "pinned",
   isAdditive = false,
 ): void {
   isSidebarCollapsed.value = false;
@@ -178,12 +192,14 @@ function toggleFolder(folder: TreeViewFolder): void {
 }
 
 function openMenu(event: MouseEvent | KeyboardEvent, selection: TreeViewSelection): void {
-  if (!selectedNodeKeys.value.has(selectionKey(selection))) selectedNodes.value = [selection];
   const bounds = event.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : null;
   menu.value = {
     ...selection,
-    x: event instanceof MouseEvent ? event.clientX : bounds?.left ?? 8,
-    y: event instanceof MouseEvent ? event.clientY : bounds?.bottom ?? 8,
+    position: {
+      x: event instanceof MouseEvent ? event.clientX : bounds?.left ?? 0,
+      y: event instanceof MouseEvent ? event.clientY : bounds?.bottom ?? 0,
+    },
+    area: getContextMenuArea(),
   };
 }
 
@@ -193,7 +209,19 @@ function clearNodeSelectionOnExplorerBlank(event: MouseEvent): void {
 }
 
 function openTabMenu(event: MouseEvent, tab: TreeViewTab): void {
-  menu.value = { kind: "tab", id: tab.id, x: event.clientX, y: event.clientY };
+  menu.value = {
+    kind: "tab",
+    id: tab.id,
+    position: { x: event.clientX, y: event.clientY },
+    area: getContextMenuArea(),
+  };
+}
+
+function getContextMenuArea(): ContextMenuArea {
+  const bounds = treeViewElement.value?.getBoundingClientRect();
+  return bounds === undefined
+    ? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+    : { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
 }
 
 function closeMenuTab(): void {
@@ -201,6 +229,25 @@ function closeMenuTab(): void {
   menu.value = null;
   if (target?.kind !== "tab") return;
   report(props.treeView.controller.closeTabs({ tabIds: [target.id] }));
+}
+
+function closeMenuTabs(mode: "others" | "left" | "right" | "othersExceptPinned"): void {
+  const target = menu.value;
+  menu.value = null;
+  if (target?.kind !== "tab") return;
+  const targetIndex = tabs.value.findIndex((entry) => entry.tab.id === target.id);
+  if (targetIndex < 0) return;
+  const tabIds = tabs.value.flatMap((entry, index) => {
+    if (entry.tab.id === target.id) return [];
+    if (mode === "left") return index < targetIndex ? [entry.tab.id] : [];
+    if (mode === "right") return index > targetIndex ? [entry.tab.id] : [];
+    if (mode === "othersExceptPinned" && entry.tab.isPinned) return [];
+    return [entry.tab.id];
+  });
+  report(props.treeView.controller.closeTabs({
+    tabIds,
+    preferredActiveId: target.id,
+  }));
 }
 
 function toggleMenuTabPinned(): void {
@@ -218,7 +265,7 @@ function selectedFolder(): TreeViewFolder | null {
   if (target?.kind === "folder") return props.treeView.getFolderById(target.id);
   if (target?.kind === "item") {
     const item = props.treeView.getItemById(target.id);
-    const parentPath = item === null ? null : getTreeViewParentPath(item.path);
+    const parentPath = item === null ? null : dirname(item.path);
     return findFolderByPath(parentPath);
   }
   return rootFolder.value;
@@ -248,8 +295,8 @@ function createFolder(): void {
   menu.value = null;
   if (parent === null) return;
   const name = availableName(parent, `Untitled ${props.folderLabel.toLowerCase()}`);
-  report(props.treeView.controller.createFolder(`${parent.path}/${name}`).then((folder) => {
-    renameTarget.value = { kind: "folder", id: folder.properties.id };
+  report(props.treeView.controller.createFolder(join(parent.path, name)).then((folderId) => {
+    renameTarget.value = { kind: "folder", id: folderId };
   }));
 }
 
@@ -258,13 +305,18 @@ function createItem(isDraft = false): void {
   menu.value = null;
   if (parent === null) return;
   const name = availableName(parent, isDraft ? "Untitled" : `Untitled ${props.itemLabel.toLowerCase()}`);
-  report(props.treeView.controller.createItem(`${parent.path}/${name}`, {
+  report(props.treeView.controller.createItem(
+    join(parent.path, `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}`), {
     isDraft,
-    data: props.createItemData(),
   }).then(async (item): Promise<void> => {
-    await props.treeView.controller.activate({ kind: "item", id: item.properties.id });
+    await props.treeView.controller.activate({
+      kind: "item",
+      id: item.properties.id,
+      openMode: isDraft ? "normal" : "preview",
+    });
     if (!isDraft) renameTarget.value = { kind: "item", id: item.properties.id };
-  }));
+    },
+  ));
 }
 
 function beginRename(): void {
@@ -285,17 +337,20 @@ function rename(selection: TreeViewSelection, name: string): void {
     ? props.treeView.getFolderById(selection.id)
     : props.treeView.getItemById(selection.id);
   if (entity === null || name.length === 0 || name === entity.name) return;
-  const parent = getTreeViewParentPath(entity.path);
-  if (parent === null) {
+  const parent = dirname(entity.path);
+  if (entity.path === rootFolder.value?.path) {
     if (selection.kind === "folder") {
-      report(props.treeView.controller.renameWorkspace(entity.name, name));
+      report(props.treeView.controller.renameWorkspace(entity.path, name));
     }
     return;
   }
   report(props.treeView.controller.move({
     kind: selection.kind,
     sourcePath: entity.path,
-    targetPath: `${parent}/${name}`,
+    targetPath: join(
+      parent,
+      selection.kind === "item" ? `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}` : name,
+    ),
     targetOrder: entityOrder(selection.kind, entity.path),
   }));
 }
@@ -316,8 +371,18 @@ async function deleteSelections(selections: readonly TreeViewSelection[]): Promi
     if (selection.kind === "folder") {
       const folder = props.treeView.getFolderById(selection.id);
       if (folder === null) continue;
-      if (getTreeViewParentPath(folder.path) === null) {
-        await props.treeView.controller.deleteWorkspace(folder.name);
+      if (folder.path === rootFolder.value?.path) {
+        const action = await confirmActionDialog({
+          title: "Delete workspace",
+          descriptions: [
+            `Delete "${folder.name}" and all of its contents?`,
+            "This action cannot be undone.",
+          ],
+          actionId: "delete",
+          actionLabel: "Delete",
+        });
+        if (action === "cancel") return;
+        await props.treeView.controller.deleteWorkspace(folder.path);
       } else {
         await props.treeView.controller.deleteFolder(selection.id);
       }
@@ -350,13 +415,19 @@ async function cloneSelection(target: TreeViewSelection): Promise<void> {
   }
   const entity = resolveSelection(target);
   if (entity === null) return;
-  const parent = getTreeViewParentPath(entity.path);
-  if (parent === null) {
-    const cloneName = nextCloneName(entity.name, props.treeView.workspaceNames.value);
+  const parent = dirname(entity.path);
+  if (entity.path === rootFolder.value?.path) {
+    const rootKey = props.treeView.selectedWorkspaceRef.value?.rootKey;
+    const cloneName = nextCloneName(
+      entity.name,
+      props.treeView.workspaceRefs.value
+        .filter((workspaceRef) => workspaceRef.rootKey === rootKey)
+        .map((workspaceRef) => workspaceRef.workspaceName),
+    );
     await props.treeView.controller.clone({
       kind: "workspace",
       sourcePath: entity.path,
-      targetPath: cloneName,
+      targetPath: join(parent, cloneName),
     });
     return;
   }
@@ -370,7 +441,10 @@ async function cloneSelection(target: TreeViewSelection): Promise<void> {
   const clone = await props.treeView.controller.clone({
     kind: cloneKind,
     sourcePath: entity.path,
-    targetPath: `${parent}/${cloneName}`,
+    targetPath: join(
+      parent,
+      cloneKind === "item" ? `${cloneName}${TREE_VIEW_ITEM_FILE_EXTENSION}` : cloneName,
+    ),
   });
   if (clone !== null && selectedNodes.value.length === 1) {
     renameTarget.value = { kind: cloneKind, id: clone.properties.id };
@@ -390,7 +464,7 @@ function nextCloneName(sourceName: string, siblingNames: readonly string[]): str
   }
 }
 
-function openMenuTarget(openMode: "normal" | "pinned" = "normal"): void {
+function openMenuTarget(openMode: "preview" | "normal" | "pinned" = "preview"): void {
   const target = menu.value;
   menu.value = null;
   if (target?.kind !== "folder" && target?.kind !== "item") return;
@@ -399,9 +473,31 @@ function openMenuTarget(openMode: "normal" | "pinned" = "normal"): void {
 
 function openMenuTargetInExplorer(): void {
   const target = menu.value;
+  const tab = contextMenuTab.value;
   menu.value = null;
-  if (target?.kind !== "folder" && target?.kind !== "item") return;
+  if (target === null) return;
+  if (target.kind === "tab") {
+    if (tab === null) return;
+    report(props.treeView.controller.openInExplorer({ kind: tab.kind, id: tab.id }));
+    return;
+  }
   report(props.treeView.controller.openInExplorer({ kind: target.kind, id: target.id }));
+}
+
+async function copyMenuPath(kind: "relative" | "full"): Promise<void> {
+  const target = menu.value;
+  const entity = resolveMenuEntity(target);
+  const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
+  menu.value = null;
+  if (entity === null || workspacePath === undefined) return;
+  const path = kind === "full" ? entity.path : relative(dirname(workspacePath), entity.path);
+  try {
+    await navigator.clipboard.writeText(path);
+    popupToast.value?.show(kind === "full" ? "Full path copied." : "Path copied.");
+  } catch (reason: unknown) {
+    popupToast.value?.show("Failed to copy path.");
+    console.error("Failed to copy TreeView path:", reason);
+  }
 }
 
 function setMenuSubtreeExpanded(isExpanded: boolean): void {
@@ -456,7 +552,7 @@ async function moveSelections(
   }))) return;
   const targetFolder = targetKind === "folder" && position === "inside"
     ? targetEntity
-    : findFolderByPath(getTreeViewParentPath(targetPath));
+    : findFolderByPath(dirname(targetPath));
   if (!isTreeViewFolder(targetFolder)) return;
   validateMoveSelections(selections, targetFolder);
   const moveOrder = position === "after"
@@ -476,7 +572,9 @@ async function moveSelections(
     await props.treeView.controller.move({
       kind: selection.kind,
       sourcePath: entity.path,
-      targetPath: `${currentTargetFolder.path}/${entity.name}`,
+      targetPath: join(currentTargetFolder.path, selection.kind === "item"
+        ? `${entity.name}${TREE_VIEW_ITEM_FILE_EXTENSION}`
+        : entity.name),
       targetOrder,
     });
   }
@@ -516,10 +614,12 @@ function normalizeSelections(selections: readonly TreeViewSelection[]): TreeView
   return selections.filter((selection) => {
     const entity = resolveSelection(selection);
     if (entity === null) return false;
-    let parentPath = getTreeViewParentPath(entity.path);
-    while (parentPath !== null) {
+    let parentPath = dirname(entity.path);
+    while (true) {
       if (selectedPaths.has(parentPath)) return false;
-      parentPath = getTreeViewParentPath(parentPath);
+      const nextParentPath = dirname(parentPath);
+      if (nextParentPath === parentPath) break;
+      parentPath = nextParentPath;
     }
     return true;
   });
@@ -555,6 +655,12 @@ function menuTargetSelection(target: MenuState): TreeViewSelection | null {
   return { kind: target.kind, id: target.id };
 }
 
+function resolveMenuEntity(target: MenuState): TreeViewFolder | TreeViewItem | null {
+  if (target === null) return null;
+  if (target.kind !== "tab") return resolveSelection({ kind: target.kind, id: target.id });
+  return tabs.value.find((entry) => entry.tab.id === target.id)?.entity ?? null;
+}
+
 function selectionArray(selection: TreeViewSelection | null): readonly TreeViewSelection[] {
   return selection === null ? [] : [selection];
 }
@@ -562,7 +668,7 @@ function selectionArray(selection: TreeViewSelection | null): readonly TreeViewS
 function isWorkspaceRoot(selection: TreeViewSelection): boolean {
   if (selection.kind !== "folder") return false;
   const folder = props.treeView.getFolderById(selection.id);
-  return folder !== null && getTreeViewParentPath(folder.path) === null;
+  return folder !== null && folder.path === rootFolder.value?.path;
 }
 
 function findItemByPath(path: string): TreeViewItem | null {
@@ -587,7 +693,7 @@ function childCount(folder: TreeViewFolder, kind: "folder" | "item"): number {
 }
 
 function entityOrder(kind: "folder" | "item", path: string): number {
-  const parent = findFolderByPath(getTreeViewParentPath(path));
+  const parent = findFolderByPath(dirname(path));
   if (parent === null) return 0;
   return kind === "folder"
     ? parent.folders.findIndex((folder) => folder.path === path)
@@ -595,7 +701,11 @@ function entityOrder(kind: "folder" | "item", path: string): number {
 }
 
 function createWorkspace(): void {
-  workspaceDialog.value = { name: "", error: "", isSubmitting: false };
+  workspaceDialog.value = {
+    name: "",
+    error: "",
+    isSubmitting: false,
+  };
 }
 
 function updateWorkspaceName(event: Event): void {
@@ -629,9 +739,12 @@ function closeWorkspaceDialog(): void {
   workspaceDialog.value = null;
 }
 
-function openDraftDialog(): void {
-  if (activeDraft.value === null) return;
+function openDraftDialog(): Promise<boolean> {
+  if (activeDraft.value === null || draftDialog.value !== null) return Promise.resolve(false);
   draftDialog.value = { item: activeDraft.value, error: "", isSubmitting: false };
+  return new Promise<boolean>((resolve) => {
+    resolveDraftDialog = resolve;
+  });
 }
 
 async function saveDraft(name: string, folderId: string): Promise<void> {
@@ -642,15 +755,24 @@ async function saveDraft(name: string, folderId: string): Promise<void> {
   try {
     await props.treeView.controller.saveDraft(state.item.properties.id, folderId, name);
     draftDialog.value = null;
+    resolveDraftDialog?.(true);
+    resolveDraftDialog = null;
   } catch (reason: unknown) {
     state.error = reason instanceof Error ? reason.message : String(reason);
     state.isSubmitting = false;
   }
 }
 
-function selectWorkspace(name: string): void {
-  if (name !== props.treeView.selectedWorkspaceName.value) {
-    report(props.treeView.controller.switchWorkspace(name));
+function closeDraftDialog(): void {
+  if (draftDialog.value?.isSubmitting === true) return;
+  draftDialog.value = null;
+  resolveDraftDialog?.(false);
+  resolveDraftDialog = null;
+}
+
+function selectWorkspace(workspacePath: string): void {
+  if (workspacePath !== props.treeView.selectedWorkspaceRef.value?.workspacePath) {
+    report(props.treeView.controller.switchWorkspace(workspacePath));
   }
 }
 
@@ -658,30 +780,21 @@ function onWindowPointerDown(): void {
   menu.value = null;
 }
 
-function onResizeStart(event: PointerEvent): void {
-  if (event.button !== 0) return;
-  resizeStart.value = { pointerX: event.clientX, width: sidebarWidth.value };
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-}
-
-function onResizeMove(event: PointerEvent): void {
-  const start = resizeStart.value;
-  if (start === null) return;
-  sidebarWidth.value = Math.max(200, Math.min(480, start.width + event.clientX - start.pointerX));
-}
-
-function onResizeEnd(): void {
-  if (resizeStart.value === null) return;
-  resizeStart.value = null;
-  document.body.style.cursor = "";
-  document.body.style.userSelect = "";
-  saveSidebarWidth();
+function resizeSidebar(_index: number, width: number): void {
+  sidebarWidth.value = Math.max(200, Math.min(480, width));
 }
 
 function resetSidebarWidth(): void {
   sidebarWidth.value = 240;
   saveSidebarWidth();
+}
+
+function finishSidebarResize(): void {
+  saveSidebarWidth();
+}
+
+function resetSidebarSeparator(): void {
+  resetSidebarWidth();
 }
 
 function saveSidebarWidth(): void {
@@ -706,44 +819,47 @@ function reorderTabs(
 
 onMounted(() => {
   window.addEventListener("pointerdown", onWindowPointerDown);
-  window.addEventListener("pointermove", onResizeMove);
-  window.addEventListener("pointerup", onResizeEnd);
 });
 onUnmounted(() => {
   window.removeEventListener("pointerdown", onWindowPointerDown);
-  window.removeEventListener("pointermove", onResizeMove);
-  window.removeEventListener("pointerup", onResizeEnd);
-  if (resizeStart.value !== null) {
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-  }
+  resolveDraftDialog?.(false);
+  resolveDraftDialog = null;
 });
 </script>
 
 <template>
-  <div class="tree-view">
-    <aside
-      v-if="!isSidebarCollapsed"
-      class="tree-view__sidebar"
-      :class="{ 'is-tree-only': !isTabContentVisible }"
-      :style="{ width: isTabContentVisible ? `${sidebarWidth}px` : '100%' }"
+  <div ref="treeViewElement" class="tree-view">
+    <SplitContainer
+      class="tree-view__layout"
+      orientation="vertical"
+      :has-item-borders="false"
+      :separator-labels="['Resize sidebar']"
+      @resize="resizeSidebar"
+      @resize-end="finishSidebarResize"
+      @separator-double-click="resetSidebarSeparator"
     >
-      <header class="tree-view__sidebar-header" :class="{ 'is-multiline': isTabMultiline }">
+      <aside
+        v-if="!isSidebarCollapsed"
+        class="tree-view__sidebar"
+        :class="{ 'is-tree-only': !isTabContentVisible }"
+        :style="{ width: isTabContentVisible ? `${sidebarWidth}px` : '100%' }"
+      >
+        <header class="tree-view__sidebar-header" :class="{ 'is-multiline': isTabMultiline }">
         <div class="workspace-selector" @pointerdown.stop>
           <PopupSelect
-            :value="treeView.selectedWorkspaceName.value ?? ''"
+            :value="treeView.selectedWorkspaceRef.value?.workspacePath ?? ''"
             :options="workspaceOptions"
             accessible-label="Workspace"
-            :disabled="treeView.workspaceNames.value.length === 0"
+            :disabled="treeView.workspaceRefs.value.length === 0"
             @update-value="selectWorkspace"
           />
         </div>
-        <button type="button" class="tree-view__create-workspace" aria-label="Create workspace" title="Create workspace" @click="createWorkspace">+</button>
+        <button v-if="hasWorkspace" type="button" class="tree-view__create-workspace" aria-label="Create workspace" title="Create workspace" @click="createWorkspace">+</button>
         <button type="button" class="tree-view__collapse" aria-label="Collapse sidebar" title="Collapse sidebar" @click="isSidebarCollapsed = true">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8 10 12.5" /></svg>
         </button>
-      </header>
-      <nav
+        </header>
+        <nav
         class="tree-view__explorer"
         aria-label="Workspace files"
         @click="clearNodeSelectionOnExplorerBlank"
@@ -767,99 +883,119 @@ onUnmounted(() => {
             <template #itemOverlay="slotProps"><slot name="itemOverlay" v-bind="slotProps"></slot></template>
           </TreeViewNode>
         </ul>
-      </nav>
-    </aside>
-    <div
-      v-if="!isSidebarCollapsed && isTabContentVisible"
-      class="tree-view__resize"
-      role="separator"
-      aria-label="Resize sidebar"
-      aria-orientation="vertical"
-      :aria-valuenow="Math.round(sidebarWidth)"
-      aria-valuemin="200"
-      aria-valuemax="480"
-      @pointerdown.stop="onResizeStart"
-      @dblclick="resetSidebarWidth"
-    ></div>
+        </nav>
+      </aside>
 
-    <main v-if="isTabContentVisible" class="tree-view__workspace">
-      <header class="tree-view__tabs" :class="{ 'is-multiline': isTabMultiline }">
-        <button
-          v-if="isSidebarCollapsed"
-          type="button"
-          class="tree-view__expand"
-          aria-label="Expand sidebar"
-          title="Expand sidebar"
-          @click="isSidebarCollapsed = false"
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" /></svg>
-        </button>
-        <TreeViewTabs
-          :tabs="tabs"
-          :active-tab-id="workspace?.activeTabId ?? null"
-          :is-multiline="isTabMultiline"
-          :is-add-visible="isItemTabVisible"
-          @activate="switchTab"
-          @pin="setTabPinned"
-          @close="report(treeView.controller.closeTabs({ tabIds: [$event.id] }))"
-          @context-menu="openTabMenu"
-          @reorder="reorderTabs"
-          @add="createItem(true)"
-        >
-          <template v-if="$slots.itemIcon" #itemIcon="slotProps"><slot name="itemIcon" v-bind="slotProps"></slot></template>
-          <template #tabOverlay="slotProps"><slot name="tabOverlay" v-bind="slotProps"></slot></template>
-        </TreeViewTabs>
-      </header>
-      <nav v-if="activeEntry" class="tree-view__breadcrumb" aria-label="Current path">
-        <span class="tree-view__breadcrumb-segments" :title="activeEntry.entity.path">
-          <template v-for="(segment, index) in breadcrumbSegments" :key="`${index}:${segment}`">
-            <span v-if="index > 0" class="tree-view__breadcrumb-separator" aria-hidden="true"></span>
-            <span class="tree-view__breadcrumb-segment">{{ segment }}</span>
-          </template>
-        </span>
-      </nav>
+      <main v-if="isTabContentVisible" class="tree-view__workspace">
+      <div class="tree-view__tab-header">
+        <header class="tree-view__tabs" :class="{ 'is-multiline': isTabMultiline }">
+          <button
+            v-if="isSidebarCollapsed"
+            type="button"
+            class="tree-view__expand"
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            @click="isSidebarCollapsed = false"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" /></svg>
+          </button>
+          <TreeViewTabs
+            :tabs="tabs"
+            :active-tab-id="workspace?.activeTabId ?? null"
+            :preview-tab-id="treeView.previewTabId.value"
+            :is-multiline="isTabMultiline"
+            :is-add-visible="isItemTabVisible && hasWorkspace"
+            @activate="switchTab"
+            @promote="report(treeView.controller.promoteTab({ tabId: $event.id }))"
+            @pin="setTabPinned"
+            @close="report(treeView.controller.closeTabs({ tabIds: [$event.id] }))"
+            @context-menu="openTabMenu"
+            @reorder="reorderTabs"
+            @add="createItem(true)"
+          >
+            <template v-if="$slots.itemIcon" #itemIcon="slotProps"><slot name="itemIcon" v-bind="slotProps"></slot></template>
+            <template #tabOverlay="slotProps"><slot name="tabOverlay" v-bind="slotProps"></slot></template>
+          </TreeViewTabs>
+        </header>
+        <nav v-if="activeEntry" class="tree-view__breadcrumb" aria-label="Current path">
+          <span class="tree-view__breadcrumb-segments" :title="breadcrumbPath">
+            <template v-for="(segment, index) in breadcrumbSegments" :key="`${index}:${segment}`">
+              <span v-if="index > 0" class="tree-view__breadcrumb-separator" aria-hidden="true"></span>
+              <span class="tree-view__breadcrumb-segment">{{ segment }}</span>
+            </template>
+          </span>
+        </nav>
+      </div>
       <section class="tree-view__content">
         <PersistentStack
           v-if="activeEntry !== null"
           :entries="tabs"
           :active-key="activeTabPageKey"
           :get-entry-key="(entry) => getTabPageKey(entry.tab)"
+          defer-display-until-ready
         >
-          <template #default="{ entry, isActive }">
+          <template #default="{ entry, isActive, notifyReady }">
             <slot
               name="tabPage"
               :tab="entry.tab"
               :entity="entry.entity"
               :is-active="isActive"
+              :notify-ready="notifyReady"
               :request-draft-save="openDraftDialog"
             ></slot>
           </template>
         </PersistentStack>
-        <p v-if="activeEntry === null" class="tree-view__empty">Select or create an item.</p>
+        <div v-if="!hasWorkspace" class="tree-view__empty">
+          <div class="tree-view__empty-content">
+            <h2>No workspace found</h2>
+            <p>Create a workspace to continue.</p>
+            <button type="button" class="tree-view__empty-action" @click="createWorkspace">
+              Create workspace
+            </button>
+          </div>
+        </div>
+        <p v-else-if="activeEntry === null" class="tree-view__empty">Select or create an item.</p>
       </section>
-    </main>
+      </main>
+    </SplitContainer>
 
     <PopupToast ref="popupToast" />
 
-    <div v-if="menu" class="tree-view-menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" role="menu" @pointerdown.stop>
+    <ContextMenu v-if="menu" :position="menu.position" :area="menu.area">
       <template v-if="isMultiNodeMenu">
         <button type="button" role="menuitem" @click="cloneTarget">Clone</button>
+        <span role="separator"></span>
         <button type="button" role="menuitem" class="is-danger" @click="deleteTarget">Delete</button>
       </template>
       <template v-else-if="menu.kind === 'folder'">
         <button type="button" role="menuitem" @click="createItem(false)">New {{ itemLabel.toLowerCase() }}</button>
         <button type="button" role="menuitem" @click="createFolder">New {{ folderLabel.toLowerCase() }}</button>
-        <span></span>
-        <button type="button" role="menuitem" @click="setMenuSubtreeExpanded(true)">Expand All</button>
-        <button type="button" role="menuitem" @click="setMenuSubtreeExpanded(false)">Collapse All</button>
-        <span></span>
-      </template>
-      <template v-if="(menu.kind === 'folder' || menu.kind === 'item') && !isMultiNodeMenu">
+        <span role="separator"></span>
         <button type="button" role="menuitem" @click="openMenuTarget('normal')">Open</button>
         <button type="button" role="menuitem" @click="openMenuTargetInExplorer">Open in Explorer</button>
-        <button v-if="menu.kind === 'item'" type="button" role="menuitem" @click="openMenuTarget('pinned')">Pin</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="copyMenuPath('relative')">Copy Path</button>
+        <button type="button" role="menuitem" @click="copyMenuPath('full')">Copy Full Path</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="setMenuSubtreeExpanded(true)">Expand All</button>
+        <button type="button" role="menuitem" @click="setMenuSubtreeExpanded(false)">Collapse All</button>
+        <span role="separator"></span>
         <button type="button" role="menuitem" @click="cloneTarget">Clone</button>
         <button type="button" role="menuitem" @click="beginRename">Rename</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" class="is-danger" @click="deleteTarget">Delete</button>
+      </template>
+      <template v-else-if="menu.kind === 'item'">
+        <button type="button" role="menuitem" @click="openMenuTarget('normal')">Open</button>
+        <button type="button" role="menuitem" @click="openMenuTargetInExplorer">Open in Explorer</button>
+        <button type="button" role="menuitem" @click="openMenuTarget('pinned')">Pin</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="copyMenuPath('relative')">Copy Path</button>
+        <button type="button" role="menuitem" @click="copyMenuPath('full')">Copy Full Path</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="cloneTarget">Clone</button>
+        <button type="button" role="menuitem" @click="beginRename">Rename</button>
+        <span role="separator"></span>
         <button type="button" role="menuitem" class="is-danger" @click="deleteTarget">Delete</button>
       </template>
       <template v-if="menu.kind === 'tab'">
@@ -867,13 +1003,17 @@ onUnmounted(() => {
         <button v-if="contextMenuTab !== null" type="button" role="menuitem" @click="toggleMenuTabPinned">
           {{ contextMenuTab.isPinned ? "Unpin" : "Pin" }}
         </button>
-        <span></span>
-        <button type="button" role="menuitem" @click="report(treeView.controller.closeTabs({ tabIds: tabs.filter((entry) => entry.tab.id !== menu?.id).map((entry) => entry.tab.id), preferredActiveId: menu.id }))">Close Others</button>
-        <button type="button" role="menuitem" @click="report(treeView.controller.closeTabs({ tabIds: tabs.slice(0, tabs.findIndex((entry) => entry.tab.id === menu?.id)).map((entry) => entry.tab.id), preferredActiveId: menu.id }))">Close Left</button>
-        <button type="button" role="menuitem" @click="report(treeView.controller.closeTabs({ tabIds: tabs.slice(tabs.findIndex((entry) => entry.tab.id === menu?.id) + 1).map((entry) => entry.tab.id), preferredActiveId: menu.id }))">Close Right</button>
-        <button type="button" role="menuitem" @click="report(treeView.controller.closeTabs({ tabIds: tabs.filter((entry) => entry.tab.id !== menu?.id && !entry.tab.isPinned).map((entry) => entry.tab.id), preferredActiveId: menu.id }))">Close Others Except Pinned</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="openMenuTargetInExplorer">Open in Folder</button>
+        <button type="button" role="menuitem" @click="copyMenuPath('relative')">Copy Path</button>
+        <button type="button" role="menuitem" @click="copyMenuPath('full')">Copy Full Path</button>
+        <span role="separator"></span>
+        <button type="button" role="menuitem" @click="closeMenuTabs('others')">Close Others</button>
+        <button type="button" role="menuitem" @click="closeMenuTabs('left')">Close Left</button>
+        <button type="button" role="menuitem" @click="closeMenuTabs('right')">Close Right</button>
+        <button type="button" role="menuitem" @click="closeMenuTabs('othersExceptPinned')">Close Others Except Pinned</button>
       </template>
-    </div>
+    </ContextMenu>
 
     <div
       v-if="workspaceDialog !== null"
@@ -929,23 +1069,20 @@ onUnmounted(() => {
       :is-submitting="draftDialog?.isSubmitting ?? false"
       :error="draftDialog?.error ?? ''"
       @save="saveDraft"
-      @cancel="draftDialog = null"
+      @cancel="closeDraftDialog"
     />
   </div>
 </template>
 
 <style scoped>
-.tree-view { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; color: var(--color-text); background: var(--color-default-bg); font-size: 13px; line-height: 1.4; user-select: none; }
+.tree-view { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; color: var(--color-text); background: transparent; font-size: 13px; line-height: 1.4; user-select: none; }
 .tree-view :is(input, textarea) { user-select: text; }
-.tree-view__sidebar { min-width: 200px; max-width: 480px; flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--color-default-bg); }
+.tree-view__layout { flex: 1; overflow: hidden; }
+.tree-view__sidebar { min-width: 200px; max-width: 480px; flex: none; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--color-default-bg); border: 1px solid var(--color-border); border-radius: 0; }
 .tree-view__sidebar.is-tree-only { max-width: none; flex: 1; }
-.tree-view__resize { position: relative; z-index: 2; width: 0; flex: none; cursor: col-resize; touch-action: none; }
-.tree-view__resize::after { position: absolute; inset-block: 0; left: 50%; width: 7px; content: ""; transform: translateX(-50%); }
-.tree-view__resize::before { position: absolute; inset-block: 0; left: 0; width: 1px; content: ""; background: var(--color-divider); }
-.tree-view__resize:hover::before { background: var(--color-primary); }
 .tree-view__sidebar-header { height: var(--tree-row-height); min-height: var(--tree-row-height); display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-3); border-bottom: 1px solid var(--color-divider); }
 .tree-view__sidebar-header.is-multiline { height: calc(var(--tree-row-height) + 2 * var(--space-1)); min-height: calc(var(--tree-row-height) + 2 * var(--space-1)); padding-block: var(--space-1); }
-.tree-view__sidebar-header button { width: 28px; height: var(--tree-row-height); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.tree-view__sidebar-header button { width: 28px; height: var(--tree-row-height); border: 1px solid transparent; border-radius: var(--radius-medium); color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .tree-view__sidebar-header button:hover, .tree-view__expand:hover { color: var(--color-text); background: var(--color-surface-raised); }
 .tree-view__sidebar-header .tree-view__create-workspace { color: var(--color-text-muted); background: transparent; font-size: 16px; line-height: 1; }
 .tree-view__sidebar-header .tree-view__collapse { width: 24px; height: var(--tree-row-height); display: grid; place-items: center; flex: 0 0 24px; padding: 0; border: 0; }
@@ -953,7 +1090,8 @@ onUnmounted(() => {
 .workspace-selector { position: relative; min-width: 0; flex: 1; }
 .tree-view__explorer { flex: 1; min-height: 0; overflow: auto; padding: var(--space-1); scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--color-text-muted) 30%, transparent) transparent; }
 .tree-view__root { margin: 0; padding: 0; list-style: none; }
-.tree-view__workspace { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.tree-view__workspace { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: transparent; }
+.tree-view__tab-header { flex: none; overflow: hidden; border: 1px solid var(--color-border); border-block-end: 0; border-radius: 0; }
 .tree-view__tabs { min-height: var(--tree-row-height); height: var(--tree-row-height); display: flex; align-items: end; background: var(--color-default-bg); }
 .tree-view__tabs.is-multiline { height: auto; max-height: 104px; align-items: flex-start; padding-block: var(--space-1); }
 .tree-view__expand { width: 24px; height: 32px; display: grid; place-items: center; align-self: center; flex: 0 0 24px; padding: 0; margin-inline-end: var(--space-2); border: 0; border-radius: 0; color: var(--color-text-muted); background: transparent; cursor: pointer; }
@@ -962,25 +1100,27 @@ onUnmounted(() => {
 .tree-view__breadcrumb-segments::-webkit-scrollbar { display: none; }
 .tree-view__breadcrumb-segment { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .tree-view__breadcrumb-separator { width: 5px; height: 5px; flex: none; border-top: 1px solid currentColor; border-right: 1px solid currentColor; color: var(--color-text-muted); transform: rotate(45deg); }
-.tree-view__breadcrumb button { flex: none; height: 24px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text); background: var(--color-surface-raised); cursor: pointer; }
-.tree-view__content { flex: 1; min-height: 0; display: flex; overflow: auto; background: var(--color-content-bg); }
-.tree-view__empty { flex: 1; display: grid; min-width: 0; height: 100%; place-items: center; margin: 0; color: var(--color-text-muted); font-size: 13px; }
-.tree-view-menu { position: fixed; z-index: 200; width: min(190px, calc(100vw - 16px)); display: flex; flex-direction: column; padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-raised); box-shadow: 0 12px 32px rgb(0 0 0 / 32%); }
-.tree-view-menu button { min-height: 32px; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-sm); color: var(--color-text); background: transparent; font-size: 13px; text-align: left; cursor: pointer; }
-.tree-view-menu button:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.tree-view-menu button.is-danger { color: var(--color-danger); }
-.tree-view-menu span { height: 1px; margin: var(--space-1); background: var(--color-border); }
-.tree-view-dialog-backdrop { position: fixed; z-index: 220; inset: 0; display: grid; place-items: center; padding: var(--space-4); background: rgb(0 0 0 / 58%); }
-.tree-view-dialog { width: min(500px, calc(100vw - 32px)); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: var(--color-surface-raised); box-shadow: 0 20px 56px rgb(0 0 0 / 42%); }
+.tree-view__breadcrumb button { flex: none; height: 24px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-small); color: var(--color-text); background: var(--color-surface-raised); cursor: pointer; }
+.tree-view__content { flex: 1; min-height: 0; display: flex; overflow: auto; background: transparent; }
+.tree-view__empty { flex: 1; display: grid; min-width: 0; height: 100%; place-items: center; margin: 0; color: var(--color-text-muted); border-inline: 1px solid var(--color-border); border-block-end: 1px solid var(--color-border); font-size: 13px; }
+.tree-view__empty-content { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; }
+.tree-view__empty-content h2 { margin: 0; color: var(--color-text); font-size: 16px; font-weight: 500; }
+.tree-view__empty-content p { margin: 0 0 var(--space-2); }
+.tree-view__empty-action { min-width: 128px; height: 36px; padding-inline: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: transparent; cursor: pointer; }
+.tree-view__empty-action:hover { border-color: color-mix(in srgb, var(--color-text-muted) 60%, var(--color-border)); background: var(--color-surface-raised); }
+.tree-view__empty-action:active { transform: translateY(1px); }
+.tree-view-dialog-backdrop { position: fixed; z-index: 220; inset: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--color-backdrop-strong); }
+.tree-view-dialog { width: min(500px, calc(100vw - 32px)); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: var(--color-surface-raised); box-shadow: var(--shadow-dialog); }
 .tree-view-dialog__header, .tree-view-dialog__actions { min-height: 48px; display: flex; align-items: center; padding-inline: var(--space-4); }
 .tree-view-dialog__header { justify-content: space-between; border-bottom: 1px solid var(--color-border); }
 .tree-view-dialog__header h2 { margin: 0; font-size: 16px; }
 .tree-view-dialog__header button { width: 28px; height: 28px; padding: 0; border: 0; color: var(--color-text-muted); background: transparent; font-size: 20px; cursor: pointer; }
 .tree-view-dialog__body { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); color: var(--color-text-muted); font-size: 13px; }
-.tree-view-dialog__body input { height: 36px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: var(--color-bg); }
+.tree-view-dialog__body input { height: 36px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: var(--color-bg); }
+.tree-view-dialog__body input:focus-visible { border-color: var(--color-primary); outline: 0; box-shadow: inset 0 0 0 1px var(--color-primary); }
 .tree-view-dialog__error { color: var(--color-danger); }
 .tree-view-dialog__actions { justify-content: flex-end; gap: var(--space-2); border-top: 1px solid var(--color-border); }
-.tree-view-dialog__actions button { min-width: 72px; height: 32px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); background: transparent; cursor: pointer; }
+.tree-view-dialog__actions button { min-width: 72px; height: 32px; padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-medium); color: var(--color-text); background: transparent; cursor: pointer; }
 .tree-view-dialog__actions button.is-primary { border-color: var(--color-primary); color: var(--color-bg); background: var(--color-primary); font-weight: 600; }
 .tree-view-dialog button:disabled { opacity: 0.5; cursor: not-allowed; }
 button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }

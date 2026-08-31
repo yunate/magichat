@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +7,6 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const outputRoot = path.join(projectRoot, "dist-electron");
 
 await rm(outputRoot, { recursive: true, force: true });
-await mkdir(outputRoot, { recursive: true });
 
 const sharedOptions = {
   bundle: true,
@@ -30,5 +29,10 @@ await Promise.all([
     ...sharedOptions,
     entryPoints: [path.join(projectRoot, "main", "src", "preload", "index.ts")],
     outfile: path.join(outputRoot, "preload", "index.js"),
+  }),
+  build({
+    ...sharedOptions,
+    entryPoints: [path.join(projectRoot, "main", "src", "uacBroker", "index.ts")],
+    outfile: path.join(outputRoot, "uac-broker", "index.js"),
   }),
 ]);

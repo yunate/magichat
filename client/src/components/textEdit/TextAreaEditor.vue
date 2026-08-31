@@ -1,236 +1,361 @@
 <script setup lang="ts">
-import { watch } from "vue";
-import MacroTextInput from "./MacroTextInput.vue";
-import { TextAreaHistory, type TextAreaSnapshot } from "./textAreaHistory";
-import { runTextAreaLineCommand, type TextAreaLineCommand } from "./textAreaLineCommands";
-import type { MacroDisplayDetail } from "./textEditTypes";
+import { MacroParser } from "../../../../common/macroParser";
+import type { ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
+import { onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from "vue";
+import { registerThemeChangeHandler } from "../../windows/main/themes/theme";
+import MacroPopup from "./MacroPopup.vue";
+import {
+  applyMonacoTheme,
+  getMonacoLanguage,
+  monaco,
+} from "./monacoRuntime";
+import type { MacroAnalysis, MacroDisplayDetail } from "./textEditTypes";
 
 type Props = {
   value: string;
   identity: string;
-  macroDetails: ReadonlyMap<string, MacroDisplayDetail>;
+  macroAnalysis: MacroAnalysis | null;
+  ensureMacroAnalysis: () => MacroAnalysis;
+  scriptType?: ScriptType;
   tabSize?: number;
   readonly?: boolean;
 };
-
 const props = withDefaults(defineProps<Props>(), { tabSize: 2, readonly: false });
 const emit = defineEmits<{
   update: [value: string];
 }>();
 
-const LINE_CLIPBOARD_TYPE = "application/x-magichat-text-line";
-const history = new TextAreaHistory();
-let beforeInput: TextAreaSnapshot | null = null;
-let beforeComposition: TextAreaSnapshot | null = null;
-let isComposing = false;
-let emittedValue: string | null = null;
+const editorContainer = useTemplateRef<HTMLDivElement>("editorContainer");
+const hoveredMacroDetail = shallowRef<MacroDisplayDetail | null>(null);
+const hoveredMacroAnchor = shallowRef<DOMRect | null>(null);
+const isMacroHovered = shallowRef(false);
+let editor: monaco.editor.IStandaloneCodeEditor | null = null;
+let model: monaco.editor.ITextModel | null = null;
+let resizeObserver: ResizeObserver | null = null;
+let unregisterThemeChangeHandler: (() => void) | null = null;
+let macroDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+let macroCompletionDisposable: monaco.IDisposable | null = null;
+let isApplyingExternalValue = false;
+let hoveredMacroStart: number | null = null;
 
-watch(() => props.identity, resetHistory);
-watch(() => props.value, (value) => {
-  if (emittedValue === value) {
-    emittedValue = null;
-    return;
-  }
-  emittedValue = null;
-  resetHistory();
+watch(() => props.value, updateExternalValue);
+watch(() => props.identity, replaceModel);
+watch(() => props.scriptType, updateLanguage);
+watch(() => props.readonly, updateEditorOptions);
+watch(() => props.tabSize, updateModelOptions);
+watch(() => props.macroAnalysis, updateMacroDecorations);
+
+onMounted(() => {
+  const container = editorContainer.value;
+  if (container === null) throw new Error("Monaco editor container is unavailable.");
+
+  applyMonacoTheme();
+  model = createModel();
+  editor = monaco.editor.create(container, {
+    model,
+    automaticLayout: false,
+    readOnly: props.readonly,
+    ariaLabel: "Script content",
+    contextmenu: true,
+    fixedOverflowWidgets: true,
+    folding: true,
+    foldingStrategy: "auto",
+    fontFamily: 'Consolas, "Courier New", monospace',
+    fontSize: 14,
+    glyphMargin: false,
+    insertSpaces: true,
+    lineDecorationsWidth: 10,
+    lineHeight: 20,
+    lineNumbers: "on",
+    lineNumbersMinChars: 3,
+    minimap: { enabled: false },
+    overviewRulerLanes: 0,
+    hover: { enabled: "on" },
+    renderLineHighlight: "all",
+    renderWhitespace: "all",
+    roundedSelection: false,
+    scrollBeyondLastLine: true,
+    scrollbar: {
+      horizontalScrollbarSize: 8,
+      useShadows: false,
+      verticalScrollbarSize: 8,
+    },
+    showFoldingControls: "mouseover",
+    tabSize: props.tabSize,
+    wordWrap: "off",
+  });
+  macroCompletionDisposable = registerMacroCompletionProvider(model);
+  editor.onDidChangeModelContent(() => {
+    closeMacroPopup();
+    if (!isApplyingExternalValue && model !== null) emit("update", model.getValue());
+  });
+  macroDecorations = editor.createDecorationsCollection();
+  editor.onMouseMove(onEditorMouseMove);
+  editor.onMouseLeave(leaveMacro);
+  editor.onDidScrollChange(closeMacroPopup);
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () => {
+    const selection = editor?.getSelection();
+    if (selection === null || selection === undefined) return;
+    const command = selection.isEmpty()
+      ? "editor.action.copyLinesDownAction"
+      : "editor.action.addSelectionToNextFindMatch";
+    editor?.trigger("keyboard", command, null);
+  });
+  container.addEventListener("mouseover", suppressFindButtonTooltips, true);
+  resizeObserver = new ResizeObserver(() => editor?.layout());
+  resizeObserver.observe(container);
+  unregisterThemeChangeHandler = registerThemeChangeHandler(applyMonacoTheme);
 });
 
-function onBeforeInput(event: InputEvent): void {
-  if (props.readonly) return;
-  if (isComposing || event.isComposing || !(event.target instanceof HTMLTextAreaElement)) return;
-  beforeInput = createSnapshot(event.target);
+onUnmounted(() => {
+  editorContainer.value?.removeEventListener("mouseover", suppressFindButtonTooltips, true);
+  unregisterThemeChangeHandler?.();
+  resizeObserver?.disconnect();
+  macroDecorations?.clear();
+  macroCompletionDisposable?.dispose();
+  editor?.dispose();
+  model?.dispose();
+  unregisterThemeChangeHandler = null;
+  resizeObserver = null;
+  macroDecorations = null;
+  macroCompletionDisposable = null;
+  editor = null;
+  model = null;
+});
+
+function createModel(): monaco.editor.ITextModel {
+  const nextModel = monaco.editor.createModel(props.value, getMonacoLanguage(props.scriptType));
+  nextModel.updateOptions({ insertSpaces: true, tabSize: props.tabSize });
+  return nextModel;
 }
 
-function onInput(event: Event): void {
-  if (props.readonly) return;
-  if (!(event.target instanceof HTMLTextAreaElement)) return;
-  if (!isComposing && beforeInput !== null) {
-    history.record(beforeInput, createSnapshot(event.target));
-    beforeInput = null;
+function replaceModel(): void {
+  if (editor === null) return;
+  const previousModel = model;
+  macroCompletionDisposable?.dispose();
+  model = createModel();
+  editor.setModel(model);
+  macroCompletionDisposable = registerMacroCompletionProvider(model);
+  previousModel?.dispose();
+  updateMacroDecorations();
+}
+
+function updateExternalValue(value: string): void {
+  if (model === null || model.getValue() === value) return;
+  isApplyingExternalValue = true;
+  try {
+    model.setValue(value);
+  } finally {
+    isApplyingExternalValue = false;
   }
-  emitValue(event.target.value);
 }
 
-function onCompositionStart(event: CompositionEvent): void {
-  if (props.readonly) return;
-  isComposing = true;
-  beforeInput = null;
-  beforeComposition = event.target instanceof HTMLTextAreaElement
-    ? createSnapshot(event.target)
-    : null;
+function updateLanguage(): void {
+  if (model !== null) monaco.editor.setModelLanguage(model, getMonacoLanguage(props.scriptType));
 }
 
-function onCompositionEnd(event: CompositionEvent): void {
-  if (props.readonly) return;
-  isComposing = false;
-  if (!(event.target instanceof HTMLTextAreaElement)) return;
-  if (beforeComposition !== null) history.record(beforeComposition, createSnapshot(event.target));
-  beforeComposition = null;
-  emitValue(event.target.value);
+function updateEditorOptions(): void {
+  editor?.updateOptions({ readOnly: props.readonly });
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (props.readonly) return;
-  if (!(event.target instanceof HTMLTextAreaElement) || isComposing || event.isComposing) return;
-  const control = event.target;
-  if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-    const key = event.key.toLowerCase();
-    if (key === "z" || key === "y") {
-      const isRedo = key === "y" || key === "z" && event.shiftKey;
-      event.preventDefault();
-      const snapshot = isRedo ? history.redo() : history.undo();
-      if (snapshot !== null) applySnapshot(control, snapshot);
-      return;
-    }
-    if (key === "d" && control.selectionStart === control.selectionEnd) {
-      event.preventDefault();
-      applyLineCommand(control, "duplicate");
-      return;
-    }
+function updateModelOptions(): void {
+  model?.updateOptions({ insertSpaces: true, tabSize: props.tabSize });
+}
+
+function registerMacroCompletionProvider(
+  completionModel: monaco.editor.ITextModel,
+): monaco.IDisposable {
+  return monaco.languages.registerCompletionItemProvider("*", {
+    triggerCharacters: ["{"],
+    provideCompletionItems(currentModel, position) {
+      if (currentModel !== completionModel || props.readonly) return { suggestions: [] };
+      const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1);
+      const match = /mh\{\s*([A-Za-z0-9_.-]*)$/u.exec(linePrefix);
+      const partialKey = match?.[1];
+      if (partialKey === undefined) return { suggestions: [] };
+      const startColumn = position.column - partialKey.length;
+      const hasClosingBrace = currentModel.getLineContent(position.lineNumber)[position.column - 1] === "}";
+      const range = new monaco.Range(
+        position.lineNumber,
+        startColumn,
+        position.lineNumber,
+        position.column,
+      );
+      const details = [...props.ensureMacroAnalysis().details.values()]
+        .sort((left, right) => left.key.localeCompare(right.key));
+      return {
+        suggestions: details.map((detail) => ({
+          label: detail.key,
+          kind: monaco.languages.CompletionItemKind.Variable,
+          detail: `${detail.sourceType}: ${detail.sourcePath}`,
+          documentation: detail.successful ? detail.value : detail.error ?? "Macro resolution failed",
+          insertText: hasClosingBrace ? detail.key : `${detail.key}}`,
+          range,
+        })),
+      };
+    },
+  });
+}
+
+function suppressFindButtonTooltips(event: MouseEvent): void {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest(".find-widget .button, .find-widget .monaco-custom-toggle") !== null) {
+    event.stopImmediatePropagation();
   }
-  if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return;
-  event.preventDefault();
-  const before = createSnapshot(control);
-  const spaces = " ".repeat(Math.max(0, Math.floor(props.tabSize)));
-  control.setRangeText(spaces, control.selectionStart, control.selectionEnd, "end");
-  const after = createSnapshot(control);
-  history.record(before, after);
-  emitValue(control.value);
 }
 
-function onCopy(event: ClipboardEvent): void {
-  const control = event.target;
-  if (!isWholeLineCommandAvailable(control)) return;
-  const result = runTextAreaLineCommand(
-    control.value,
-    control.selectionStart,
-    control.selectionEnd,
-    "copy",
+function updateMacroDecorations(): void {
+  const currentModel = model;
+  const analysis = props.macroAnalysis;
+  if (currentModel === null || macroDecorations === null || analysis === null) {
+    macroDecorations?.clear();
+    return;
+  }
+  macroDecorations.set(analysis.references.map((reference) => ({
+    range: monaco.Range.fromPositions(
+      currentModel.getPositionAt(reference.start),
+      currentModel.getPositionAt(reference.end),
+    ),
+    options: {
+      inlineClassName: analysis.details.get(reference.key)?.successful === true
+        ? "text-area-editor__macro"
+        : "text-area-editor__macro-warning",
+    },
+  })));
+}
+
+function onEditorMouseMove(event: monaco.editor.IEditorMouseEvent): void {
+  const currentModel = model;
+  const position = event.target.position;
+  if (currentModel === null || position === null) {
+    leaveMacro();
+    return;
+  }
+  const analysis = props.ensureMacroAnalysis();
+  const offset = currentModel.getOffsetAt(position);
+  const reference = analysis.references.find((candidate) => (
+    candidate.start <= offset && offset < candidate.end
+  ));
+  if (reference === undefined) {
+    leaveMacro();
+    return;
+  }
+  isMacroHovered.value = true;
+  if (hoveredMacroStart === reference.start) return;
+  hoveredMacroStart = reference.start;
+  hoveredMacroDetail.value = createMacroDetail(analysis, reference);
+  hoveredMacroAnchor.value = createMacroAnchor(currentModel, reference, event);
+}
+
+function createMacroAnchor(
+  currentModel: monaco.editor.ITextModel,
+  reference: MacroAnalysis["references"][number],
+  event: monaco.editor.IEditorMouseEvent,
+): DOMRect {
+  const containerBounds = editorContainer.value?.getBoundingClientRect();
+  const visiblePosition = editor?.getScrolledVisiblePosition(
+    currentModel.getPositionAt(reference.start),
   );
-  if (result === null || event.clipboardData === null) return;
-  event.preventDefault();
-  event.clipboardData.setData("text/plain", result.clipboardText ?? "");
-  event.clipboardData.setData(LINE_CLIPBOARD_TYPE, "1");
+  if (containerBounds !== undefined && visiblePosition !== null && visiblePosition !== undefined) {
+    return new DOMRect(
+      containerBounds.left + visiblePosition.left,
+      containerBounds.top + visiblePosition.top,
+      1,
+      visiblePosition.height,
+    );
+  }
+  return new DOMRect(event.event.browserEvent.clientX, event.event.browserEvent.clientY, 1, 1);
 }
 
-function onCut(event: ClipboardEvent): void {
-  if (props.readonly) return;
-  const control = event.target;
-  if (!isWholeLineCommandAvailable(control)) return;
-  const result = runTextAreaLineCommand(
-    control.value,
-    control.selectionStart,
-    control.selectionEnd,
-    "cut",
-  );
-  if (result === null || event.clipboardData === null) return;
-  event.preventDefault();
-  event.clipboardData.setData("text/plain", result.clipboardText ?? "");
-  event.clipboardData.setData(LINE_CLIPBOARD_TYPE, "1");
-  applyLineResult(control, result);
-}
-
-function onPaste(event: ClipboardEvent): void {
-  if (props.readonly) return;
-  const control = event.target;
-  if (!isWholeLineCommandAvailable(control) || event.clipboardData === null) return;
-  if (!Array.from(event.clipboardData.types).some((type) => type.toLowerCase() === LINE_CLIPBOARD_TYPE)) return;
-  const result = runTextAreaLineCommand(
-    control.value,
-    control.selectionStart,
-    control.selectionEnd,
-    "paste",
-    event.clipboardData.getData("text/plain"),
-  );
-  if (result === null) return;
-  event.preventDefault();
-  applyLineResult(control, result);
-}
-
-function applyLineCommand(control: HTMLTextAreaElement, command: TextAreaLineCommand): void {
-  const result = runTextAreaLineCommand(
-    control.value,
-    control.selectionStart,
-    control.selectionEnd,
-    command,
-  );
-  if (result !== null) applyLineResult(control, result);
-}
-
-function applyLineResult(
-  control: HTMLTextAreaElement,
-  result: Readonly<{ value: string; selectionStart: number; selectionEnd: number }>,
-): void {
-  const before = createSnapshot(control);
-  const after: TextAreaSnapshot = {
-    value: result.value,
-    selectionStart: result.selectionStart,
-    selectionEnd: result.selectionEnd,
-  };
-  history.record(before, after);
-  applySnapshot(control, after);
-}
-
-function applySnapshot(control: HTMLTextAreaElement, snapshot: TextAreaSnapshot): void {
-  control.value = snapshot.value;
-  control.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
-  emitValue(snapshot.value);
-}
-
-function createSnapshot(control: HTMLTextAreaElement): TextAreaSnapshot {
-  return {
-    value: control.value,
-    selectionStart: control.selectionStart,
-    selectionEnd: control.selectionEnd,
+function createMacroDetail(
+  analysis: MacroAnalysis,
+  reference: MacroAnalysis["references"][number],
+): MacroDisplayDetail {
+  const detail = analysis.details.get(reference.key);
+  return detail ?? {
+    key: reference.key,
+    sourceType: "Unresolved",
+    sourcePath: "No matching parameter",
+    value: MacroParser.formatReference(reference.key),
+    successful: false,
+    error: `Unknown macro "${reference.key}"`,
   };
 }
 
-function isWholeLineCommandAvailable(target: EventTarget | null): target is HTMLTextAreaElement {
-  return !isComposing
-    && target instanceof HTMLTextAreaElement
-    && target.selectionStart === target.selectionEnd;
+function leaveMacro(): void {
+  isMacroHovered.value = false;
 }
 
-function emitValue(value: string): void {
-  emittedValue = value;
-  emit("update", value);
-}
-
-function resetHistory(): void {
-  history.reset();
-  beforeInput = null;
-  beforeComposition = null;
-  isComposing = false;
+function closeMacroPopup(): void {
+  isMacroHovered.value = false;
+  hoveredMacroStart = null;
+  hoveredMacroDetail.value = null;
+  hoveredMacroAnchor.value = null;
 }
 </script>
 
 <template>
-  <MacroTextInput
-    :id="`text-area-${identity}`"
-    class="text-area-editor"
-    :value="value"
-    :macro-details="macroDetails"
-    multiline
-    line-numbers
-    show-whitespace
-    :readonly="readonly"
-    accessible-label="Script content"
-    @beforeinput="onBeforeInput"
-    @input="onInput"
-    @compositionstart="onCompositionStart"
-    @compositionend="onCompositionEnd"
-    @keydown="onKeydown"
-    @copy="onCopy"
-    @cut="onCut"
-    @paste="onPaste"
-  />
+  <section class="text-area-editor">
+    <div ref="editorContainer" class="text-area-editor__monaco"></div>
+    <Teleport to="body">
+      <MacroPopup
+        v-if="hoveredMacroDetail !== null && hoveredMacroAnchor !== null"
+        :detail="hoveredMacroDetail"
+        :anchor="hoveredMacroAnchor"
+        :is-anchor-hovered="isMacroHovered"
+        @close="closeMacroPopup"
+      />
+    </Teleport>
+  </section>
 </template>
 
 <style scoped>
 .text-area-editor {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
   width: 100%;
-  min-height: 120px;
-  flex: 1;
-  background: var(--color-content-bg);
+  height: 100%;
+  display: flex;
+  flex: 1 1 0;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+.text-area-editor:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 48%, transparent);
+}
+
+.text-area-editor__monaco {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.text-area-editor__monaco :deep(.monaco-scrollable-element > .scrollbar > .slider) {
+  background-clip: padding-box !important;
+  border: 2px solid transparent;
+  border-radius: var(--radius-large);
+}
+
+.text-area-editor__monaco :deep(.find-widget > .button.codicon-widget-close) {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+:global(.text-area-editor__macro) {
+  color: var(--color-code-variable) !important;
+  font-weight: 600;
+}
+
+:global(.text-area-editor__macro-warning) {
+  color: var(--color-warning) !important;
+  text-decoration: wavy underline var(--color-warning);
+  text-underline-offset: 2px;
 }
 </style>

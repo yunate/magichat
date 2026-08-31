@@ -11,16 +11,16 @@ interface ConversionResult {
   text: string;
 }
 
-const DEFAULT_TEXT = "你好，世界！Hello 👋";
+const DEFAULT_TEXT = "Hello, world! 👋";
 
 const mode = ref<Mode>("encode");
 const input = ref(DEFAULT_TEXT);
 const copied = ref(false);
 
-const inputLabel = computed(() => (mode.value === "encode" ? "原文" : "Base64"));
-const outputLabel = computed(() => (mode.value === "encode" ? "Base64" : "原文"));
+const inputLabel = computed(() => (mode.value === "encode" ? "Plain text" : "Base64"));
+const outputLabel = computed(() => (mode.value === "encode" ? "Base64" : "Plain text"));
 const inputPlaceholder = computed(() =>
-  mode.value === "encode" ? "在此输入要编码的文本…" : "在此粘贴 Base64…",
+  mode.value === "encode" ? "Enter text to encode..." : "Paste Base64 here...",
 );
 
 const result = computed<ConversionResult>(() => {
@@ -30,7 +30,7 @@ const result = computed<ConversionResult>(() => {
     const text = mode.value === "encode" ? encodeBase64(source) : decodeBase64(source);
     return { ok: true, text };
   } catch {
-    return { ok: false, text: "无效的 Base64 输入" };
+    return { ok: false, text: "Invalid Base64 input" };
   }
 });
 
@@ -54,15 +54,15 @@ async function copyResult(): Promise<void> {
 <template>
   <ToolSplitLayout
     title="Base64"
-    hint="左侧输入，右侧实时转换；中文、emoji 均按 UTF-8 正确往返。"
+    hint="Enter content on the left for live conversion on the right. Unicode text and emoji use UTF-8."
     :left-label="inputLabel"
     :right-label="outputLabel"
   >
     <template #toolbar>
       <button type="button" class="base64-tool__mode" @click="toggleMode">
-        {{ mode === "encode" ? "编码 → 解码" : "解码 → 编码" }}
+        {{ mode === "encode" ? "Encode → Decode" : "Decode → Encode" }}
       </button>
-      <span class="base64-tool__mode-label">当前：{{ mode === "encode" ? "编码" : "解码" }}</span>
+      <span class="base64-tool__mode-label">Mode: {{ mode === "encode" ? "Encode" : "Decode" }}</span>
     </template>
     <template #left>
       <textarea
@@ -81,7 +81,7 @@ async function copyResult(): Promise<void> {
         :disabled="!result.ok || result.text === ''"
         @click="copyResult"
       >
-        {{ copied ? "已复制" : "复制" }}
+        {{ copied ? "Copied" : "Copy" }}
       </button>
     </template>
     <template #right>
@@ -102,7 +102,7 @@ async function copyResult(): Promise<void> {
 .base64-tool__mode {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-large);
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 13px;
@@ -122,7 +122,7 @@ async function copyResult(): Promise<void> {
 .base64-tool__copy {
   padding: 2px var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -149,7 +149,7 @@ async function copyResult(): Promise<void> {
   padding: var(--space-4);
   background: transparent;
   color: var(--color-text);
-  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-family: var(--font-family);
   font-size: 14px;
   line-height: 1.6;
   overflow: auto;
@@ -163,6 +163,6 @@ async function copyResult(): Promise<void> {
 }
 
 .base64-tool__input--error {
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
 }
 </style>

@@ -1,0 +1,16 @@
+{
+  "isDraft": false,
+  "id": "10000000-0000-4000-8000-000000000011",
+  "data": {
+    "scriptType": "powershell",
+    "content": "mhsetenv \"ps1-mhsetenv\" \"ps1-mhsetenv\"\nWrite-Output \"ps1-mhsetenv.\"",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

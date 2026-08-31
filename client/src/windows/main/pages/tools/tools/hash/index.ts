@@ -3,7 +3,8 @@ import HashTool from "./HashTool.vue";
 
 export const hashTool: ToolDefinition = {
   id: "hash",
-  title: "哈希",
+  title: "Hash",
   component: HashTool,
+  category: "developer",
   order: 7,
 };

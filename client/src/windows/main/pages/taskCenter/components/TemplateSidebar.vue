@@ -101,7 +101,7 @@ function onToggle(): void {
   min-height: 0;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface);
   overflow-y: auto;
   scrollbar-width: thin;
@@ -137,7 +137,7 @@ function onToggle(): void {
   flex: none;
   padding: var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -200,7 +200,7 @@ function onToggle(): void {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   color: var(--color-text);
   text-align: left;
@@ -227,7 +227,7 @@ function onToggle(): void {
   justify-content: center;
   padding: var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;

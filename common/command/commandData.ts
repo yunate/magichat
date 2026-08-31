@@ -27,6 +27,31 @@ export type CommandItemData = Readonly<{
   paramGroups: readonly CommandParamGroup[];
 }>;
 
+export type CommandWorkspaceData = Readonly<{
+  selectedEnvGroupId: string;
+  envGroups: readonly CommandParamGroup[];
+}>;
+
+export class CommandWorkspaceDataSerializer extends ISerializer<CommandWorkspaceData> {
+  public getDefault(): CommandWorkspaceData {
+    return structuredClone(CommandWorkspaceDataSerializer._DEFAULT);
+  }
+
+  public validate(value: unknown): asserts value is CommandWorkspaceData {
+    ensureExactRecord(
+      value,
+      Object.keys(CommandWorkspaceDataSerializer._DEFAULT),
+      "Command workspace data",
+    );
+    validateCommandParamGroups(value.envGroups, value.selectedEnvGroupId);
+  }
+
+  private static readonly _DEFAULT: CommandWorkspaceData = {
+    selectedEnvGroupId: "default",
+    envGroups: [{ id: "default", name: "default", params: [] }],
+  };
+}
+
 export class CommandFolderDataSerializer extends ISerializer<CommandFolderData> {
   public getDefault(): CommandFolderData {
     return structuredClone(CommandFolderDataSerializer._DEFAULT);
@@ -82,7 +107,7 @@ class CommandParamGroupSerializer extends ISerializer<CommandParamGroup> {
   private static readonly _DEFAULT: CommandParamGroup = { id: "group", name: "Group", params: [] };
 }
 
-class CommandParamSerializer extends ISerializer<CommandParam> {
+export class CommandParamSerializer extends ISerializer<CommandParam> {
   public getDefault(): CommandParam {
     return structuredClone(CommandParamSerializer._DEFAULT);
   }
@@ -101,7 +126,6 @@ class CommandParamSerializer extends ISerializer<CommandParam> {
   private static readonly _DEFAULT: CommandParam = { key: "key", value: "", enabled: true };
 }
 
-const COMMAND_PARAM_SERIALIZER: ISerializer<CommandParam> = new CommandParamSerializer();
 const COMMAND_PARAM_GROUP_SERIALIZER: ISerializer<CommandParamGroup> =
   new CommandParamGroupSerializer();
 
@@ -125,7 +149,7 @@ function validateCommandParams(value: unknown): asserts value is CommandParam[] 
   ValidateUtils.ensureArray(value, "Command params must be an array");
   const keys = new Set<string>();
   for (const param of value) {
-    COMMAND_PARAM_SERIALIZER.validate(param);
+    commandParamSerializer.validate(param);
     if (keys.has(param.key)) throw new Error("Command param keys must be unique");
     keys.add(param.key);
   }
@@ -161,3 +185,7 @@ export const commandFolderDataSerializer: ISerializer<CommandFolderData> =
   new CommandFolderDataSerializer();
 export const commandItemDataSerializer: ISerializer<CommandItemData> =
   new CommandItemDataSerializer();
+export const commandParamSerializer: ISerializer<CommandParam> =
+  new CommandParamSerializer();
+export const commandWorkspaceDataSerializer: ISerializer<CommandWorkspaceData> =
+  new CommandWorkspaceDataSerializer();

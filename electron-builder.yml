@@ -16,6 +16,7 @@ files:
   - "!dist-electron/uac-broker/**"
   - node_modules/node-pty/**
   - package.json
+  - VERSION
   - THIRD_PARTY_NOTICES.md
 extraResources:
   - from: dist-electron/uac-broker/index.js
@@ -55,6 +56,7 @@ win:
   artifactName: "MagicHat Setup ${version}.${ext}"
 nsis:
   oneClick: false
+  differentialPackage: false
   allowToChangeInstallationDirectory: true
   installerIcon: build/installerIcon.ico
   include: build/installer.nsh

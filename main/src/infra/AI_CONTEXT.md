@@ -4,15 +4,18 @@ Local filesystem, configuration, JSON, and log primitives. This module contains 
 
 ## Components
 
-- `applicationPaths.ts` derives immutable application-wide roots and renderer, preload, native-tool, and external UAC Broker bundle paths. Native executable paths target `native-tools/cli-helper/` and `native-tools/js-launcher/`; the broker targets `dist-electron/uac-broker/index.js` during development and `resources/uac-broker/index.js` when packaged.
+- `applicationPaths.ts` derives immutable application-wide roots and renderer, preload, native-tool, external UAC Broker bundle, and log paths. `appPath` is Electron's source path, which is the repository during development and `resources/app.asar` when packaged; `appRoot` is `%LOCALAPPDATA%\MagicHat`. Logs use `appPath/log` during development and `appRoot/log` when packaged.
 - `configManager.ts` directly implements `ConfigServerRpcApi`, derives and creates its config directory, maps Command, Task Center, and global config keys to filenames, and keeps shared serializers authoritative for domain conversion.
 - `jsonFile.ts` provides guarded JSON reads and atomic writes.
 - `strictJsonFile.ts` provides throwing JSON reads and unique temporary-file atomic writes for authoritative TreeView persistence.
 - `logFile.ts` provides failure-tolerant task log append and read operations.
+- `logger.ts` owns the process-wide `gLogger`, mirrors `console` output, serializes file writes, and creates one `mh-YYYY-MM-DD-HH-mm-ss.log` file per process start. It removes matching log files older than seven days in the background. Error objects are normalized to their name and message before file output, without the stack. `ScopeLogger` implements `Disposable` for paired start/end logging through `using`.
+- `utils/pathUtil.ts` checks physical files and directories through Electron's unpatched `node:original-fs`, so paths containing an `app.asar` filename are not interpreted as virtual archive paths.
 
 ## Boundaries
 
 - Business domains derive their own paths from `ApplicationPaths.dataDir`; global paths do not create business directories or write inside packaged `app.asar` resources.
+- Application file logging is best effort. File setup or append failure disables file output for the process, reports through the original stderr, and leaves console output active without retrying or choosing another directory.
 - JSON read from disk remains untrusted until the owning serializer or service validates it.
 - Config RPC strings are validated through `common/config/configType.ts` before filename lookup or I/O. Unknown and inherited keys are rejected.
 - Missing config files use fresh defaults. Invalid config files are logged and fall back to defaults.

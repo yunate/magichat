@@ -4,22 +4,39 @@
                      {
                          "name":  "cli-helper",
                          "inputPaths":  [
-                                            "cli-helper/src"
+                                            "cli-helper/src",
+                                            "common/include/windowsError.h",
+                                            "common/include/windowsHandle.h"
                                         ],
                          "buildScript":  "cli-helper/src/build-native.bat",
                          "targetExecutable":  "cli-helper/bin/magichat-cli.exe",
-                         "sourceHash":  "739a9b40981f80896616a7d3b3a8814ce8b7289862e1c9122f3dd59e493d9c8f",
-                         "targetHash":  "195f0a0d2aea1baddac76da05d28f7d56ed8a4accf32faf0cf96d85bf9dc517b"
+                         "sourceHash":  "04ba7b6f9a55f09db8a7533cd9bd0501fe4f964395752b963842b3c071fa09d9",
+                         "targetHash":  "6b87bcdefe1e6de02268c162c8fa28bb68d0f33ed4f3164cc30148ae6ed12330"
                      },
                      {
                          "name":  "js-launcher",
                          "inputPaths":  [
-                                            "js-launcher/src"
+                                            "js-launcher/src",
+                                            "common/include/windowsCommandLine.h",
+                                            "common/include/windowsHandle.h"
                                         ],
                          "buildScript":  "js-launcher/src/build-native.bat",
                          "targetExecutable":  "js-launcher/bin/js-launcher.exe",
-                         "sourceHash":  "53a95f132e5fc54a78d3cd323beded95253b083b545c8b34e84111c20c7c58b3",
-                         "targetHash":  "5b84f4384484deac47ca4908873d4b69f08a67064ae855babec9b79c3a67989f"
+                         "sourceHash":  "ff2c1e56169e56ff15271324071b2c16610654d75b0cc29c9ec3231b2edd1cfc",
+                         "targetHash":  "34e4cf0a894c23a23e39670a267d3e7a324a8fe9643edf6ff5f7c03456673ad8"
+                     },
+                     {
+                         "name":  "launcher",
+                         "inputPaths":  [
+                                            "launcher/src",
+                                            "common/include/windowsCommandLine.h",
+                                            "common/include/windowsError.h",
+                                            "common/include/windowsHandle.h"
+                                        ],
+                         "buildScript":  "launcher/src/build-native.bat",
+                         "targetExecutable":  "launcher/bin/launcher.exe",
+                         "sourceHash":  "499fdccc80557a3c39fd928d956375801fd8f1113412c7be5e5a0db7047b2e47",
+                         "targetHash":  "442cf6b28f05f620e52128512c96c32010c095896d1972e000d1f8474f07f0f2"
                      }
                  ]
 }

@@ -1,4 +1,6 @@
-#include <windows.h>
+#include "windowsCommandLine.h"
+#include "windowsHandle.h"
+
 #include <shellapi.h>
 #include <tlhelp32.h>
 
@@ -10,52 +12,14 @@
 
 namespace {
 
-class Handle {
-public:
-  explicit Handle(HANDLE value) : _value(value) {}
-  ~Handle() {
-    if (_value != nullptr && _value != INVALID_HANDLE_VALUE) CloseHandle(_value);
-  }
-
-  Handle(const Handle&) = delete;
-  Handle& operator=(const Handle&) = delete;
-
-  HANDLE get() const { return _value; }
-
-private:
-  HANDLE _value;
-};
-
-std::wstring quoteArgument(std::wstring_view value) {
-  if (value.empty()) return L"\"\"";
-  if (value.find_first_of(L" \t\n\v\"") == std::wstring_view::npos) {
-    return std::wstring(value);
-  }
-  std::wstring result = L"\"";
-  std::size_t backslashCount = 0;
-  for (const wchar_t character : value) {
-    if (character == L'\\') {
-      ++backslashCount;
-    } else if (character == L'\"') {
-      result.append(backslashCount * 2 + 1, L'\\');
-      result.push_back(character);
-      backslashCount = 0;
-    } else {
-      result.append(backslashCount, L'\\');
-      backslashCount = 0;
-      result.push_back(character);
-    }
-  }
-  result.append(backslashCount * 2, L'\\');
-  result.push_back(L'\"');
-  return result;
-}
+using magichat::native::quoteWindowsArgument;
+using magichat::native::UniqueHandle;
 
 std::wstring createArguments(int argumentCount, wchar_t* arguments[]) {
-  std::wstring result = quoteArgument(arguments[1]);
+  std::wstring result = quoteWindowsArgument(arguments[1]);
   for (int index = 3; index < argumentCount; ++index) {
     result.push_back(L' ');
-    result.append(quoteArgument(arguments[index]));
+    result.append(quoteWindowsArgument(arguments[index]));
   }
   if (result.size() > 32'767) throw std::runtime_error("JavaScript parameters are too long");
   return result;
@@ -67,10 +31,10 @@ std::wstring createElevatedArguments(
   wchar_t* arguments[]
 ) {
   std::wstring result = L"--elevated ";
-  result.append(quoteArgument(executablePath));
+  result.append(quoteWindowsArgument(executablePath));
   for (int index = 1; index < argumentCount; ++index) {
     result.push_back(L' ');
-    result.append(quoteArgument(arguments[index]));
+    result.append(quoteWindowsArgument(arguments[index]));
   }
   if (result.size() > 32'767) throw std::runtime_error("JavaScript parameters are too long");
   return result;
@@ -91,7 +55,7 @@ std::wstring getCurrentExecutablePath() {
 }
 
 std::wstring getParentExecutablePath() {
-  const Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+  const UniqueHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
   if (snapshot.get() == INVALID_HANDLE_VALUE) {
     throw std::runtime_error("Failed to inspect parent process");
   }
@@ -110,7 +74,7 @@ std::wstring getParentExecutablePath() {
   } while (Process32NextW(snapshot.get(), &entry));
   if (parentProcessId == 0) throw std::runtime_error("Failed to resolve parent process");
 
-  const Handle parentProcess(
+  const UniqueHandle parentProcess(
     OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parentProcessId)
   );
   if (parentProcess.get() == nullptr) throw std::runtime_error("Failed to open parent process");
@@ -124,7 +88,7 @@ std::wstring getParentExecutablePath() {
 }
 
 DWORD launch(const std::wstring& executablePath, const std::wstring& parameters) {
-  std::wstring commandLine = quoteArgument(executablePath) + L" " + parameters;
+  std::wstring commandLine = quoteWindowsArgument(executablePath) + L" " + parameters;
   STARTUPINFOW startupInfo{};
   startupInfo.cb = sizeof(startupInfo);
   startupInfo.dwFlags = STARTF_USESHOWWINDOW;
@@ -137,8 +101,8 @@ DWORD launch(const std::wstring& executablePath, const std::wstring& parameters)
     throw std::runtime_error("Failed to start JavaScript process: "
       + std::to_string(GetLastError()));
   }
-  const Handle thread(processInfo.hThread);
-  const Handle process(processInfo.hProcess);
+  const UniqueHandle thread(processInfo.hThread);
+  const UniqueHandle process(processInfo.hProcess);
   return processInfo.dwProcessId;
 }
 
@@ -155,7 +119,7 @@ DWORD runas(const std::wstring& parameters) {
     throw std::runtime_error("Failed to elevate JavaScript launcher: "
       + std::to_string(GetLastError()));
   }
-  const Handle process(executeInfo.hProcess);
+  const UniqueHandle process(executeInfo.hProcess);
   if (WaitForSingleObject(process.get(), INFINITE) != WAIT_OBJECT_0) {
     throw std::runtime_error("Failed to wait for elevated JavaScript launcher: "
       + std::to_string(GetLastError()));
@@ -178,10 +142,10 @@ int wmain(int argumentCount, wchar_t* arguments[]) {
       if (!SetEnvironmentVariableW(L"ELECTRON_RUN_AS_NODE", L"1")) {
         throw std::runtime_error("Failed to configure JavaScript host environment");
       }
-      std::wstring parameters = quoteArgument(arguments[3]);
+      std::wstring parameters = quoteWindowsArgument(arguments[3]);
       for (int index = 5; index < argumentCount; ++index) {
         parameters.push_back(L' ');
-        parameters.append(quoteArgument(arguments[index]));
+        parameters.append(quoteWindowsArgument(arguments[index]));
       }
       return static_cast<int>(launch(arguments[2], parameters));
     }

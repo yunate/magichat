@@ -9,6 +9,7 @@ MagicHat is a local Electron toolbox organized as one npm workspace.
 - [`common/`](common/AI_CONTEXT.md) owns shared models, protocols, serializers, and the MessagePort RPC bridge.
 - [`main/`](main/AI_CONTEXT.md) owns the Electron main process, preload, and local business services.
 - `build/` owns the Electron main and preload bundle script plus NSIS customization.
+- The NSIS installer moves electron-builder's extracted application directory on the same volume into `%LOCALAPPDATA%\MagicHat\version\<version>`, then recreates the selected install directory with only `launcher.exe` and the uninstaller. The uninstaller force-terminates packaged MagicHat processes running from Local AppData version directories; files that remain locked are registered for deletion on the next Windows restart.
 - `client/src/windows/main/themes/` owns application theme sources. `dark/` is bundled into the renderer; NSIS installs every other theme into the packaged user's `data/themes/` directory and replaces packaged theme files during reinstall or upgrade.
 - `scripts/` contains environment helpers. Root `start.bat` and `package.bat` remain stable user entry points.
 

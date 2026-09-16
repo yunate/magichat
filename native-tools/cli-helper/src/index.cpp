@@ -1,6 +1,9 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include "windowsError.h"
+#include "windowsHandle.h"
+
 #include <cstdint>
 #include <cwchar>
 #include <iostream>
@@ -11,6 +14,9 @@
 #include <vector>
 
 namespace {
+
+using magichat::native::throwWindowsError;
+using magichat::native::UniqueHandle;
 
 constexpr std::size_t MAX_MESSAGE_LENGTH = 64 * 1024;
 constexpr wchar_t PIPE_PATH_ENVIRONMENT_KEY[] = L"MAGICHAT_CLI_PIPE";
@@ -214,25 +220,6 @@ private:
   }
 };
 
-class UniqueHandle {
-public:
-  explicit UniqueHandle(HANDLE handle) : _handle(handle) {}
-
-  ~UniqueHandle() {
-    if (isValid()) CloseHandle(_handle);
-  }
-
-  UniqueHandle(const UniqueHandle&) = delete;
-  UniqueHandle& operator=(const UniqueHandle&) = delete;
-
-  HANDLE get() const { return _handle; }
-
-private:
-  bool isValid() const { return _handle != nullptr && _handle != INVALID_HANDLE_VALUE; }
-
-  HANDLE _handle;
-};
-
 class NamedPipeClient {
 public:
   explicit NamedPipeClient(const std::wstring& path) : _handle(openPipe(path)) {}
@@ -351,10 +338,6 @@ private:
     const HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (event == nullptr) throwWindowsError("Failed to create CLI Bridge I/O event", GetLastError());
     return event;
-  }
-
-  [[noreturn]] static void throwWindowsError(const char* operation, DWORD error) {
-    throw std::runtime_error(std::string(operation) + " (Windows error " + std::to_string(error) + ")");
   }
 
   static constexpr DWORD IO_TIMEOUT_MS = 30'000;

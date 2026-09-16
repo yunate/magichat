@@ -5,9 +5,11 @@ Windows native projects and their shared incremental build entry.
 ## Structure
 
 - `native-projects.json` is the authoritative project table. Each row declares input paths, a build script, a target executable, and the last successful source and target SHA-256 hashes.
+- [`common/`](common/AI_CONTEXT.md) owns header-only Win32 resource, error, and command-line primitives shared by native projects.
 - `build-all-natives.bat` is the stable entry used once by the root npm build. Startup and packaging reach it through that build chain. It invokes `build-all-natives.ps1` for structured manifest parsing and hashing.
 - [`cli-helper/`](cli-helper/AI_CONTEXT.md) owns the native CLI bridge client and classified language integrations.
 - [`js-launcher/`](js-launcher/AI_CONTEXT.md) owns JavaScript process launch through the current Electron or MagicHat executable, including optional elevation.
+- [`launcher/`](launcher/AI_CONTEXT.md) owns installed-version selection and launches the active MagicHat executable from Local AppData.
 
 ## Build Contract
 

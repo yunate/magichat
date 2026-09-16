@@ -11,6 +11,11 @@ if (versionMatch === null) {
 }
 const packageVersion = versionMatch.slice(1, 4).join(".");
 const buildNumber = versionMatch[4];
+const generatedVersionIncludePath = path.join(rootDirectory, "build", "generated-version.nsh");
+const generatedZipName = `MagicHat Setup ${appVersion}.zip`;
+const generatedZipPath = path.join(rootDirectory, "dist-release", generatedZipName);
+const updateZipName = `MagicHat-${appVersion}-win-x64.zip`;
+const updateZipPath = path.join(rootDirectory, "dist-release", updateZipName);
 const certificateArgument = process.env.MAGICHAT_PACKAGE_CERTIFICATE_PATH;
 const certificatePassword = process.env.MAGICHAT_PACKAGE_CERTIFICATE_PASSWORD;
 
@@ -36,14 +41,33 @@ if (certificateArgument !== undefined) {
   }
 }
 
-await build({
-  config: {
-    extends: path.join(rootDirectory, "electron-builder.yml"),
-    buildNumber,
-    buildVersion: appVersion,
-    extraMetadata: { version: packageVersion },
-    win: {
-      artifactName: `MagicHat Setup ${appVersion}.\${ext}`,
+fs.writeFileSync(
+  generatedVersionIncludePath,
+  `!define MAGICHAT_VERSION "${appVersion}"\n`,
+  "utf8",
+);
+
+try {
+  fs.rmSync(updateZipPath, { force: true });
+  await build({
+    config: {
+      extends: path.join(rootDirectory, "electron-builder.yml"),
+      buildNumber,
+      buildVersion: appVersion,
+      extraMetadata: { version: packageVersion },
+      win: {
+        artifactName: `MagicHat Setup ${appVersion}.\${ext}`,
+        target: [
+          { target: "nsis", arch: ["x64"] },
+          { target: "zip", arch: ["x64"] },
+        ],
+      },
     },
-  },
-});
+  });
+  if (!fs.existsSync(generatedZipPath)) {
+    throw new Error(`Packaged update ZIP does not exist: ${generatedZipPath}`);
+  }
+  fs.renameSync(generatedZipPath, updateZipPath);
+} finally {
+  fs.rmSync(generatedVersionIncludePath, { force: true });
+}

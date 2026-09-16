@@ -3,10 +3,12 @@ import path from "node:path";
 import { BridgeRouter } from "../../common/ipc_bridge/rpc";
 import { RpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
 import { gApplicationPaths } from "./infra/applicationPaths";
+import { gLogger } from "./infra/logger";
 import { gCliBridge } from "./services/cli/cliBridge";
 import { gTaskManager } from "./services/tasks/taskManager";
 import { gTerminalRuntimeManager } from "./services/terminal/terminalRuntimeManager";
 import { gUacBrokerService } from "./services/uacBroker/uacBrokerService";
+import { gUpdateService } from "./services/update/updateService";
 import { WindowFactory } from "./window/windowFactory";
 import { WindowManager } from "./window/windowManager";
 
@@ -30,6 +32,8 @@ function bringPrimaryWindowToFront(): void {
 }
 
 async function shutdown(): Promise<void> {
+  console.log("[main] Shutdown started.");
+  gUpdateService.dispose();
   gTray?.destroy();
   gTray = null;
   await gCliBridge.stop();
@@ -39,6 +43,8 @@ async function shutdown(): Promise<void> {
   await gUacBrokerService.dispose();
   await gTerminalRuntimeManager.clearTemporaryDirectory();
   await WindowManager.getInstance().disposeAll();
+  console.log("[main] Shutdown completed.");
+  await gLogger.dispose();
 }
 
 function showPrimaryWindow(): void {
@@ -75,11 +81,14 @@ if (!hasSingleInstanceLock) {
   app.on("second-instance", bringPrimaryWindowToFront);
 
   void app.whenReady().then(async () => {
+    await gLogger.start();
+    console.log("[main] Application started.");
     RpcObjectRegistry.register(BridgeRouter.getRouter());
     await gCliBridge.start(app.getPath("userData"));
     gTaskManager.startQueuedTasks();
     await WindowFactory.createWindow();
     createTray();
+    gUpdateService.start();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void WindowFactory.createWindow();
     });
@@ -100,8 +109,10 @@ if (!hasSingleInstanceLock) {
         app.quit();
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[main] shutdown failed: ${message}`);
+        const message = error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : `Unknown exception: ${String(error)}`;
+        console.error(`[main] ${message}`);
       },
     );
   });

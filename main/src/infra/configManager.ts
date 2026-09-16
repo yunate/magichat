@@ -6,6 +6,7 @@ import { COMMAND_CONFIG_KEY } from "../../../common/config/command";
 import { GLOBAL_CONFIG_KEY } from "../../../common/config/global";
 import { TASK_CENTER_CONFIG_KEY } from "../../../common/config/taskCenter";
 import { TOOLS_CONFIG_KEY } from "../../../common/config/tools";
+import { UPDATE_CONFIG_KEY } from "../../../common/config/update";
 import {
   getConfigSerializer,
   isConfigKey,
@@ -22,6 +23,7 @@ const CONFIG_FILES: Readonly<Record<ConfigKey, string>> = {
   [GLOBAL_CONFIG_KEY]: "global.json",
   [TASK_CENTER_CONFIG_KEY]: "taskCenter.json",
   [TOOLS_CONFIG_KEY]: "tools.json",
+  [UPDATE_CONFIG_KEY]: "update.json",
 };
 
 export class ConfigManager implements ConfigServerRpcApi {

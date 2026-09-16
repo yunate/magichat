@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs from "node:original-fs";
 import path from "node:path";
 
 export class PathUtil {
@@ -7,13 +7,19 @@ export class PathUtil {
   }
 
   public static ensureFileExist(filePath: string): void {
-    const stats = fs.statSync(filePath, { throwIfNoEntry: false });
-    if (!stats?.isFile()) throw new Error("File does not exist");
+    if (!PathUtil.isFile(filePath)) throw new Error("File does not exist");
   }
 
   public static ensureFolderExist(folderPath: string): void {
-    const stats = fs.statSync(folderPath, { throwIfNoEntry: false });
-    if (!stats?.isDirectory()) throw new Error("Folder does not exist");
+    if (!PathUtil.isDirectory(folderPath)) throw new Error("Folder does not exist");
+  }
+
+  public static isFile(filePath: string): boolean {
+    return fs.statSync(filePath, { throwIfNoEntry: false })?.isFile() ?? false;
+  }
+
+  public static isDirectory(directoryPath: string): boolean {
+    return fs.statSync(directoryPath, { throwIfNoEntry: false })?.isDirectory() ?? false;
   }
 
   public static ensurePathExist(targetPath: string): void {

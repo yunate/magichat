@@ -2,6 +2,7 @@ node_modules/
 client/dist/
 dist-electron/
 dist-release/
+build/generated-version.nsh
 native-tools/*/bin/*.exe
 !native-tools/ddwhouses/bin/ddwhouses.exe
 packager-installer/Output/

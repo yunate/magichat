@@ -1,4 +1,5 @@
-import { app, type BrowserWindow } from "electron";
+import { app, shell, type BrowserWindow } from "electron";
+import path from "node:path";
 import type { BridgePeer } from "../../../common/ipc_bridge/peer";
 import type { RemoteObject } from "../../../common/ipc_bridge/rpc";
 import type { TaskEventsClientRpcApi } from "../../../common/tasks/tasksRpcApi";
@@ -10,6 +11,11 @@ import {
   createTaskEventsClientRpcObject,
   createWindowClientRpcObject,
 } from "../bridge/remote_rpc_objects/remoteClientRpcObjects";
+import { gApplicationPaths } from "../infra/applicationPaths";
+
+const LATEST_RELEASE_URL = "https://github.com/ddmagichat/magichat-release/releases/tag/latest";
+const ISSUES_URL = "https://github.com/ddmagichat/magichat-release/issues";
+const DISCUSSIONS_URL = "https://github.com/ddmagichat/magichat-release/discussions";
 
 export abstract class Window implements WindowServerRpcApi {
   public constructor(peer: BridgePeer) {
@@ -24,6 +30,38 @@ export abstract class Window implements WindowServerRpcApi {
   public rendererReady(): void {
     this._isRendererReady = true;
     for (const listener of this._rendererReadyListeners.splice(0)) listener();
+  }
+
+  public getApplicationDirectoryPath(): string {
+    return gApplicationPaths.isPackaged
+      ? path.dirname(process.execPath)
+      : gApplicationPaths.appPath;
+  }
+
+  public async openApplicationDirectory(): Promise<void> {
+    const errorMessage = await shell.openPath(this.getApplicationDirectoryPath());
+    if (errorMessage.length > 0) throw new Error("Application directory could not be opened.");
+  }
+
+  public getLogDirectoryPath(): string {
+    return gApplicationPaths.logDirectoryPath;
+  }
+
+  public async openLogDirectory(): Promise<void> {
+    const errorMessage = await shell.openPath(this.getLogDirectoryPath());
+    if (errorMessage.length > 0) throw new Error("Log directory could not be opened.");
+  }
+
+  public async openLatestReleasePage(): Promise<void> {
+    await shell.openExternal(LATEST_RELEASE_URL);
+  }
+
+  public async openIssuesPage(): Promise<void> {
+    await shell.openExternal(ISSUES_URL);
+  }
+
+  public async openDiscussionsPage(): Promise<void> {
+    await shell.openExternal(DISCUSSIONS_URL);
   }
 
   // implement WindowServerRpcApi's methods

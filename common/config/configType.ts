@@ -15,12 +15,17 @@ import {
   TOOLS_CONFIG_KEY,
   toolsConfigSerializer,
 } from "./tools";
+import {
+  UPDATE_CONFIG_KEY,
+  updateConfigSerializer,
+} from "./update";
 
 const _CONFIG_TYPE_REGISTRY = {
   [COMMAND_CONFIG_KEY]: commandConfigSerializer,
   [GLOBAL_CONFIG_KEY]: globalConfigSerializer,
   [TASK_CENTER_CONFIG_KEY]: taskCenterConfigSerializer,
   [TOOLS_CONFIG_KEY]: toolsConfigSerializer,
+  [UPDATE_CONFIG_KEY]: updateConfigSerializer,
 } as const;
 
 export type ConfigKey = keyof typeof _CONFIG_TYPE_REGISTRY;

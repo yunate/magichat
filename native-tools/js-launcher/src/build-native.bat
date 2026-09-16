@@ -30,7 +30,7 @@ if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
 set "OBJECT=%OUTPUT_DIR%\js-launcher.obj"
 set "EXECUTABLE=%OUTPUT_DIR%\js-launcher.exe"
 
-cl.exe /nologo /std:c++20 /O2 /EHsc /utf-8 /MT /W4 /WX /DUNICODE /D_UNICODE /Fo:"%OBJECT%" /Fe:"%EXECUTABLE%" "%SOURCE%" /link /INCREMENTAL:NO shell32.lib
+cl.exe /nologo /std:c++20 /O2 /EHsc /utf-8 /MT /W4 /WX /DUNICODE /D_UNICODE /I"%~dp0..\..\common\include" /Fo:"%OBJECT%" /Fe:"%EXECUTABLE%" "%SOURCE%" /link /INCREMENTAL:NO shell32.lib
 if errorlevel 1 exit /b 1
 
 del /q "%OBJECT%" 2>nul

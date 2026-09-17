@@ -1,6 +1,7 @@
 import type {
   TreeViewCloneParams,
   TreeViewCreateItemProperties,
+  TreeViewEntityData,
   TreeViewEntityDataParams,
   TreeViewFolder,
   TreeViewFolderProperties,
@@ -41,8 +42,8 @@ export interface TreeViewDataProvider {
   updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void>;
   repairEntityId(params: TreeViewEntityDataParams, id: string): Promise<void>;
   deleteItem(itemPath: string): Promise<void>;
-  getEntityData(params: TreeViewEntityDataParams): Promise<string | null>;
-  updateEntityData(params: TreeViewEntityDataParams, dataJson: string): Promise<void>;
+  getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData>;
+  updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void>;
   openInExplorer(kind: "folder" | "item", targetPath: string): Promise<void>;
   clone(params: TreeViewCloneParams): Promise<void>;
   move(params: TreeViewMoveParams): Promise<void>;

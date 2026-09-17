@@ -3,7 +3,6 @@
   "id": "10000000-0000-4000-8000-000000000015",
   "data": {
     "scriptType": "powershell",
-    "content": "Write-Output \"Last updated by: mh{ps1-mhsetenv}\"\r\nWrite-Output \"Last updated by: mh{cmd-mhsetenv}\"\r\nWrite-Output \"Last updated by: mh{node-mhsetenv}\"\r\nWrite-Output \"Last updated by: mh{py-mhsetenv}\"",
     "selectedParamGroupId": "command",
     "paramGroups": [
       {
@@ -14,3 +13,9 @@
     ]
   }
 }
+
+---MH:script---
+Write-Output "Last updated by: mh{ps1-mhsetenv}"
+Write-Output "Last updated by: mh{cmd-mhsetenv}"
+Write-Output "Last updated by: mh{node-mhsetenv}"
+Write-Output "Last updated by: mh{py-mhsetenv}"

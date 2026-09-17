@@ -5,6 +5,7 @@ import type {
   TreeViewCloneParams,
   TreeViewCreateItemProperties,
   TreeViewDataProvider,
+  TreeViewEntityData,
   TreeViewEntityDataParams,
   TreeViewFolder,
   TreeViewFolderProperties,
@@ -51,8 +52,8 @@ export type TreeViewOperations = {
   updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void>;
   deleteFolder(folderId: string): Promise<void>;
   deleteItem(itemId: string): Promise<void>;
-  getEntityData(params: TreeViewEntityDataParams): Promise<string | null>;
-  updateEntityData(params: TreeViewEntityDataParams, dataJson: string): Promise<void>;
+  getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData>;
+  updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void>;
   openInExplorer(selection: TreeViewSelection): Promise<void>;
   clone(params: TreeViewCloneParams): Promise<TreeViewFolder | TreeViewItem | null>;
   move(params: TreeViewMoveParams): Promise<void>;
@@ -154,12 +155,12 @@ export class TreeViewController {
     return this._enqueue(() => this._operations.deleteItem(itemId));
   }
 
-  public getEntityData(params: TreeViewEntityDataParams): Promise<string | null> {
+  public getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData> {
     return this._enqueue(() => this._operations.getEntityData(params));
   }
 
-  public updateEntityData(params: TreeViewEntityDataParams, dataJson: string): Promise<void> {
-    return this._enqueue(() => this._operations.updateEntityData(params, dataJson));
+  public updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void> {
+    return this._enqueue(() => this._operations.updateEntityData(params, data));
   }
 
   public openInExplorer(selection: TreeViewSelection): Promise<void> {
@@ -215,7 +216,7 @@ export class TreeView {
       deleteFolder: (folderId) => this._deleteFolder(folderId),
       deleteItem: (itemId) => this._deleteItem(itemId),
       getEntityData: (params) => this.dataProvider.getEntityData(params),
-      updateEntityData: (params, dataJson) => this.dataProvider.updateEntityData(params, dataJson),
+      updateEntityData: (params, data) => this.dataProvider.updateEntityData(params, data),
       openInExplorer: (selection) => this._openInExplorer(selection),
       clone: (params) => this._clone(params),
       move: (params) => this._move(params),
@@ -277,48 +278,32 @@ export class TreeView {
 
   private async _load(): Promise<void> {
     const workspaceRefs = await this._loadWorkspaceRefs();
-    let selectedWorkspaceRef: TreeViewWorkspaceRef | null = null;
-    let workspace: TreeViewWorkspace | null = null;
     let firstWorkspace: TreeViewWorkspace | null = null;
     for (const workspaceRef of workspaceRefs) {
       const candidate = await this.dataProvider.getWorkspaceProperties(workspaceRef.workspacePath);
       firstWorkspace ??= candidate;
-      if (!candidate.isSelected) continue;
-      if (selectedWorkspaceRef !== null) throw new Error("TreeView requires one selected workspace");
-      selectedWorkspaceRef = workspaceRef;
-      workspace = candidate;
-    }
-    if (workspaceRefs.length > 0 && selectedWorkspaceRef === null) {
-      const firstWorkspaceRef = workspaceRefs[0];
-      if (firstWorkspaceRef === undefined || firstWorkspace === null) {
-        throw new Error("TreeView first workspace is unavailable");
+      if (candidate.isSelected) {
+        await this._loadWorkspace(workspaceRef, candidate, workspaceRefs);
+        return;
       }
-      workspace = { ...firstWorkspace, isSelected: true };
-      await this.dataProvider.updateWorkspaceProperties(
-        firstWorkspaceRef.workspacePath,
-        workspace,
-      );
-      selectedWorkspaceRef = firstWorkspaceRef;
     }
-    const rootFolder = selectedWorkspaceRef === null
-      ? null
-      : await this.dataProvider.getFolder(selectedWorkspaceRef.workspacePath);
-    const normalizedWorkspace = workspace === null || rootFolder === null
-      ? workspace
-      : this._pruneUnavailableTabs(workspace, rootFolder);
-    if (normalizedWorkspace !== null && normalizedWorkspace !== workspace
-      && selectedWorkspaceRef !== null) {
-      await this.dataProvider.updateWorkspaceProperties(
-        selectedWorkspaceRef.workspacePath,
-        normalizedWorkspace,
-      );
+    const firstWorkspaceRef = workspaceRefs[0];
+    if (firstWorkspaceRef === undefined) {
+      this._install({
+        workspaceRefs,
+        selectedWorkspaceRef: null,
+        workspace: null,
+        rootFolder: null,
+      });
+      return;
     }
-    this._install({
-      workspaceRefs,
-      selectedWorkspaceRef,
-      workspace: normalizedWorkspace,
-      rootFolder,
-    });
+    if (firstWorkspace === null) throw new Error("TreeView first workspace is unavailable");
+    const selectedWorkspace = { ...firstWorkspace, isSelected: true };
+    await this.dataProvider.updateWorkspaceProperties(
+      firstWorkspaceRef.workspacePath,
+      selectedWorkspace,
+    );
+    await this._loadWorkspace(firstWorkspaceRef, selectedWorkspace, workspaceRefs);
   }
 
   private async _setStorageRoots(storageRoots: readonly TreeViewStorageRoot[]): Promise<void> {

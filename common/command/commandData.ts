@@ -1,7 +1,10 @@
 import { MacroParser } from "../macroParser";
 import { ISerializer } from "../serializer";
 import { isScriptType, type ScriptType } from "../tasks/scriptTaskDefinition";
+import type { TreeViewEntityData } from "../treeView";
 import { ValidateUtils } from "../validator";
+
+export const COMMAND_SCRIPT_EXTENSION_KEY = "script";
 
 export type CommandParam = Readonly<{
   key: string;
@@ -70,6 +73,34 @@ export class CommandFolderDataSerializer extends ISerializer<CommandFolderData> 
 }
 
 export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
+  public fromEntityData(entityData: TreeViewEntityData): CommandItemData {
+    const script = new Map(entityData.extends).get(COMMAND_SCRIPT_EXTENSION_KEY);
+    if (entityData.dataJson === null) {
+      return { ...this.getDefault(), content: script ?? "" };
+    }
+    const meta = CommandItemDataSerializer._parseMetaJson(entityData.dataJson);
+    if (script === undefined) throw new Error("Command script extension is missing");
+    return { ...meta, content: script };
+  }
+
+  public toEntityData(
+    value: CommandItemData,
+    extensions: TreeViewEntityData["extends"],
+  ): TreeViewEntityData {
+    this.validate(value);
+    const meta: CommandItemMeta = {
+      scriptType: value.scriptType,
+      selectedParamGroupId: value.selectedParamGroupId,
+      paramGroups: value.paramGroups,
+    };
+    const extensionMap = new Map(extensions);
+    extensionMap.set(COMMAND_SCRIPT_EXTENSION_KEY, value.content);
+    return {
+      dataJson: JSON.stringify(meta),
+      extends: [...extensionMap],
+    };
+  }
+
   public getDefault(): CommandItemData {
     return structuredClone(CommandItemDataSerializer._DEFAULT);
   }
@@ -82,13 +113,47 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
     validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
   }
 
+  private static _parseMetaJson(json: string): CommandItemMeta {
+    let value: unknown;
+    try {
+      value = JSON.parse(json);
+    } catch {
+      throw new Error("Command item data must be valid JSON");
+    }
+    migrateCommandParamEnabled(value);
+    ensureExactRecord(
+      value,
+      Object.keys(CommandItemDataSerializer._META_DEFAULT),
+      "Command item data",
+    );
+    if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
+    ValidateUtils.ensureString(
+      value.selectedParamGroupId,
+      "Selected Command param group ID must be a string",
+    );
+    validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
+    return {
+      scriptType: value.scriptType,
+      selectedParamGroupId: value.selectedParamGroupId,
+      paramGroups: value.paramGroups,
+    };
+  }
+
   private static readonly _DEFAULT: CommandItemData = {
     scriptType: "powershell",
     content: "",
     selectedParamGroupId: "command",
     paramGroups: [{ id: "command", name: "default params", params: [] }],
   };
+
+  private static readonly _META_DEFAULT: CommandItemMeta = {
+    scriptType: "powershell",
+    selectedParamGroupId: "command",
+    paramGroups: [{ id: "command", name: "default params", params: [] }],
+  };
 }
+
+type CommandItemMeta = Omit<CommandItemData, "content">;
 
 class CommandParamGroupSerializer extends ISerializer<CommandParamGroup> {
   public getDefault(): CommandParamGroup {
@@ -183,7 +248,7 @@ function ensureExactRecord(
 
 export const commandFolderDataSerializer: ISerializer<CommandFolderData> =
   new CommandFolderDataSerializer();
-export const commandItemDataSerializer: ISerializer<CommandItemData> =
+export const commandItemDataSerializer: CommandItemDataSerializer =
   new CommandItemDataSerializer();
 export const commandParamSerializer: ISerializer<CommandParam> =
   new CommandParamSerializer();

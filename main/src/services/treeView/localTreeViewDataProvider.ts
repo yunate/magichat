@@ -14,6 +14,7 @@ import {
   treeViewWorkspaceSerializer,
   type TreeViewCloneParams,
   type TreeViewCreateItemProperties,
+  type TreeViewEntityData,
   type TreeViewDataNotifierClientRpcApi,
   type TreeViewDataProvider,
   type TreeViewEntityDataParams,
@@ -27,7 +28,7 @@ import {
 } from "../../../../common/treeView";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
-import { readStrictJsonFile, writeStrictJsonFileAtomic } from "../../infra/strictJsonFile";
+import { MFFileSerializer, type MHFile } from "../../infra/mhFile";
 import { PathUtil } from "../../utils/pathUtil";
 
 const WORKSPACE_FILE_NAME = "__workspace__.mh";
@@ -133,16 +134,18 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       PathUtil.ensurePathNotExist(target);
       this._runStagedCreate(target, (stage) => {
         fs.mkdirSync(stage, { recursive: true });
-        writeStrictJsonFileAtomic(
+        this._writePersistedRecord(
           path.join(stage, FOLDER_FILE_NAME),
           { ...this._createFolderProperties(), data: null },
+          new Map(),
         );
         const workspace = treeViewWorkspaceSerializer.getDefault();
         workspace.isSelected = isSelected;
-        writeStrictJsonFileAtomic(path.join(stage, WORKSPACE_FILE_NAME), {
-          ...workspace,
-          data: null,
-        });
+        this._writePersistedRecord(
+          path.join(stage, WORKSPACE_FILE_NAME),
+          { ...workspace, data: null },
+          new Map(),
+        );
       });
       return TreeViewPath.normalize(target, "TreeView storage path");
     });
@@ -193,9 +196,10 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       const properties = this._createFolderProperties();
       this._runStagedCreate(target, (stage) => {
         fs.mkdirSync(stage);
-        writeStrictJsonFileAtomic(
+        this._writePersistedRecord(
           path.join(stage, FOLDER_FILE_NAME),
           { ...properties, data: null },
+          new Map(),
         );
       });
       this._appendOrder(parent, "folder", path.basename(target));
@@ -266,9 +270,10 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       this._itemPropertiesSerializer.validate(persisted);
       const name = path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION);
       TreeViewPath.ensureName(name, "TreeView item name");
-      this._runStagedCreate(target, (stage) => writeStrictJsonFileAtomic(
+      this._runStagedCreate(target, (stage) => this._writePersistedRecord(
         stage,
         { ...persisted, data: null },
+        new Map(),
       ));
       if (!persisted.isDraft) this._appendOrder(path.dirname(target), "item", name);
       return this._createItemView(target, persisted);
@@ -335,25 +340,31 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public getEntityData(params: TreeViewEntityDataParams): Promise<string | null> {
+  public getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData> {
     return this._enqueue(() => {
       const filePath = this._resolveEntityFile(params);
-      const data = this._readPersistedRecord(filePath).data;
-      if (data === null) return null;
-      const json = JSON.stringify(data);
-      if (json === undefined) throw new Error(`TreeView entity data is missing: ${filePath}`);
-      return json;
+      const persistedFile = this._readPersistedFile(filePath);
+      const data = persistedFile.record.data;
+      let dataJson: string | null = null;
+      if (data !== null) {
+        const json = JSON.stringify(data);
+        if (json === undefined) throw new Error(`TreeView entity data is missing: ${filePath}`);
+        dataJson = json;
+      }
+      return { dataJson, extends: [...persistedFile.file.extends] };
     });
   }
 
-  public updateEntityData(params: TreeViewEntityDataParams, dataJson: string): Promise<void> {
+  public updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void> {
     return this._enqueue(() => {
       const filePath = this._resolveEntityFile(params);
-      const persisted = this._readPersistedRecord(filePath);
-      writeStrictJsonFileAtomic(filePath, {
-        ...persisted,
-        data: this._parseDataJson(dataJson),
-      });
+      const persistedFile = this._readPersistedFile(filePath);
+      const parsedData = this._parseEntityData(data);
+      this._writePersistedRecord(
+        filePath,
+        { ...persistedFile.record, data: parsedData.dataValue },
+        parsedData.extensions,
+      );
     });
   }
 
@@ -389,10 +400,11 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
           "TreeView item clone target name",
         );
         const properties = this._readItemProperties(source);
-        const persisted = this._readPersistedRecord(source);
-        this._runStagedCreate(target, (stage) => writeStrictJsonFileAtomic(
+        const persistedFile = this._readPersistedFile(source);
+        this._runStagedCreate(target, (stage) => this._writePersistedRecord(
           stage,
-          { ...persisted, id: randomUUID() },
+          { ...persistedFile.record, id: randomUUID() },
+          persistedFile.file.extends,
         ));
         if (!properties.isDraft) {
           this._appendOrder(
@@ -624,7 +636,12 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     delete properties.data;
     const normalized = treeViewWorkspaceSerializer.fromValue(properties);
     if (shouldPersistMigration && normalized !== properties) {
-      writeStrictJsonFileAtomic(filePath, { ...normalized, data: persisted.data });
+      const persistedFile = this._readPersistedFile(filePath);
+      this._writePersistedRecord(
+        filePath,
+        { ...normalized, data: persisted.data },
+        persistedFile.file.extends,
+      );
     }
     return normalized;
   }
@@ -643,24 +660,52 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     filePath: string,
     properties: TreeViewFolderProperties,
   ): void {
-    const persisted = this._readPersistedRecord(filePath);
-    writeStrictJsonFileAtomic(filePath, { ...properties, data: persisted.data });
+    const persistedFile = this._readPersistedFile(filePath);
+    this._writePersistedRecord(
+      filePath,
+      { ...properties, data: persistedFile.record.data },
+      persistedFile.file.extends,
+    );
   }
 
   private _writeItemProperties(filePath: string, properties: TreeViewItemProperties): void {
-    const persisted = this._readPersistedRecord(filePath);
-    writeStrictJsonFileAtomic(filePath, { ...properties, data: persisted.data });
+    const persistedFile = this._readPersistedFile(filePath);
+    this._writePersistedRecord(
+      filePath,
+      { ...properties, data: persistedFile.record.data },
+      persistedFile.file.extends,
+    );
   }
 
   private _writeWorkspaceProperties(filePath: string, properties: TreeViewWorkspace): void {
-    const persisted = this._readPersistedRecord(filePath);
-    writeStrictJsonFileAtomic(filePath, { ...properties, data: persisted.data });
+    const persistedFile = this._readPersistedFile(filePath);
+    this._writePersistedRecord(
+      filePath,
+      { ...properties, data: persistedFile.record.data },
+      persistedFile.file.extends,
+    );
   }
 
   private _readPersistedRecord(filePath: string): Record<string, unknown> {
-    const value = readStrictJsonFile(filePath);
+    return this._readPersistedFile(filePath).record;
+  }
+
+  private _readPersistedFile(filePath: string): { file: MHFile; record: Record<string, unknown> } {
+    const file = MFFileSerializer.read(filePath);
+    const value: unknown = JSON.parse(file.json);
     ValidateUtils.ensureRecord(value);
-    return value;
+    return { file, record: value };
+  }
+
+  private _writePersistedRecord(
+    filePath: string,
+    record: Record<string, unknown>,
+    extensions: Map<string, string>,
+  ): void {
+    MFFileSerializer.write(filePath, {
+      json: `${JSON.stringify(record, null, 2)}\n`,
+      extends: extensions,
+    });
   }
 
   private _parseDataJson(dataJson: string): unknown {
@@ -670,6 +715,32 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     } catch {
       throw new Error("TreeView entity data must be valid JSON");
     }
+  }
+
+  private _parseEntityData(
+    value: unknown,
+  ): { dataValue: unknown; extensions: Map<string, string> } {
+    if (value === null || typeof value !== "object") {
+      throw new Error("TreeView entity data must be an object");
+    }
+    const dataJson = "dataJson" in value ? value.dataJson : undefined;
+    if (dataJson !== null && typeof dataJson !== "string") {
+      throw new Error("TreeView entity dataJson must be a string or null");
+    }
+    const entries = "extends" in value ? value.extends : undefined;
+    if (!Array.isArray(entries)) throw new Error("TreeView entity extensions must be an array");
+    const extensions = new Map<string, string>();
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length !== 2
+        || typeof entry[0] !== "string" || typeof entry[1] !== "string") {
+        throw new Error("TreeView entity extension entry must contain a key and value");
+      }
+      extensions.set(entry[0], entry[1]);
+    }
+    return {
+      dataValue: dataJson === null ? null : this._parseDataJson(dataJson),
+      extensions,
+    };
   }
 
   private _createItemView(pathValue: string, properties: TreeViewItemProperties): TreeViewItem {

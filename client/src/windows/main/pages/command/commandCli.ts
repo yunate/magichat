@@ -36,17 +36,18 @@ export async function createCommandCliRunRequest(
       `Command path does not identify an Item in the current workspace. Requested: ${JSON.stringify(requestedPath)}. Resolved: ${JSON.stringify(itemPath)}`,
     );
   }
-  const dataJson = await model.controller.getEntityData({ kind: "item", path: item.path });
-  const data = dataJson === null
-    ? commandItemDataSerializer.getDefault()
-    : commandItemDataSerializer.fromJson(dataJson);
+  const entityData = await model.controller.getEntityData({ kind: "item", path: item.path });
+  const data = commandItemDataSerializer.fromEntityData(entityData);
   if (data.content.length === 0) {
     throw new Error(`Called Command has no content: ${JSON.stringify(requestedPath)}`);
   }
 
   const folderScopes: TextEditAdditionalParamScope[] = [];
   for (const folder of collectAncestorFolders(model.rootFolder.value, item.path)) {
-    const folderDataJson = await model.controller.getEntityData({ kind: "folder", path: folder.path });
+    const { dataJson: folderDataJson } = await model.controller.getEntityData({
+      kind: "folder",
+      path: folder.path,
+    });
     const folderData = folderDataJson === null
       ? commandFolderDataSerializer.getDefault()
       : commandFolderDataSerializer.fromJson(folderDataJson);

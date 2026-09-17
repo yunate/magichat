@@ -19,15 +19,20 @@ const SCRIPT_TYPE_LABELS: Readonly<Record<ScriptType, string>> = {
 };
 
 const label = computed(() => props.scriptType === undefined
-  ? "RUN"
+  ? "UNK"
   : SCRIPT_TYPE_LABELS[props.scriptType]);
-const title = computed(() => `${props.scriptType ?? "Command"}${props.isRunning ? " is running" : ""}`);
+const title = computed(() => props.scriptType === undefined
+  ? "Unknown script type"
+  : `${props.scriptType}${props.isRunning ? " is running" : ""}`);
 </script>
 
 <template>
   <span
     class="command-script-icon"
-    :class="{ 'is-running': isRunning }"
+    :class="{
+      'is-running': isRunning,
+      'is-unknown': scriptType === undefined,
+    }"
     :title="title"
     :role="isRunning ? 'status' : undefined"
     :aria-label="isRunning ? title : undefined"
@@ -54,6 +59,11 @@ const title = computed(() => `${props.scriptType ?? "Command"}${props.isRunning 
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.2px;
+}
+
+.command-script-icon.is-unknown {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .command-script-icon.is-running {

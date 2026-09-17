@@ -64,6 +64,11 @@ export type TreeViewEntityDataParams = {
   path: string;
 };
 
+export type TreeViewEntityData = {
+  dataJson: string | null;
+  extends: Array<[string, string]>;
+};
+
 export type TreeViewMoveParams = {
   kind: Exclude<TreeViewEntityKind, "workspace">;
   sourcePath: string;

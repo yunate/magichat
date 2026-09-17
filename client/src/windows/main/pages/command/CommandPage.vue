@@ -20,7 +20,11 @@ import {
 } from "../../../../../../common/config/command";
 import type { ScriptType } from "../../../../../../common/tasks/scriptTaskDefinition";
 import type { TerminalRunRequest } from "../../../../../../common/terminal";
-import type { TreeViewFolder, TreeViewItem } from "../../../../../../common/treeView";
+import type {
+  TreeViewEntityData,
+  TreeViewFolder,
+  TreeViewItem,
+} from "../../../../../../common/treeView";
 import type { RemoteObject } from "../../../../../../common/ipc_bridge/rpc";
 import {
   disposeCommandClient,
@@ -88,6 +92,7 @@ let unregisterBeforeSettingsSaveHandler: (() => void) | null = null;
 let unregisterEnvHandler: (() => void) | null = null;
 let unregisterRefreshHandler: (() => void) | null = null;
 let workspaceDataOperation: Promise<void> = Promise.resolve();
+let workspaceExtensions: TreeViewEntityData["extends"] = [];
 const GUARD_ACTIONS: readonly ConfirmDialogAction<GuardDecision>[] = [
   { id: "cancel", label: "Cancel" },
   { id: "discard", label: "Don't Save" },
@@ -164,27 +169,38 @@ async function loadWorkspaceData(model: TreeView): Promise<void> {
   const workspaceRef = model.selectedWorkspaceRef.value;
   if (workspaceRef === null) {
     workspaceData.value = commandWorkspaceDataSerializer.getDefault();
+    workspaceExtensions = [];
     return;
   }
-  const dataJson = await model.operations.getEntityData({
+  const entityData = await model.operations.getEntityData({
     kind: "workspace",
     path: workspaceRef.workspacePath,
   });
-  workspaceData.value = dataJson === null
+  workspaceData.value = entityData.dataJson === null
     ? commandWorkspaceDataSerializer.getDefault()
-    : commandWorkspaceDataSerializer.fromJson(dataJson);
+    : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
+  workspaceExtensions = entityData.extends;
 }
 
 async function loadItemScriptTypes(model: TreeView): Promise<ReadonlyMap<string, ScriptType>> {
   const items = collectTreeItems(model.rootFolder.value);
-  const entries = await Promise.all(items.map(async (item): Promise<readonly [string, ScriptType]> => {
-    const dataJson = await model.controller.getEntityData({ kind: "item", path: item.path });
-    const data = dataJson === null
-      ? commandItemDataSerializer.getDefault()
-      : commandItemDataSerializer.fromJson(dataJson);
-    return [item.properties.id, data.scriptType];
+  const entries = await Promise.all(items.map(async (
+    item,
+  ): Promise<readonly [string, ScriptType] | null> => {
+    try {
+      const entityData = await model.controller.getEntityData({ kind: "item", path: item.path });
+      const data = commandItemDataSerializer.fromEntityData(entityData);
+      return [item.properties.id, data.scriptType];
+    } catch (reason: unknown) {
+      console.warn(`[command] skipped invalid item "${item.path}"`, reason);
+      return null;
+    }
   }));
-  return new Map(entries);
+  const scriptTypes = new Map<string, ScriptType>();
+  for (const entry of entries) {
+    if (entry !== null) scriptTypes.set(...entry);
+  }
+  return scriptTypes;
 }
 
 function collectTreeItems(root: TreeViewFolder | null): TreeViewItem[] {
@@ -232,13 +248,13 @@ async function setEnv(
         await persistTargetParams(model, resolveCommandMacroTarget(model, target), updates);
         return;
       }
-      const dataJson = await model.controller.getEntityData({
+      const entityData = await model.controller.getEntityData({
         kind: "workspace",
         path: workspaceRef.workspacePath,
       });
-      const current = dataJson === null
+      const current = entityData.dataJson === null
         ? commandWorkspaceDataSerializer.getDefault()
-        : commandWorkspaceDataSerializer.fromJson(dataJson);
+        : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
       const nextData: CommandWorkspaceData = {
         ...current,
         envGroups: current.envGroups.map((group) => group.id === current.selectedEnvGroupId
@@ -251,7 +267,7 @@ async function setEnv(
             }
           : group),
       };
-      await persistWorkspaceData(model, workspaceRef.workspacePath, nextData);
+      await persistWorkspaceData(model, workspaceRef.workspacePath, nextData, entityData.extends);
     });
   } catch (reason: unknown) {
     gMessageStore.pushMessage("error", errorMessage(reason));
@@ -264,38 +280,42 @@ async function persistTargetParams(
   target: CommandMacroTarget,
   updates: readonly CommandEnvUpdate[],
 ): Promise<void> {
-  const dataJson = await model.controller.getEntityData(target);
+  const entityData = await model.controller.getEntityData(target);
   if (target.kind === "workspace") {
-    const current = dataJson === null
+    const current = entityData.dataJson === null
       ? commandWorkspaceDataSerializer.getDefault()
-      : commandWorkspaceDataSerializer.fromJson(dataJson);
+      : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
     const next: CommandWorkspaceData = {
       ...current,
       envGroups: updateSelectedParamGroup(current.envGroups, current.selectedEnvGroupId, updates),
     };
-    await persistWorkspaceData(model, target.path, next);
+    await persistWorkspaceData(model, target.path, next, entityData.extends);
     return;
   }
   if (target.kind === "folder") {
-    const current = dataJson === null
+    const current = entityData.dataJson === null
       ? commandFolderDataSerializer.getDefault()
-      : commandFolderDataSerializer.fromJson(dataJson);
+      : commandFolderDataSerializer.fromJson(entityData.dataJson);
     const next: CommandFolderData = {
       ...current,
       paramGroups: updateSelectedParamGroup(current.paramGroups, current.selectedParamGroupId, updates),
     };
-    await model.controller.updateEntityData(target, commandFolderDataSerializer.toJson(next));
+    await model.controller.updateEntityData(target, {
+      dataJson: commandFolderDataSerializer.toJson(next),
+      extends: entityData.extends,
+    });
     notifyPersistedFolderParams(model, target.path, next, updates);
     return;
   }
-  const current = dataJson === null
-    ? commandItemDataSerializer.getDefault()
-    : commandItemDataSerializer.fromJson(dataJson);
+  const current = commandItemDataSerializer.fromEntityData(entityData);
   const next: CommandItemData = {
     ...current,
     paramGroups: updateSelectedParamGroup(current.paramGroups, current.selectedParamGroupId, updates),
   };
-  await model.controller.updateEntityData(target, commandItemDataSerializer.toJson(next));
+  await model.controller.updateEntityData(
+    target,
+    commandItemDataSerializer.toEntityData(next, entityData.extends),
+  );
   const item = model.getItemByPath(target.path);
   if (item !== null) tabPages.get(item.properties.id)?.applyPersistedParams(next, updates);
 }
@@ -358,15 +378,20 @@ async function persistWorkspaceData(
   model: TreeView,
   workspacePath: string,
   data: CommandWorkspaceData,
+  extensions: TreeViewEntityData["extends"] = workspaceExtensions,
 ): Promise<void> {
   const persisted = commandWorkspaceDataSerializer.fromJson(
     commandWorkspaceDataSerializer.toJson(data),
   );
   await model.controller.updateEntityData(
     { kind: "workspace", path: workspacePath },
-    commandWorkspaceDataSerializer.toJson(persisted),
+    {
+      dataJson: commandWorkspaceDataSerializer.toJson(persisted),
+      extends: extensions,
+    },
   );
   workspaceData.value = persisted;
+  workspaceExtensions = extensions;
 }
 
 function updateEnv(env: readonly CommandParam[], key: string, value: string): CommandParam[] {

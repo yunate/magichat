@@ -25,6 +25,7 @@ import {
   type ScriptType,
 } from "../../../../../../common/tasks/scriptTaskDefinition";
 import type {
+  TreeViewEntityData,
   TreeViewFolder,
   TreeViewItem,
 } from "../../../../../../common/treeView";
@@ -58,6 +59,7 @@ type CommandFolderDraft = Readonly<{
   id: string;
   data: CommandFolderData;
   baseline: CommandFolderData;
+  extends: TreeViewEntityData["extends"];
 }>;
 
 type CommandItemDraft = Readonly<{
@@ -65,6 +67,7 @@ type CommandItemDraft = Readonly<{
   id: string;
   data: CommandItemData;
   baseline: CommandItemData;
+  extends: TreeViewEntityData["extends"];
 }>;
 
 type CommandEditorDraft = CommandFolderDraft | CommandItemDraft;
@@ -226,11 +229,11 @@ async function loadDraft(): Promise<void> {
   try {
     replaceAncestorFolderData(await loadAncestorFolderData(props.entity.path));
     const kind = isTreeViewItem(props.entity) ? "item" : "folder";
-    const dataJson = await props.treeView.controller.getEntityData({
+    const entityData = await props.treeView.controller.getEntityData({
       kind,
       path: props.entity.path,
     });
-    const loadedDraft = createDraft(props.entity, dataJson);
+    const loadedDraft = createDraft(props.entity, entityData);
     if (!isMounted) return;
     draft.value = loadedDraft;
     isRegistered = true;
@@ -273,13 +276,13 @@ async function refreshAncestorFolderData(entityPath: string): Promise<void> {
 async function loadAncestorFolderData(entityPath: string): Promise<Map<string, CommandFolderData>> {
   const loadedData = new Map<string, CommandFolderData>();
   for (const folder of collectAncestorFolders(entityPath)) {
-    const dataJson = await props.treeView.controller.getEntityData({
+    const entityData = await props.treeView.controller.getEntityData({
       kind: "folder",
       path: folder.path,
     });
-    loadedData.set(folder.properties.id, dataJson === null
+    loadedData.set(folder.properties.id, entityData.dataJson === null
       ? commandFolderDataSerializer.getDefault()
-      : commandFolderDataSerializer.fromJson(dataJson));
+      : commandFolderDataSerializer.fromJson(entityData.dataJson));
   }
   return loadedData;
 }
@@ -291,18 +294,28 @@ function replaceAncestorFolderData(loadedData: ReadonlyMap<string, CommandFolder
 
 function createDraft(
   entity: TreeViewFolder | TreeViewItem,
-  dataJson: string | null,
+  entityData: TreeViewEntityData,
 ): CommandEditorDraft {
   if (isTreeViewItem(entity)) {
-    const data = cloneItemData(dataJson === null
-      ? commandItemDataSerializer.getDefault()
-      : commandItemDataSerializer.fromJson(dataJson));
-    return { kind: "item", id: entity.properties.id, data, baseline: cloneItemData(data) };
+    const data = cloneItemData(commandItemDataSerializer.fromEntityData(entityData));
+    return {
+      kind: "item",
+      id: entity.properties.id,
+      data,
+      baseline: cloneItemData(data),
+      extends: entityData.extends,
+    };
   }
-  const data = cloneFolderData(dataJson === null
+  const data = cloneFolderData(entityData.dataJson === null
     ? commandFolderDataSerializer.getDefault()
-    : commandFolderDataSerializer.fromJson(dataJson));
-  return { kind: "folder", id: entity.properties.id, data, baseline: cloneFolderData(data) };
+    : commandFolderDataSerializer.fromJson(entityData.dataJson));
+  return {
+    kind: "folder",
+    id: entity.properties.id,
+    data,
+    baseline: cloneFolderData(data),
+    extends: entityData.extends,
+  };
 }
 
 function requireDraft(): CommandEditorDraft {
@@ -377,14 +390,17 @@ async function save(): Promise<boolean> {
       if (folder === null) throw new Error("Command folder is no longer available");
       await props.treeView.controller.updateEntityData(
         { kind: "folder", path: folder.path },
-        commandFolderDataSerializer.toJson(cloneFolderData(current.data)),
+        {
+          dataJson: commandFolderDataSerializer.toJson(cloneFolderData(current.data)),
+          extends: current.extends,
+        },
       );
     } else {
       const item = props.treeView.getItemById(current.id);
       if (item === null) throw new Error("Command item is no longer available");
       await props.treeView.controller.updateEntityData(
         { kind: "item", path: item.path },
-        commandItemDataSerializer.toJson(cloneItemData(current.data)),
+        commandItemDataSerializer.toEntityData(cloneItemData(current.data), current.extends),
       );
     }
     const latest = draft.value;
@@ -889,9 +905,19 @@ function reportTerminalLastLine(): void {
 </script>
 
 <template>
-  <p v-if="isLoading" class="command-editor-state" role="status">Loading Command data...</p>
-  <p v-else-if="loadError.length > 0" class="command-editor-state" role="status">
-    Command data is unavailable.
+  <p
+    v-if="isLoading"
+    class="command-editor-state command-editor-state--page"
+    role="status"
+  >Loading Command data...</p>
+  <p
+    v-else-if="loadError.length > 0"
+    class="command-editor-state command-editor-state--page"
+    role="status"
+  >
+    {{ isTreeViewItem(entity)
+      ? `Command item file failed to load: ${loadError}`
+      : `Command folder file failed to load: ${loadError}` }}
   </p>
   <section v-else-if="draft?.kind === 'folder'" class="command-folder-editor">
     <header class="command-editor-toolbar">
@@ -1049,6 +1075,17 @@ function reportTerminalLastLine(): void {
 </template>
 
 <style scoped>
+.command-editor-state--page {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .command-folder-editor,
 .command-script-editor,
 .command-terminal {

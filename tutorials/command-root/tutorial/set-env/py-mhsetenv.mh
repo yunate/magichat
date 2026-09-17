@@ -3,7 +3,6 @@
   "id": "10000000-0000-4000-8000-000000000014",
   "data": {
     "scriptType": "python",
-    "content": "mhsetenv({\"py-mhsetenv\": \"py-mhsetenv\"})\nprint(\"py-mhsetenv\")",
     "selectedParamGroupId": "command",
     "paramGroups": [
       {
@@ -14,3 +13,7 @@
     ]
   }
 }
+
+---MH:script---
+mhsetenv({"py-mhsetenv": "py-mhsetenv"})
+print("py-mhsetenv")

@@ -3,7 +3,6 @@
   "id": "10000000-0000-4000-8000-000000000013",
   "data": {
     "scriptType": "node",
-    "content": "mhsetenv({ \"node-mhsetenv\": \"node-mhsetenv\" });\nconsole.log(\"node-mhsetenv.\");",
     "selectedParamGroupId": "command",
     "paramGroups": [
       {
@@ -14,3 +13,7 @@
     ]
   }
 }
+
+---MH:script---
+mhsetenv({ "node-mhsetenv": "node-mhsetenv" });
+console.log("node-mhsetenv.");

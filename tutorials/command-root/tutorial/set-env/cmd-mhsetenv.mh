@@ -3,7 +3,6 @@
   "id": "10000000-0000-4000-8000-000000000012",
   "data": {
     "scriptType": "cmd",
-    "content": "@echo off\ncall mhsetenv \"cmd-mhsetenv\" \"cmd-mhsetenv\"\nif errorlevel 1 exit /b %ERRORLEVEL%\necho cmd-mhsetenv.",
     "selectedParamGroupId": "command",
     "paramGroups": [
       {
@@ -14,3 +13,9 @@
     ]
   }
 }
+
+---MH:script---
+@echo off
+call mhsetenv "cmd-mhsetenv" "cmd-mhsetenv"
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo cmd-mhsetenv.

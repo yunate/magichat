@@ -325,7 +325,12 @@ export class TreeView {
       if (previewTabId !== null) {
         const previewIndex = workspace.tabs.findIndex((tab) => tab.id === previewTabId);
         if (previewIndex >= 0) {
-          workspace.tabs[previewIndex] = { kind: params.kind, id: params.id, isPinned: false };
+          workspace.tabs[previewIndex] = {
+            kind: params.kind,
+            id: params.id,
+            path: entity.path,
+            isPinned: false,
+          };
           workspace.previewTabId = params.id;
           if (workspace.activeTabId === previewTabId) {
             workspace.activeTabId = params.id;
@@ -336,7 +341,7 @@ export class TreeView {
     }
     const isNewTab = !workspace.tabs.some((tab) => tab.id === params.id);
     if (isNewTab) {
-      workspace.tabs.push({ kind: params.kind, id: params.id, isPinned: false });
+      workspace.tabs.push({ kind: params.kind, id: params.id, path: entity.path, isPinned: false });
     }
     if (params.openMode === "pinned") {
       this._pinTab(workspace, params.id, true);
@@ -482,13 +487,21 @@ export class TreeView {
   }
 
   private async _renameWorkspace(workspacePath: string, newName: string): Promise<void> {
+    const selectedWorkspaceRef = this._state.value.selectedWorkspaceRef;
+    const workspace = selectedWorkspaceRef?.workspacePath === workspacePath
+      ? this._state.value.workspace
+      : await this.dataProvider.getWorkspaceProperties(workspacePath);
+    if (workspace === null) throw new Error("TreeView workspace is not loaded");
     const targetPath = await this.dataProvider.renameWorkspace(workspacePath, newName);
+    const rebasedWorkspace = this._rebaseTabPaths(workspace, workspacePath, targetPath);
+    if (rebasedWorkspace !== workspace) {
+      await this.dataProvider.updateWorkspaceProperties(targetPath, rebasedWorkspace);
+    }
     const workspaceRefs = this._state.value.workspaceRefs.map((workspaceRef) => (
       workspaceRef.workspacePath === workspacePath
         ? { ...workspaceRef, workspacePath: targetPath, workspaceName: basename(targetPath) }
         : workspaceRef
     ));
-    const selectedWorkspaceRef = this._state.value.selectedWorkspaceRef;
     if (selectedWorkspaceRef?.workspacePath !== workspacePath) {
       this._setWorkspaceRefs(workspaceRefs);
       return;
@@ -502,7 +515,7 @@ export class TreeView {
         workspacePath: targetPath,
         workspaceName: basename(targetPath),
       },
-      workspace: this._state.value.workspace,
+      workspace: rebasedWorkspace,
       rootFolder: this._rebaseFolder(rootFolder, workspacePath, targetPath),
     });
   }
@@ -629,7 +642,7 @@ export class TreeView {
         savedItem,
       );
     }
-    this._commitRootFolder(rootFolder);
+    await this._commitRebasedRootFolder(rootFolder, item.path, targetPath);
     await this._activate({ kind: "item", id: itemId, openMode: "normal" });
   }
 
@@ -723,6 +736,15 @@ export class TreeView {
     if (params.kind === "workspace") {
       const root = this._rootForWorkspacePath(params.targetPath);
       if (root === null) throw new Error("TreeView clone storage root is missing");
+      const workspace = await this.dataProvider.getWorkspaceProperties(params.targetPath);
+      const rebasedWorkspace = this._rebaseTabPaths(
+        workspace,
+        params.sourcePath,
+        params.targetPath,
+      );
+      if (rebasedWorkspace !== workspace) {
+        await this.dataProvider.updateWorkspaceProperties(params.targetPath, rebasedWorkspace);
+      }
       this._setWorkspaceRefs([...this._state.value.workspaceRefs, {
         rootKey: root.key,
         workspacePath: params.targetPath,
@@ -808,7 +830,11 @@ export class TreeView {
         target,
       );
     }
-    this._commitRootFolder(rootFolder);
+    await this._commitRebasedRootFolder(
+      rootFolder,
+      params.sourcePath,
+      params.targetPath,
+    );
   }
 
   private async _expandAncestors(entityPath: string): Promise<void> {
@@ -876,6 +902,22 @@ export class TreeView {
       workspaceRefs: this._state.value.workspaceRefs,
       selectedWorkspaceRef: this._state.value.selectedWorkspaceRef,
       workspace: this._state.value.workspace,
+      rootFolder,
+    });
+  }
+
+  private async _commitRebasedRootFolder(
+    rootFolder: TreeViewFolder,
+    sourcePath: string,
+    targetPath: string,
+  ): Promise<void> {
+    const workspace = this._requireWorkspaceClone();
+    const rebasedWorkspace = this._rebaseTabPaths(workspace, sourcePath, targetPath);
+    if (rebasedWorkspace !== workspace) await this._saveWorkspace(rebasedWorkspace);
+    this._install({
+      workspaceRefs: this._state.value.workspaceRefs,
+      selectedWorkspaceRef: this._state.value.selectedWorkspaceRef,
+      workspace: rebasedWorkspace,
       rootFolder,
     });
   }
@@ -977,6 +1019,24 @@ export class TreeView {
     };
   }
 
+  private _rebaseTabPaths(
+    workspace: TreeViewWorkspace,
+    sourcePath: string,
+    targetPath: string,
+  ): TreeViewWorkspace {
+    let hasChanged = false;
+    const tabs = workspace.tabs.map((tab) => {
+      if (tab.path !== sourcePath && !tab.path.startsWith(`${sourcePath}/`)) return tab;
+      hasChanged = true;
+      const relativePath = relative(sourcePath, tab.path);
+      return {
+        ...tab,
+        path: relativePath.length === 0 ? targetPath : join(targetPath, relativePath),
+      };
+    });
+    return hasChanged ? { ...workspace, tabs } : workspace;
+  }
+
   private _sortByOrder<TEntry extends { name: string }>(
     entries: readonly TEntry[],
     order: readonly string[],
@@ -1052,9 +1112,12 @@ export class TreeView {
     this._itemById = new Map();
     this._itemByPath = new Map();
     if (state.rootFolder !== null) this._indexFolder(state.rootFolder);
-    const tabs = state.workspace?.tabs.filter((tab) => (
-      tab.kind === "folder" ? this._folderById.has(tab.id) : this._itemById.has(tab.id)
-    )) ?? [];
+    const tabs = state.workspace?.tabs.filter((tab) => {
+      const entity = tab.kind === "folder"
+        ? this._folderById.get(tab.id)
+        : this._itemById.get(tab.id);
+      return entity?.path === tab.path;
+    }) ?? [];
     const workspace = state.workspace === null ? null : {
       ...state.workspace,
       tabs,
@@ -1076,18 +1139,20 @@ export class TreeView {
     workspace: TreeViewWorkspace,
     rootFolder: TreeViewFolder,
   ): TreeViewWorkspace {
-    const folderIds = new Set<string>();
-    const itemIds = new Set<string>();
+    const folderPathsById = new Map<string, string>();
+    const itemPathsById = new Map<string, string>();
     const pending = [rootFolder];
     while (pending.length > 0) {
       const folder = pending.pop();
       if (folder === undefined) continue;
-      folderIds.add(folder.properties.id);
-      for (const item of folder.items) itemIds.add(item.properties.id);
+      folderPathsById.set(folder.properties.id, folder.path);
+      for (const item of folder.items) itemPathsById.set(item.properties.id, item.path);
       pending.push(...folder.folders);
     }
     const tabs = workspace.tabs.filter((tab) => (
-      tab.kind === "folder" ? folderIds.has(tab.id) : itemIds.has(tab.id)
+      tab.kind === "folder"
+        ? folderPathsById.get(tab.id) === tab.path
+        : itemPathsById.get(tab.id) === tab.path
     ));
     if (tabs.length === workspace.tabs.length) return workspace;
     const activeTabId = workspace.activeTabId !== null

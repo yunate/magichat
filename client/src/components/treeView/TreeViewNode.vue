@@ -19,6 +19,7 @@ type TreeViewDragSource = {
 const props = defineProps<{
   folder: TreeViewFolder;
   selectedKeys: ReadonlySet<string>;
+  highlightedKeys: ReadonlySet<string>;
   renameTarget: RenameTarget;
   depth: number;
 }>();
@@ -242,6 +243,10 @@ function selectionKey(selection: TreeViewSelection): string {
 function isSelected(selection: TreeViewSelection): boolean {
   return props.selectedKeys.has(selectionKey(selection));
 }
+
+function isHighlighted(selection: TreeViewSelection): boolean {
+  return props.highlightedKeys.has(selectionKey(selection));
+}
 </script>
 
 <template>
@@ -251,6 +256,8 @@ function isSelected(selection: TreeViewSelection): boolean {
       :class="{
         'is-folder': true,
         'is-selected': isSelected({ kind: 'folder', id: folder.properties.id }),
+        'is-path-highlighted': isHighlighted({ kind: 'folder', id: folder.properties.id })
+          && !isSelected({ kind: 'folder', id: folder.properties.id }),
         'is-drop-before': dropIndicator?.kind === 'folder' && dropIndicator.id === folder.properties.id && dropIndicator.position === 'before',
         'is-drop-inside': dropIndicator?.kind === 'folder' && dropIndicator.id === folder.properties.id && dropIndicator.position === 'inside',
         'is-drop-after': dropIndicator?.kind === 'folder' && dropIndicator.id === folder.properties.id && dropIndicator.position === 'after',
@@ -325,6 +332,7 @@ function isSelected(selection: TreeViewSelection): boolean {
         :key="child.properties.id"
         :folder="child"
         :selected-keys="selectedKeys"
+        :highlighted-keys="highlightedKeys"
         :rename-target="renameTarget"
         :depth="depth + 1"
         @activate="forwardActivate"
@@ -427,6 +435,8 @@ function isSelected(selection: TreeViewSelection): boolean {
 .tree-row.is-item { font-weight: 400; }
 .tree-row:hover, .tree-row:focus-within { color: var(--color-text); background: var(--color-surface-hover, color-mix(in srgb, var(--color-surface-raised) 62%, var(--color-surface))); }
 .tree-row.is-selected { color: var(--color-text); background: var(--color-surface-selected); }
+.tree-row.is-path-highlighted { color: var(--color-text); }
+.tree-row.is-path-highlighted .tree-row__caret { color: var(--color-primary-emphasis); }
 .tree-row.is-drop-before::before, .tree-row.is-drop-after::after { position: absolute; z-index: 4; right: 0; left: 0; height: 2px; content: ""; background: var(--color-primary); pointer-events: none; }
 .tree-row.is-drop-before::before { top: -1px; }
 .tree-row.is-drop-after::after { bottom: -1px; }

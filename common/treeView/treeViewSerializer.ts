@@ -163,7 +163,12 @@ export class TreeViewFolderSerializer extends ISerializer<TreeViewFolder> {
 
 class TreeViewTabSerializer extends ISerializer<TreeViewTab> {
   public getDefault(): TreeViewTab {
-    return { kind: "item", id: "00000000-0000-4000-8000-000000000000", isPinned: false };
+    return {
+      kind: "item",
+      id: "00000000-0000-4000-8000-000000000000",
+      path: "C:/workspace/item.mh",
+      isPinned: false,
+    };
   }
 
   public validate(value: unknown): asserts value is TreeViewTab {
@@ -172,6 +177,7 @@ class TreeViewTabSerializer extends ISerializer<TreeViewTab> {
       throw new Error("TreeView tab kind is invalid");
     }
     ensureIdentifier(value.id, "TreeView tab id");
+    TreeViewPath.normalize(value.path, "TreeView tab path");
     ValidateUtils.ensureBoolean(value.isPinned, "TreeView tab isPinned must be a boolean");
   }
 }

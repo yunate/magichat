@@ -42,6 +42,7 @@ export type TreeViewFolder = {
 export type TreeViewTab = {
   kind: "folder" | "item";
   id: string;
+  path: string;
   isPinned: boolean;
 };
 

@@ -1083,6 +1083,8 @@ function reportTerminalLastLine(): void {
   padding: var(--space-6);
   margin: 0;
   overflow-wrap: anywhere;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
   text-align: center;
 }
 

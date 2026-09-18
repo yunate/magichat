@@ -129,6 +129,26 @@ const activeDraft = computed(() => {
 const selectedNodeKeys = computed<ReadonlySet<string>>(() => new Set(
   selectedNodes.value.map(selectionKey),
 ));
+const highlightedNodeKeys = computed<ReadonlySet<string>>(() => {
+  const keys = new Set(selectedNodeKeys.value);
+  const root = rootFolder.value;
+  if (root === null) return keys;
+  keys.delete(selectionKey({ kind: "folder", id: root.properties.id }));
+  const selectedPaths = selectedNodes.value.flatMap((selection) => {
+    const entity = resolveSelection(selection);
+    return entity === null ? [] : [entity.path];
+  });
+  const pending = [...root.folders];
+  while (pending.length > 0) {
+    const folder = pending.pop();
+    if (folder === undefined) continue;
+    if (selectedPaths.some((path) => path === folder.path || path.startsWith(`${folder.path}/`))) {
+      keys.add(selectionKey({ kind: "folder", id: folder.properties.id }));
+    }
+    pending.push(...folder.folders);
+  }
+  return keys;
+});
 const isMultiNodeMenu = computed(() => {
   const target = menu.value;
   const selection = menuTargetSelection(target);
@@ -869,6 +889,7 @@ onUnmounted(() => {
           <TreeViewNode
             :folder="rootFolder"
             :selected-keys="selectedNodeKeys"
+            :highlighted-keys="highlightedNodeKeys"
             :rename-target="renameTarget"
             :depth="0"
             @activate="activate"

@@ -149,6 +149,41 @@ mh{BUILD_MODE}
 mh{OUTPUT_DIR}
 ```
 
+### mhgetenv
+
+`mhgetenv` 在运行时读取已保存的 Macro. 不传 path 时读取当前 Workspace 选中的 Environment 参数组, 传 path 时只读取目标自身选中的参数组, 不合并其他作用域. 路径含义与 `mhsetenv` 相同, 同时支持 `--path=.` 和 `--path==.`.
+
+PowerShell:
+
+```powershell
+mhcall("B.mh")
+$value = mhgetenv "VALUE"
+$localValue = mhgetenv "--path==." "VALUE"
+```
+
+Node.js/TypeScript:
+
+```javascript
+const value = mhgetenv("VALUE");
+const localValue = mhgetenv("VALUE", ".");
+```
+
+Python:
+
+```python
+value = mhgetenv("VALUE")
+local_value = mhgetenv("VALUE", ".")
+```
+
+CMD 输出原值:
+
+```bat
+call mhgetenv "VALUE"
+call mhgetenv "--path==." "VALUE"
+```
+
+只读取已启用的 Key, 并解析选中参数组内的 Macro 依赖. 目标路径不存在, Key 不存在或未启用时返回空字符串 `""`, 与已有 Key 的空值不作区分. 路径语法错误, Workspace 不可用, 存储或权限错误, Macro 依赖错误以及 CLI/RPC 失败仍报错. PowerShell, Node.js 和 Python 会抛异常, CMD 返回非零退出码. B 使用不带 path 的 `mhsetenv` 更新 Workspace Environment 后, A 可以使用不带 path 的 `mhgetenv` 读取最新值. B 的局部 Macro 需要显式指定 B 的路径才能读取.
+
 ### mhcall
 
 `mhcall` 根据当前 Workspace 中的持久化路径查找 Command Item, 解析 Folder, Item 和选中的 Workspace Env 参数组中的 Macro, 然后同步执行目标脚本.

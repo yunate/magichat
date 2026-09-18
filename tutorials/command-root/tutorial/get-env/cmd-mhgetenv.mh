@@ -1,0 +1,21 @@
+{
+  "isDraft": false,
+  "id": "0ec7cf16-87fc-48d0-b59e-a1104774593b",
+  "data": {
+    "scriptType": "cmd",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+@echo off
+set "key=TEST_VALUE"
+call mhsetenv "%key%" "cmd-mhgetenv"
+call mhgetenv "%key%"

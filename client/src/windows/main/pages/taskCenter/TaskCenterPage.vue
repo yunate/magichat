@@ -17,18 +17,16 @@ import {
   TASK_UPDATED_EVENT,
   TASK_LOG_APPENDED_EVENT,
   TASK_DELETED_EVENT,
+  TASK_TEMPLATES_CHANGED_EVENT,
   gTaskUpdatedCenter,
   gTaskLogAppendedCenter,
   gTaskDeletedCenter,
+  gTaskTemplatesChangedCenter,
   type TaskLogAppendedEventPayload as TasksLogAppendedParams,
   type TasksDeletedEventPayload as TasksDeletedPush,
 } from "./taskCenter";
 import { gMainApplication } from "../../main";
 import { gMessageStore } from "../../../../messages/messageStore";
-import {
-  TASK_CENTER_CONFIG_KEY,
-  taskCenterConfigSerializer,
-} from "../../../../../../common/config/taskCenter";
 import type { TaskCreateParam } from "../../../../../../common/tasks/taskCreateParam";
 import type { TaskInfo } from "../../../../../../common/tasks/taskInfo";
 import type { TaskTemplate } from "../../../../../../common/tasks/taskTemplate";
@@ -43,7 +41,6 @@ type TaskCreateFormApi = Readonly<{
   showTemplateSaved: (name: string, operation: "updated" | "cloned") => void;
 }>;
 
-const configServerRpcObject = gMainApplication.window.getConfigServerRpcObject();
 const tasksServerRpcObject = gMainApplication.window.getTasksServerRpcObject();
 
 interface CategoryTab {
@@ -78,7 +75,6 @@ const isSubmitting = ref(false);
 const taskCreateForm = ref<TaskCreateFormApi | null>(null);
 const popupToast = ref<PopupToastHandle | null>(null);
 
-const maxParallelInput = ref<number | "">("");
 const logsById = reactive<Record<string, string[]>>({});
 const expandedIds = reactive(new Set<string>());
 const logLoadingIds = reactive(new Set<string>());
@@ -101,6 +97,7 @@ const tabButtonRefs: Record<TaskCategory, HTMLButtonElement | null> = {
 let unsubscribeUpdated: (() => void) | null = null;
 let unsubscribeLogAppended: (() => void) | null = null;
 let unsubscribeDeleted: (() => void) | null = null;
+let unsubscribeTemplatesChanged: (() => void) | null = null;
 let runNewRequestVersion = 0;
 
 // Ids removed by a tasks.deleted push while the initial listTasks() is in flight, so the stale
@@ -440,30 +437,6 @@ async function handleRevealLog(id: string): Promise<void> {
   }
 }
 
-async function saveMaxParallel(): Promise<void> {
-  try {
-    const value = normalizeMaxParallelInput(maxParallelInput.value);
-    await (await configServerRpcObject).setJson(
-      TASK_CENTER_CONFIG_KEY,
-      taskCenterConfigSerializer.toJson({ maxParallel: value }),
-    );
-    maxParallelInput.value = value > 0 ? value : "";
-    gMessageStore.pushMessage("success", "Concurrency limit saved.");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to save concurrency limit";
-    gMessageStore.pushMessage("error", message);
-    console.error("[taskCenter] failed to save concurrency limit", err);
-  }
-}
-
-function normalizeMaxParallelInput(value: number | ""): number {
-  if (value === "") return 0;
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
-    throw new Error("Max parallel must be 0 or a positive whole number.");
-  }
-  return value;
-}
-
 // Keep the return non-null while templates are still loading.
 function templateForType(type: TaskType): TaskTemplate {
   const builtin = templates.value.find((item) => item.builtin && item.type === type);
@@ -598,15 +571,12 @@ function removeTasks(payload: TasksDeletedPush): void {
 async function initialize(): Promise<void> {
   isInitializing = true;
   try {
-    const [loadedTasks, loadedTemplates, configJson] = await Promise.all([
+    const [loadedTasks, loadedTemplates] = await Promise.all([
       (await tasksServerRpcObject).listTasks(),
       (await tasksServerRpcObject).listTaskTemplates(),
-      (await configServerRpcObject).getJson(TASK_CENTER_CONFIG_KEY),
     ]);
-    const config = taskCenterConfigSerializer.fromJson(configJson);
     tasks.value = mergeSnapshot(loadedTasks);
     templates.value = loadedTemplates;
-    maxParallelInput.value = config.maxParallel > 0 ? config.maxParallel : "";
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load task center";
     gMessageStore.pushMessage("error", message);
@@ -638,6 +608,10 @@ onMounted(() => {
     appendLogs,
   );
   unsubscribeDeleted = gTaskDeletedCenter.registerEventHandler(TASK_DELETED_EVENT, removeTasks);
+  unsubscribeTemplatesChanged = gTaskTemplatesChangedCenter.registerEventHandler(
+    TASK_TEMPLATES_CHANGED_EVENT,
+    (nextTemplates) => { templates.value = [...nextTemplates]; },
+  );
   void initialize();
 });
 
@@ -645,6 +619,7 @@ onUnmounted(() => {
   unsubscribeUpdated?.();
   unsubscribeLogAppended?.();
   unsubscribeDeleted?.();
+  unsubscribeTemplatesChanged?.();
 });
 </script>
 
@@ -653,25 +628,6 @@ onUnmounted(() => {
     <PopupToast ref="popupToast" />
     <header class="task-center__header">
       <h1 class="task-center__title">Task Center</h1>
-      <form class="task-center__limit" @submit.prevent>
-        <label class="task-center__limit-label" for="task-center-max-parallel">
-          Max parallel:
-        </label>
-        <input
-          id="task-center-max-parallel"
-          v-model.number="maxParallelInput"
-          class="task-center__limit-input"
-          type="number"
-          min="0"
-          inputmode="numeric"
-          placeholder="0"
-          aria-describedby="task-center-limit-hint"
-          @change="saveMaxParallel"
-        />
-        <span id="task-center-limit-hint" class="task-center__limit-hint">
-          0 or empty = unlimited
-        </span>
-      </form>
     </header>
 
     <div
@@ -793,39 +749,6 @@ onUnmounted(() => {
 .task-center__title {
   margin: 0;
   font-size: 24px;
-}
-
-.task-center__limit {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.task-center__limit-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
-}
-
-.task-center__limit-input {
-  width: 80px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 14px;
-}
-
-.task-center__limit-input:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.task-center__limit-hint {
-  font-size: 12px;
-  color: var(--color-text-muted);
 }
 
 .task-center__tabs {

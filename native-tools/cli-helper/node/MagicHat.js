@@ -54,13 +54,31 @@ function mhsetenv(updates, targetPath) {
   runCli(args, "MagicHat environment update");
 }
 
-function mhsettaskstate(text) {
-  ensureNonBlankString(text, "Task state");
+function mhgetenv(key, targetPath) {
+  ensureNonBlankString(key, "Environment variable name");
+  const args = ["get-env"];
+  if (targetPath !== undefined) {
+    ensureNonBlankString(targetPath, "Macro path");
+    args.push(`--path=${targetPath}`);
+  }
+  args.push(key, "--json");
+  return JSON.parse(runCli(args, "MagicHat environment read", "pipe"));
+}
+
+function mhsettaskstate(text = "") {
+  if (typeof text !== "string") throw new TypeError("Task state must be a string.");
   runCli(["set-task-state", text], "MagicHat task state update");
 }
 
-function mhcleartaskstate() {
-  runCli(["clear-task-state"], "MagicHat task state clear");
+function mhsettasktitle(title = "") {
+  if (typeof title !== "string") throw new TypeError("Task title must be a string.");
+  runCli(["set-task-title", title], "MagicHat task title update");
+}
+
+function mhsettaskdetail(details) {
+  if (!Array.isArray(details)) throw new TypeError("Task details must be an array.");
+  for (const detail of details) ensureNonBlankString(detail, "Task detail");
+  runCli(["set-task-detail", ...details], "MagicHat task detail update");
 }
 
 function runCli(args, description, stdio = "inherit") {
@@ -93,6 +111,8 @@ function ensureNonBlankString(value, description) {
 
 globalThis.mhcall = mhcall;
 globalThis.mhsetenv = mhsetenv;
+globalThis.mhgetenv = mhgetenv;
 globalThis.mhsettaskstate = mhsettaskstate;
-globalThis.mhcleartaskstate = mhcleartaskstate;
-module.exports = { mhcall, mhsetenv, mhsettaskstate, mhcleartaskstate };
+globalThis.mhsettasktitle = mhsettasktitle;
+globalThis.mhsettaskdetail = mhsettaskdetail;
+module.exports = { mhcall, mhsetenv, mhgetenv, mhsettaskstate, mhsettasktitle, mhsettaskdetail };

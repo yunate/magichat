@@ -8,7 +8,8 @@ import type { TaskManager } from "../../tasks/taskManager";
 import type { CliHandler } from "./cliHandler";
 
 const SET_TASK_STATE_COMMAND = "set-task-state";
-const CLEAR_TASK_STATE_COMMAND = "clear-task-state";
+const SET_TASK_DETAIL_COMMAND = "set-task-detail";
+const SET_TASK_TITLE_COMMAND = "set-task-title";
 
 export class TaskStateCliHandler implements CliHandler {
   public constructor(taskManager: TaskManager) {
@@ -16,7 +17,9 @@ export class TaskStateCliHandler implements CliHandler {
   }
 
   public tryParse(args: readonly string[]): boolean {
-    return args[0] === SET_TASK_STATE_COMMAND || args[0] === CLEAR_TASK_STATE_COMMAND;
+    return args[0] === SET_TASK_STATE_COMMAND
+      || args[0] === SET_TASK_DETAIL_COMMAND
+      || args[0] === SET_TASK_TITLE_COMMAND;
   }
 
   public handle(
@@ -25,14 +28,29 @@ export class TaskStateCliHandler implements CliHandler {
   ): string {
     const command = args[0];
     const taskId = this._getTaskId(environment, command);
-    if (command === CLEAR_TASK_STATE_COMMAND) {
-      if (args.length !== 1) throw new Error("Usage: clear-task-state");
-      this._taskManager.clearTaskDisplayState(taskId);
-      return "Task state cleared.";
+    if (command === SET_TASK_TITLE_COMMAND) {
+      const title = args[1];
+      if (args.length > 2) throw new Error("Usage: set-task-title [<text>]");
+      if (title === undefined || title.trim().length === 0) {
+        this._taskManager.clearTaskTitle(taskId);
+        return "Task title cleared.";
+      }
+      this._taskManager.setTaskTitle(taskId, title);
+      return "Task title updated.";
+    }
+    if (command === SET_TASK_DETAIL_COMMAND) {
+      const displayDetails = args.slice(1);
+      if (displayDetails.some((detail) => detail.trim().length === 0)) {
+        throw new Error("Usage: set-task-detail [<line> ...]");
+      }
+      this._taskManager.setTaskDisplayDetails(taskId, displayDetails);
+      return "Task details updated.";
     }
     const displayState = args[1];
-    if (args.length !== 2 || displayState === undefined || displayState.trim().length === 0) {
-      throw new Error("Usage: set-task-state <text>");
+    if (args.length > 2) throw new Error("Usage: set-task-state [<text>]");
+    if (displayState === undefined || displayState.trim().length === 0) {
+      this._taskManager.clearTaskDisplayState(taskId);
+      return "Task state cleared.";
     }
     this._taskManager.setTaskDisplayState(taskId, displayState);
     return "Task state updated.";

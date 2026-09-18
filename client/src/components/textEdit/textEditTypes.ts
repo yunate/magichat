@@ -22,6 +22,23 @@ export type TextEditAdditionalParamScope = Readonly<{
 
 export type TextEditAdditionalParamsProvider = () => readonly TextEditAdditionalParamScope[];
 
+export type TextEditCompletion = Readonly<{
+  label: string;
+  detail: string;
+  documentation: string;
+  insertText: string;
+  isSnippet: boolean;
+}>;
+
+export type TextEditCompletionContext = Readonly<{
+  linePrefix: string;
+  word: string;
+}>;
+
+export type TextEditCompletionProvider = (
+  context: TextEditCompletionContext,
+) => readonly TextEditCompletion[];
+
 export type ResolvedTextEditParamGroup = Readonly<{
   id: string;
   name: string;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useTemplateRef, watch } from "vue";
-import type { TreeViewFolder, TreeViewItem } from "../../../../common/treeView";
+import type { TreeViewFolder, TreeViewItem } from "../../../../../common/treeView";
 
 type FolderOption = {
   folder: TreeViewFolder;

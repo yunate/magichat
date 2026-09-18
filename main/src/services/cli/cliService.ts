@@ -4,6 +4,7 @@ import { gCommandService } from "../command/commandService";
 import { gTaskManager } from "../tasks/taskManager";
 import { PrepareCliHandler } from "./handlers/prepareCliHandler";
 import { SetEnvCliHandler } from "./handlers/setEnvCliHandler";
+import { GetEnvCliHandler } from "./handlers/getEnvCliHandler";
 import { TaskStateCliHandler } from "./handlers/taskStateCliHandler";
 import { TestCliHandler } from "./handlers/testCliHandler";
 
@@ -11,6 +12,7 @@ export class CliService {
   public constructor() {
     this._handlers.push(new PrepareCliHandler(gCommandService));
     this._handlers.push(new SetEnvCliHandler(gCommandService));
+    this._handlers.push(new GetEnvCliHandler(gCommandService));
     this._handlers.push(new TaskStateCliHandler(gTaskManager));
     this._handlers.push(new TestCliHandler());
   }

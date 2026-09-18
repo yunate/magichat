@@ -65,7 +65,7 @@ Write-Output "Mode: mh{build.mode}"</code></pre>
         <span>03</span>
         <div>
           <h2>CLI helpers</h2>
-          <p><code>mhsetenv</code> and <code>mhcall</code> are available inside MagicHat Terminals and scripts started from them.</p>
+          <p><code>mhsetenv</code>, <code>mhgetenv</code>, and <code>mhcall</code> are available inside MagicHat Terminals and scripts started from them.</p>
         </div>
       </div>
 
@@ -105,6 +105,48 @@ Write-Output "Mode: mh{build.mode}"</code></pre>
         <div class="command-help__notice">
           <strong>Path rules</strong>
           <p>Without a path, values update the selected Workspace Environment group. Use <code>.</code> or <code>./</code> for the running Command, one or more <code>../</code> segments for ancestor Folders, and <code>__root__</code> for the current Workspace. Normal paths remain Workspace-relative.</p>
+        </div>
+      </div>
+
+      <div class="command-help__cli-group">
+        <div class="command-help__cli-heading">
+          <div>
+            <h3>mhgetenv</h3>
+            <p>Read a saved Macro value at runtime, including updates made by a called Command.</p>
+          </div>
+          <code>Selected group only</code>
+        </div>
+        <div class="command-help__examples">
+          <figure>
+            <figcaption>PowerShell</figcaption>
+            <pre><code>mhcall "tutorial/targets/update env.mh"
+$value = mhgetenv "BUILD_MODE"
+$localValue = mhgetenv "--path==." "BUILD_MODE"</code></pre>
+          </figure>
+          <figure>
+            <figcaption>CMD</figcaption>
+            <pre><code>call mhgetenv "BUILD_MODE"
+call mhgetenv "--path==." "BUILD_MODE"</code></pre>
+          </figure>
+          <figure>
+            <figcaption>Node.js</figcaption>
+            <pre><code>const value = mhgetenv("BUILD_MODE");
+const localValue = mhgetenv("BUILD_MODE", ".");</code></pre>
+          </figure>
+          <figure>
+            <figcaption>Python</figcaption>
+            <pre><code>value = mhgetenv("BUILD_MODE")
+local_value = mhgetenv("BUILD_MODE", ".")</code></pre>
+          </figure>
+        </div>
+        <div class="command-help__notice">
+          <strong>Scope and paths</strong>
+          <p>Without a path, read the selected Workspace Environment group. With a path, read only the target's selected parameter group, without merging parent Folders or Workspace Environment. Path rules match <code>mhsetenv</code>; both <code>--path=.</code> and <code>--path==.</code> are accepted. Only saved, enabled parameters participate, and Macro dependencies are resolved within the selected group. Unlike <code>mh{key}</code>, which is replaced before execution, <code>mhgetenv</code> reads the latest saved value when called. CMD prints the value; the other helpers return a string.</p>
+        </div>
+        <div class="command-help__notice">
+          <strong>Errors and empty values</strong>
+          <p>A missing target path, a missing or disabled Key, and an existing Key with an empty value all return <code>""</code>. These cases are intentionally not distinguished. Invalid path syntax, unavailable Workspaces, storage or permission failures, invalid Macro dependencies or cycles, and CLI or RPC failures remain errors. Read errors reported by <code>get-env</code> include the requested Key and the original reason.</p>
+          <p>PowerShell, Node.js, and Python throw exceptions. Use <code>try/catch</code> in PowerShell or Node.js, or <code>try/except</code> in Python, to handle them. CMD reports the error and returns a nonzero exit code; check <code>errorlevel</code> to stop the batch script explicitly.</p>
         </div>
       </div>
 
@@ -151,10 +193,10 @@ if errorlevel 1 exit /b %ERRORLEVEL%</code></pre>
         </div>
       </div>
       <ul class="command-help__tips">
-        <li><strong>Workspace Environment:</strong> use the code icon in the title bar to manage groups. The current group is used for Macro resolution and <code>mhsetenv</code>.</li>
+        <li><strong>Workspace Environment:</strong> use the code icon in the title bar to manage groups. The current group is used for Macro resolution and for <code>mhsetenv</code> and <code>mhgetenv</code> without a path.</li>
         <li><strong>Tree actions:</strong> right-click a Folder or Command to clone, rename, delete, copy its path, or open it in Explorer.</li>
         <li><strong>Parameter groups:</strong> create multiple groups and select the active group used for Macro resolution.</li>
-        <li><strong>CMD helpers:</strong> always invoke <code>mhcall</code> and <code>mhsetenv</code> with <code>call</code> so the batch script can continue.</li>
+        <li><strong>CMD helpers:</strong> always invoke <code>mhcall</code>, <code>mhsetenv</code>, and <code>mhgetenv</code> with <code>call</code> so the batch script can continue.</li>
       </ul>
     </section>
   </article>

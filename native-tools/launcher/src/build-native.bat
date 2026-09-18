@@ -28,11 +28,22 @@ set "SOURCE=%~dp0index.cpp"
 set "OUTPUT_DIR=%~dp0..\bin"
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
 set "OBJECT=%OUTPUT_DIR%\launcher.obj"
+set "RESOURCE=%OUTPUT_DIR%\launcher.res"
 set "EXECUTABLE=%OUTPUT_DIR%\launcher.exe"
 
-cl.exe /nologo /std:c++20 /O2 /EHsc /utf-8 /MT /W4 /WX /DUNICODE /D_UNICODE /I"%~dp0..\..\common\include" /Fo:"%OBJECT%" /Fe:"%EXECUTABLE%" "%SOURCE%" /link /INCREMENTAL:NO /SUBSYSTEM:WINDOWS shell32.lib ole32.lib user32.lib
-if errorlevel 1 exit /b 1
+pushd "%~dp0..\..\.."
+rc.exe /nologo /fo "%RESOURCE%" "%~dp0launcher.rc"
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
+
+cl.exe /nologo /std:c++20 /O2 /EHsc /utf-8 /MT /W4 /WX /DUNICODE /D_UNICODE /I"%~dp0..\..\common\include" /Fo:"%OBJECT%" /Fe:"%EXECUTABLE%" "%SOURCE%" "%RESOURCE%" /link /INCREMENTAL:NO /SUBSYSTEM:WINDOWS shell32.lib ole32.lib user32.lib
+set "EXIT_CODE=%ERRORLEVEL%"
+popd
+if not "%EXIT_CODE%"=="0" exit /b %EXIT_CODE%
 
 del /q "%OBJECT%" 2>nul
+del /q "%RESOURCE%" 2>nul
 echo Built %EXECUTABLE%
 exit /b 0

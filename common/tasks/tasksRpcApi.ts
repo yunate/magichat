@@ -1,6 +1,7 @@
 import type { TaskCreateParam } from "./taskCreateParam";
 import type { TaskInfo } from "./taskInfo";
 import type { TaskTemplate } from "./taskTemplate";
+import type { TaskTemplateRootConfig } from "../config/taskCenter";
 
 export interface TasksServerRpcApi {
   listTasks(): TaskInfo[];
@@ -11,6 +12,7 @@ export interface TasksServerRpcApi {
   getTaskLogs(id: string): string[];
   revealTaskLog(id: string): void;
   getTaskCreateParams(id: string): TaskCreateParam | null;
+  resolveTaskTemplateRoots(roots: readonly TaskTemplateRootConfig[]): TaskTemplateRootConfig[];
   listTaskTemplates(): TaskTemplate[];
   saveTaskTemplate(template: TaskTemplate): TaskTemplate;
   deleteTaskTemplate(id: string): boolean;

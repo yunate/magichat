@@ -2,7 +2,7 @@ import type {
   FileOccupancyClientRpcApi,
   FileOccupancyServerRpcApi,
   ProcessIdentity,
-  TerminateProcessResult,
+  TerminateProcessTreeResult,
 } from "../../../../common/fileOccupancy";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
@@ -54,8 +54,12 @@ export class FileOccupancyRpcObject implements FileOccupancyServerRpcApi {
     await operation.cancel();
   }
 
-  public terminateProcess(process: ProcessIdentity): Promise<TerminateProcessResult> {
-    return gUacBrokerService.getExistingFileOccupancyService().terminateProcess(process);
+  public getExistingProcessIds(processIds: readonly number[]): Promise<readonly number[]> {
+    return gUacBrokerService.getExistingFileOccupancyService().getExistingProcessIds(processIds);
+  }
+
+  public terminateProcessTree(process: ProcessIdentity): Promise<TerminateProcessTreeResult> {
+    return gUacBrokerService.getExistingFileOccupancyService().terminateProcessTree(process);
   }
 
   private async _reportQueryResult(

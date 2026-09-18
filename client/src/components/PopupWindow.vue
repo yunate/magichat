@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useSlots, useTemplateRef, watch } from "vue";
 import type { CSSProperties } from "vue";
 
-type PopupRole = "alert" | "dialog" | "listbox" | "status" | "tooltip";
+type PopupRole = "alert" | "dialog" | "listbox" | "menu" | "status" | "tooltip";
 
 type Props = {
   draggable?: boolean;

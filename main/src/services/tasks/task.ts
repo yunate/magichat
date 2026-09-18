@@ -28,6 +28,7 @@ export abstract class Task {
     }
     this._taskInfo = taskInfo;
     delete this._taskInfo.displayState;
+    delete this._taskInfo.displayDetails;
     this._createParam = taskCreateParam;
     this._callbacks = callbacks;
     this._logFile = TaskPaths.getTaskLogFile(taskInfo.id);
@@ -51,7 +52,11 @@ export abstract class Task {
   }
 
   serialize() {
-    const { displayState: _displayState, ...persistedInfo } = this._taskInfo;
+    const {
+      displayState: _displayState,
+      displayDetails: _displayDetails,
+      ...persistedInfo
+    } = this._taskInfo;
     return { info: persistedInfo, params: this._createParam };
   }
 
@@ -90,6 +95,22 @@ export abstract class Task {
     this._callbacks.onUpdated(this);
   }
 
+  setTitle(title: string): void {
+    if (this._taskInfo.status !== "running") throw new Error("Task is not running");
+    const normalizedTitle = title.trim();
+    if (normalizedTitle.length === 0) throw new Error("Task title must not be blank");
+    this._taskInfo.title = normalizedTitle;
+    this._taskInfo.updatedAt = Date.now();
+    this._callbacks.onUpdated(this);
+  }
+
+  clearTitle(): void {
+    if (this._taskInfo.status !== "running") throw new Error("Task is not running");
+    this._taskInfo.title = this._createParam.name;
+    this._taskInfo.updatedAt = Date.now();
+    this._callbacks.onUpdated(this);
+  }
+
   setDisplayState(displayState: string): void {
     if (this._taskInfo.status !== "running") throw new Error("Task is not running");
     if (displayState.trim().length === 0) throw new Error("Task state must not be blank");
@@ -102,6 +123,20 @@ export abstract class Task {
     if (this._taskInfo.status !== "running") throw new Error("Task is not running");
     if (this._taskInfo.displayState === undefined) return;
     delete this._taskInfo.displayState;
+    this._taskInfo.updatedAt = Date.now();
+    this._callbacks.onUpdated(this);
+  }
+
+  setDisplayDetails(displayDetails: readonly string[]): void {
+    if (this._taskInfo.status !== "running") throw new Error("Task is not running");
+    if (displayDetails.some((detail) => detail.trim().length === 0)) {
+      throw new Error("Task display details must not contain blank lines");
+    }
+    if (displayDetails.length === 0) {
+      delete this._taskInfo.displayDetails;
+    } else {
+      this._taskInfo.displayDetails = [...displayDetails];
+    }
     this._taskInfo.updatedAt = Date.now();
     this._callbacks.onUpdated(this);
   }

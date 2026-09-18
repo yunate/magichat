@@ -1,6 +1,6 @@
 {
   "isDraft": false,
-  "id": "33366b29-b58e-4ac7-9542-21c512af50ec",
+  "id": "9a90cf86-0988-4009-8019-dfac9cb27ae9",
   "data": {
     "scriptType": "powershell",
     "selectedParamGroupId": "command",
@@ -15,4 +15,8 @@
 }
 
 ---MH:script---
-mhsetenv --path=tutorial/set-env/ps1-mhsetenv.mh key value 
+function global:prompt {
+  "PS >>]"
+}
+
+Write-Host "Custom prompt enabled." -ForegroundColor Green

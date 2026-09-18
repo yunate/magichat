@@ -85,14 +85,14 @@
   !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
     Delete "$newStartMenuLink"
     !insertmacro createMenuDirectory
-    CreateShortCut "$newStartMenuLink" "$appExe" "" "$R2\MagicHat.exe" 0 "" "" "${APP_DESCRIPTION}"
+    CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
     WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
     StrCpy $launchLink "$newStartMenuLink"
   !endif
   !ifndef DO_NOT_CREATE_DESKTOP_SHORTCUT
     ${IfNot} ${isNoDesktopShortcut}
       Delete "$newDesktopLink"
-      CreateShortCut "$newDesktopLink" "$appExe" "" "$R2\MagicHat.exe" 0 "" "" "${APP_DESCRIPTION}"
+      CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
       WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
     ${EndIf}
   !endif
@@ -107,5 +107,7 @@
     RMDir /r /REBOOTOK "$LOCALAPPDATA\MagicHat\version"
     Delete /REBOOTOK "$LOCALAPPDATA\MagicHat\active-version"
     RMDir /REBOOTOK "$LOCALAPPDATA\MagicHat"
+    # Keep delayed deletions, but do not ask the user to restart immediately.
+    SetRebootFlag false
   ${EndIf}
 !macroend

@@ -13,5 +13,5 @@ Native C++20 Windows launcher for installed version selection.
 
 ## Build
 
-- `src/build-native.bat` compiles `src/index.cpp` as a statically linked x64 Windows executable with C++20 and warnings as errors.
+- `src/build-native.bat` compiles `src/index.cpp` as a statically linked x64 Windows executable with C++20 and warnings as errors, and embeds the packaged application icon through the Windows resource compiler.
 - The unified native manifest produces `bin/launcher.exe` before startup or packaging.

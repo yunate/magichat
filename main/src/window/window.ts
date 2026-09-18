@@ -16,6 +16,7 @@ import { gApplicationPaths } from "../infra/applicationPaths";
 const LATEST_RELEASE_URL = "https://github.com/ddmagichat/magichat-release/releases/tag/latest";
 const ISSUES_URL = "https://github.com/ddmagichat/magichat-release/issues";
 const DISCUSSIONS_URL = "https://github.com/ddmagichat/magichat-release/discussions";
+const KO_FI_URL = "https://ko-fi.com/magichat";
 
 export abstract class Window implements WindowServerRpcApi {
   public constructor(peer: BridgePeer) {
@@ -62,6 +63,28 @@ export abstract class Window implements WindowServerRpcApi {
 
   public async openDiscussionsPage(): Promise<void> {
     await shell.openExternal(DISCUSSIONS_URL);
+  }
+
+  public async openKoFiPage(): Promise<void> {
+    await shell.openExternal(KO_FI_URL);
+  }
+
+  public async openExternalUrl(url: string): Promise<void> {
+    if (url.length === 0 || url.length > 2048 || url !== url.trim()) {
+      throw new Error("External URL is invalid.");
+    }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error("External URL is invalid.");
+    }
+    if (parsedUrl.protocol !== "https:"
+      || parsedUrl.username.length > 0
+      || parsedUrl.password.length > 0) {
+      throw new Error("Only HTTPS URLs without credentials can be opened.");
+    }
+    await shell.openExternal(parsedUrl.href);
   }
 
   // implement WindowServerRpcApi's methods

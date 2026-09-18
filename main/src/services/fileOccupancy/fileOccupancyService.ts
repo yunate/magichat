@@ -5,7 +5,7 @@ import type {
   FileOccupancyUacServerRpcApi,
   FileOccupyingProcess,
   ProcessIdentity,
-  TerminateProcessResult,
+  TerminateProcessTreeResult,
 } from "../../../../common/fileOccupancy";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
@@ -72,9 +72,14 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
     this._remoteObject = remoteObject;
   }
 
-  public async terminateProcess(process: ProcessIdentity): Promise<TerminateProcessResult> {
+  public async terminateProcessTree(process: ProcessIdentity): Promise<TerminateProcessTreeResult> {
     FileOccupancyService._validateProcessIdentity(process);
-    return this._requireRemoteObject().terminateProcess(process);
+    return this._requireRemoteObject().terminateProcessTree(process);
+  }
+
+  public async getExistingProcessIds(processIds: readonly number[]): Promise<readonly number[]> {
+    FileOccupancyService._validateProcessIds(processIds);
+    return this._requireRemoteObject().getExistingProcessIds(processIds);
   }
 
   public queryCompleted(operationId: string, result: FileOccupancyQueryResult): void {
@@ -116,6 +121,19 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
     }
   }
 
+  private static _validateProcessIds(value: unknown): asserts value is readonly number[] {
+    if (!Array.isArray(value)
+      || value.length > FileOccupancyService._MAX_PROCESS_CHECK_COUNT
+      || value.some((processId) => (
+        typeof processId !== "number"
+        || !Number.isSafeInteger(processId)
+        || processId <= 0
+        || processId > 0xffff_ffff
+      ))) {
+      throw new Error("Process IDs are invalid");
+    }
+  }
+
   private static _validateProcessIdentity(value: unknown): asserts value is ProcessIdentity {
     if (value === null
       || typeof value !== "object"
@@ -124,6 +142,12 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
       || !Number.isSafeInteger(value.pid)
       || value.pid <= 0
       || value.pid > 0xffff_ffff
+      || !("targetPath" in value)
+      || typeof value.targetPath !== "string"
+      || value.targetPath.length === 0
+      || value.targetPath.length > 4096
+      || value.targetPath.includes("\0")
+      || value.targetPath.includes('"')
       || !("startedAt" in value)
       || typeof value.startedAt !== "string"
       || Number.isNaN(Date.parse(value.startedAt))
@@ -154,6 +178,7 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
     }
     const pid = "pid" in value ? value.pid : undefined;
     const name = "name" in value ? value.name : undefined;
+    const targetPath = "targetPath" in value ? value.targetPath : undefined;
     const executablePath = "executablePath" in value ? value.executablePath : undefined;
     const commandLine = "commandLine" in value ? value.commandLine : undefined;
     const owner = "owner" in value ? value.owner : undefined;
@@ -161,6 +186,10 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
     const startedAt = "startedAt" in value ? value.startedAt : undefined;
     if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0
       || typeof name !== "string"
+      || typeof targetPath !== "string"
+      || targetPath.length === 0
+      || targetPath.length > 32_767
+      || targetPath.includes("\0")
       || !FileOccupancyService._isNullableString(executablePath)
       || !FileOccupancyService._isNullableString(commandLine)
       || !FileOccupancyService._isNullableString(owner)
@@ -206,6 +235,7 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
   }
 
   private readonly _peer: BridgePeer;
+  private static readonly _MAX_PROCESS_CHECK_COUNT = 4096;
   private _remoteObject: RemoteObject<FileOccupancyUacServerRpcApi> | null = null;
   private readonly _pendingQueries = new Map<string, PendingFileOccupancyQuery>();
 }

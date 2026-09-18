@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ImagePlus, Save, X } from "@lucide/vue";
+import { onUnmounted, ref, useTemplateRef, watch } from "vue";
 import { vSelectAll } from "../../../../../../directives/vSelectAll";
 import ToolSplitLayout from "../../components/ToolSplitLayout.vue";
 import { generateQrDataUrl } from "./qr";
 
-const DEFAULT_TEXT = "https://www.microsoft.com";
+const DEFAULT_TEXT = "https://ko-fi.com/magichat";
+const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
+const imageInput = useTemplateRef<HTMLInputElement>("imageInput");
 const input = ref(DEFAULT_TEXT);
+const centerImageUrl = ref("");
 const dataUrl = ref("");
 const error = ref("");
 
 let latestToken = 0;
 
 watch(
-  input,
-  async (text) => {
+  [input, centerImageUrl],
+  async ([text, imageUrl]) => {
     const token = (latestToken += 1);
     if (text === "") {
       dataUrl.value = "";
@@ -22,7 +26,7 @@ watch(
       return;
     }
     try {
-      const url = await generateQrDataUrl(text);
+      const url = await generateQrDataUrl(text, imageUrl);
       if (token !== latestToken) return;
       dataUrl.value = url;
       error.value = "";
@@ -35,7 +39,39 @@ watch(
   { immediate: true },
 );
 
-function downloadQr(): void {
+onUnmounted(() => revokeCenterImageUrl(centerImageUrl.value));
+
+function openImagePicker(): void {
+  imageInput.value?.click();
+}
+
+function onImageChange(): void {
+  const element = imageInput.value;
+  if (element === null || element.files === null) return;
+  const file = element.files.item(0);
+  element.value = "";
+  if (file === null) return;
+  if (!SUPPORTED_IMAGE_TYPES.some((imageType) => imageType === file.type)) {
+    error.value = "Select a PNG, JPEG, or WebP image.";
+    return;
+  }
+
+  const previousUrl = centerImageUrl.value;
+  centerImageUrl.value = URL.createObjectURL(file);
+  revokeCenterImageUrl(previousUrl);
+}
+
+function clearCenterImage(): void {
+  const previousUrl = centerImageUrl.value;
+  centerImageUrl.value = "";
+  revokeCenterImageUrl(previousUrl);
+}
+
+function revokeCenterImageUrl(url: string): void {
+  if (url !== "") URL.revokeObjectURL(url);
+}
+
+function saveQr(): void {
   if (dataUrl.value === "") return;
   const link = document.createElement("a");
   link.href = dataUrl.value;
@@ -61,10 +97,40 @@ function downloadQr(): void {
         placeholder="Enter text or a URL..."
       ></textarea>
     </template>
+    <template #leftActions>
+      <div class="qr-tool__actions">
+        <button
+          type="button"
+          class="qr-tool__action"
+          title="Select center image"
+          aria-label="Select center image"
+          @click="openImagePicker"
+        ><ImagePlus :size="14" aria-hidden="true" /></button>
+        <button
+          v-if="centerImageUrl !== ''"
+          type="button"
+          class="qr-tool__action"
+          title="Remove center image"
+          aria-label="Remove center image"
+          @click="clearCenterImage"
+        ><X :size="14" aria-hidden="true" /></button>
+        <input
+          ref="imageInput"
+          class="qr-tool__file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          @change="onImageChange"
+        />
+      </div>
+    </template>
     <template #rightActions>
-      <button type="button" class="qr-tool__download" :disabled="dataUrl === ''" @click="downloadQr">
-        Download
-      </button>
+      <button
+        type="button"
+        class="qr-tool__action qr-tool__action--save"
+        title="Save transparent PNG"
+        :disabled="dataUrl === ''"
+        @click="saveQr"
+      ><Save :size="14" aria-hidden="true" /> Save</button>
     </template>
     <template #right>
       <div class="qr-tool__result">
@@ -99,24 +165,49 @@ function downloadQr(): void {
   box-shadow: inset 0 0 0 2px var(--color-primary);
 }
 
-.qr-tool__download {
-  padding: 2px var(--space-2);
+.qr-tool__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.qr-tool__action {
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-1);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
+  border-radius: var(--radius-small);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
   cursor: pointer;
 }
 
-.qr-tool__download:hover:not(:disabled) {
+.qr-tool__action--save {
+  padding-inline: var(--space-2);
+}
+
+.qr-tool__action:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-text);
 }
 
-.qr-tool__download:disabled {
+.qr-tool__action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.qr-tool__action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.qr-tool__file-input {
+  display: none;
 }
 
 .qr-tool__result {

@@ -2,14 +2,19 @@
 import { nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
 import type { CSSProperties } from "vue";
 import type { ContextMenuArea, ContextMenuPosition } from "./contextMenuTypes";
+import PopupWindow from "./PopupWindow.vue";
 
 type Props = {
   position: ContextMenuPosition;
   area: ContextMenuArea;
 };
 
+type PopupWindowHandle = {
+  getElement(): HTMLElement | null;
+};
+
 const props = defineProps<Props>();
-const menu = useTemplateRef<HTMLElement>("menu");
+const menu = useTemplateRef<PopupWindowHandle>("menu");
 const VIEWPORT_MARGIN = 8;
 const style = ref<CSSProperties>(createInitialStyle());
 
@@ -28,8 +33,8 @@ onUnmounted(() => {
 });
 
 function positionInArea(): void {
-  const element = menu.value;
-  if (element === null) return;
+  const element = menu.value?.getElement();
+  if (element == null) return;
   const bounds = element.getBoundingClientRect();
   const minimumX = props.area.left + VIEWPORT_MARGIN;
   const minimumY = props.area.top + VIEWPORT_MARGIN;
@@ -54,15 +59,17 @@ function createInitialStyle(): CSSProperties {
 
 <template>
   <Teleport to="body">
-    <div
+    <PopupWindow
       ref="menu"
       class="context-menu"
       :style="style"
-      role="menu"
+      is-externally-positioned
+      position-type="fixed"
+      semantic-role="menu"
       @pointerdown.stop
     >
       <slot></slot>
-    </div>
+    </PopupWindow>
   </Teleport>
 </template>
 
@@ -71,14 +78,16 @@ function createInitialStyle(): CSSProperties {
   position: fixed;
   z-index: 200;
   width: min(190px, calc(100vw - 16px));
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-1);
-  overflow-y: auto;
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-popup);
+}
+
+.context-menu :deep(.popup-window__content) {
+  padding: var(--space-1);
+  overflow-y: auto;
 }
 
 .context-menu :deep(button) {
@@ -95,6 +104,11 @@ function createInitialStyle(): CSSProperties {
 
 .context-menu :deep(button:hover) {
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.context-menu :deep(button:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 
 .context-menu :deep(button.is-danger) {

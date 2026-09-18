@@ -6,7 +6,7 @@ import type {
   FileOccupancyUacServerRpcApi,
   FileOccupyingProcess,
   ProcessIdentity,
-  TerminateProcessResult,
+  TerminateProcessTreeResult,
 } from "../../../../common/fileOccupancy";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
@@ -61,25 +61,72 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
     operation.child?.kill();
   }
 
-  public async terminateProcess(process: ProcessIdentity): Promise<TerminateProcessResult> {
+  public getExistingProcessIds(processIds: readonly number[]): readonly number[] {
+    FileOccupancyUacRpcObject._validateProcessIds(processIds);
+    return processIds.filter(FileOccupancyUacRpcObject._isProcessRunning);
+  }
+
+  public async terminateProcessTree(process: ProcessIdentity): Promise<TerminateProcessTreeResult> {
     FileOccupancyUacRpcObject._validateProcessIdentity(process);
-    const details = await this._queryProcesses(process.executablePath);
+    const details = await this._queryProcesses(process.targetPath);
     const current = details.find((item) => item.pid === process.pid);
     if (current === undefined) return { status: "alreadyExited" };
-    if (current.startedAt !== process.startedAt) return { status: "stale" };
-    try {
-      processKill(process.pid);
-    } catch (error) {
-      if (!FileOccupancyUacRpcObject._isProcessRunning(process.pid)) {
-        return { status: "alreadyExited" };
-      }
-      throw error;
+    if (current.startedAt !== process.startedAt
+      || current.executablePath?.toLowerCase() !== process.executablePath.toLowerCase()) {
+      return { status: "stale" };
     }
+    await FileOccupancyUacRpcObject._terminateProcessTree(process.pid);
     return { status: "terminated" };
+  }
+
+  private static async _terminateProcessTree(processId: number): Promise<void> {
+    const systemRoot = process.env.SystemRoot;
+    if (systemRoot === undefined || !path.isAbsolute(systemRoot)) {
+      throw new Error("Windows system root is unavailable");
+    }
+    const child = spawn(
+      path.join(systemRoot, "System32", "taskkill.exe"),
+      ["/PID", String(processId), "/T", "/F"],
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+    );
+    const stderr: Buffer[] = [];
+    let stderrLength = 0;
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrLength += chunk.length;
+      if (stderrLength <= FileOccupancyUacRpcObject._MAX_ERROR_LENGTH) stderr.push(chunk);
+    });
+    const exitCode = await FileOccupancyUacRpcObject._waitForExit(child);
+    if (exitCode === 0) return;
+    const detail = Buffer.concat(stderr).toString("utf8").trim();
+    throw new Error(detail.length > 0
+      ? `taskkill failed: ${detail}`
+      : `taskkill exited with code ${exitCode ?? "unknown"}`);
   }
 
   private static _ensureNonBlankString(value: unknown, message: string): asserts value is string {
     if (typeof value !== "string" || value.trim().length === 0) throw new Error(message);
+  }
+
+  private static _isProcessRunning(processId: number): boolean {
+    try {
+      process.kill(processId, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private static _validateProcessIds(value: unknown): asserts value is readonly number[] {
+    if (!Array.isArray(value)
+      || value.length > FileOccupancyUacRpcObject._MAX_PROCESS_CHECK_COUNT
+      || value.some((processId) => (
+        typeof processId !== "number"
+        || !Number.isSafeInteger(processId)
+        || processId <= 0
+        || processId > 0xffff_ffff
+      ))) {
+      throw new Error("Process IDs are invalid");
+    }
   }
 
   private static _validateOperationId(value: unknown): asserts value is string {
@@ -106,6 +153,12 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
       || !Number.isSafeInteger(value.pid)
       || value.pid <= 0
       || value.pid > 0xffff_ffff
+      || !("targetPath" in value)
+      || typeof value.targetPath !== "string"
+      || value.targetPath.length === 0
+      || value.targetPath.length > 4096
+      || value.targetPath.includes("\0")
+      || value.targetPath.includes('"')
       || !("startedAt" in value)
       || typeof value.startedAt !== "string"
       || Number.isNaN(Date.parse(value.startedAt))
@@ -116,15 +169,6 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
       || value.executablePath.includes("\0")
       || value.executablePath.includes('"')) {
       throw new Error("Process identity is invalid");
-    }
-  }
-
-  private static _isProcessRunning(processId: number): boolean {
-    try {
-      process.kill(processId, 0);
-      return true;
-    } catch {
-      return false;
     }
   }
 
@@ -188,7 +232,7 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
     if (exitCode !== 0 || isOutputTooLarge) {
       const detail = Buffer.concat(stderr).toString("utf8").trim();
       if (detail.length > 0) console.error(`ddwhouses query failed: ${detail}`);
-      if (isOutputTooLarge) throw new Error("ddwhouses output is too large");
+      if (isOutputTooLarge) throw new Error("Too many results. Enter a more specific path.");
       throw new Error(`ddwhouses exited with code ${exitCode ?? "unknown"}`);
     }
     const output = Buffer.concat(stdout);
@@ -217,12 +261,13 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
       record[key] = match[2].trimEnd();
     }
     if (record !== null) records.push(record);
-    const processesById = new Map<number, FileOccupyingProcess>();
+    const processesByTargetAndId = new Map<string, FileOccupyingProcess>();
     for (const item of records) {
       const process = FileOccupancyUacRpcObject._toProcess(item);
-      if (!processesById.has(process.pid)) processesById.set(process.pid, process);
+      const key = JSON.stringify([process.targetPath, process.pid]);
+      if (!processesByTargetAndId.has(key)) processesByTargetAndId.set(key, process);
     }
-    return [...processesById.values()];
+    return [...processesByTargetAndId.values()];
   }
 
   private static _toProcess(record: ProcessRecord): FileOccupyingProcess {
@@ -242,6 +287,7 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
     return {
       pid,
       name: record.Process,
+      targetPath: record.File,
       executablePath: record.Executable === "" ? null : record.Executable,
       commandLine: record["Command Line"] === "" ? null : record["Command Line"],
       owner: record.User === "" ? null : record.User,
@@ -296,12 +342,9 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
 
   private static readonly _MAX_OUTPUT_LENGTH = 4 * 1024 * 1024;
   private static readonly _MAX_ERROR_LENGTH = 64 * 1024;
+  private static readonly _MAX_PROCESS_CHECK_COUNT = 4096;
   private readonly _peer: BridgePeer;
   private readonly _executablePath: string;
   private readonly _operations = new Map<string, QueryOperation>();
   private _notifier: RemoteObject<FileOccupancyUacClientRpcApi> | null = null;
-}
-
-function processKill(processId: number): void {
-  process.kill(processId);
 }

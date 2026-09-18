@@ -247,6 +247,22 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     );
   }
 
+  public async checkEntitiesIntegrity(entities: TreeViewEntityDataParams[]): Promise<boolean[]> {
+    ValidateUtils.ensureArray(entities, "TreeView entities must be an array");
+    return entities.map((entity) => {
+      ValidateUtils.ensureRecord(entity);
+      if (entity.kind === "item") return PathUtil.isFile(this._resolveItemFile(entity.path));
+      if (entity.kind === "folder" || entity.kind === "workspace") {
+        const directory = TreeViewPath.normalize(entity.path, "TreeView entity path");
+        if (!PathUtil.isDirectory(directory)) return false;
+        if (!PathUtil.isFile(path.join(directory, FOLDER_FILE_NAME))) return false;
+        return entity.kind === "folder"
+          || PathUtil.isFile(path.join(directory, WORKSPACE_FILE_NAME));
+      }
+      throw new Error("TreeView entity kind is invalid");
+    });
+  }
+
   public async getItem(itemPath: string): Promise<TreeViewItem> {
     const itemFile = this._resolveItemFile(itemPath);
     PathUtil.ensureFileExist(itemFile);
@@ -714,8 +730,9 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
 
   private async _deleteFolder(folderPath: string): Promise<void> {
     const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
-    PathUtil.ensureFolderExist(folderDirectory);
     const workspaceDirectory = this._findWorkspaceDirectory(folderDirectory);
+    if (!fs.existsSync(folderDirectory)) return;
+
     if (PathUtil.resolve(folderDirectory) !== workspaceDirectory) {
       const parent = path.dirname(folderDirectory);
       this._ensureOrderMetadataWritable(parent);
@@ -726,7 +743,8 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
 
   private async _deleteItem(itemPath: string): Promise<void> {
     const itemFile = this._resolveItemFile(itemPath);
-    PathUtil.ensureFileExist(itemFile);
+    if (!fs.existsSync(itemFile)) return;
+
     this._removeOrder(
       path.dirname(itemFile),
       "item",

@@ -1,0 +1,21 @@
+{
+  "isDraft": false,
+  "id": "6defa06e-5707-4b35-93b0-b86f0390678b",
+  "data": {
+    "scriptType": "node",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+const key = "TEST_VALUE";
+mhsetenv({ [key]: "node-mhgetenv" });
+const value = mhgetenv(key);
+console.log(value);

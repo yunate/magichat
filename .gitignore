@@ -11,7 +11,6 @@ data/
 *.tsbuildinfo
 *.log
 *.p12
-*.pfx
 __pycache__/
 *.py[cod]
 .env

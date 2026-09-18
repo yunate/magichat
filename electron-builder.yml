@@ -47,6 +47,10 @@ asarUnpack:
 win:
   icon: build/appIcon.ico
   forceCodeSigning: false
+  signtoolOptions:
+    sign: build/windows-sign.js
+    signingHashAlgorithms:
+      - sha256
   signExts:
     - .exe
   target:

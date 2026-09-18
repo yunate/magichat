@@ -8,12 +8,12 @@ Shared task entities, task-specific definitions, and runtime serializers.
 - `taskCreateParam.ts`, `taskInfo.ts`, and `taskTemplate.ts` own the outer entities and directly exported serializers; they are not registered in a global serializer table.
 - `scriptTaskDefinition.ts` owns script-specific types and leaf serializers. Variable validation delegates to `MacroParser` through a temporary map.
 - Supported script types are PowerShell, Node.js, Python, and CMD. Bash is not part of the shared `ScriptType` contract.
-- `tasksRpcApi.ts` defines both Task RPC directions: `TasksServerRpcApi` is implemented by server and called by client; `TaskEventsClientRpcApi` is implemented by client and called by server.
+- `tasksRpcApi.ts` defines both Task RPC directions: `TasksServerRpcApi` is implemented by server and called by client, including template-root resolution; `TaskEventsClientRpcApi` is implemented by client and called by server.
 
 ## Contracts
 
 - `TaskCreateParam` is the complete discriminated creation descriptor. Its required non-blank `name` and required `canResume` fields are shared outer creation metadata, while the optional `params` field is the task-specific `TaskSepctialCreateParam<K>` leaf selected and validated through the registry.
-- `TaskInfo.displayState` is optional script-reported runtime text. It is broadcast to clients but excluded from persisted Task info and cleared when constructing a Task from stored data. It remains independent of lifecycle `status` and does not affect scheduling, completion, or resume behavior.
+- `TaskInfo.displayState` and `displayDetails` are optional script-reported runtime presentation. State is one summary line; details are ordered non-blank lines shown only while expanded. Both are broadcast to clients, excluded from persisted Task info, and cleared when constructing a Task from stored data. They remain independent of lifecycle `status` and do not affect scheduling, completion, or resume behavior.
 - `TasksServerRpcApi.getTaskLogs` returns the bounded inline tail. `revealTaskLog` reveals the current log file through Main without transferring full log content over RPC.
 - Leaf create params contain only task-specific fields and do not repeat outer creation fields such as `type`, `name`, or `canResume`.
 - Known task-type literals preserve their concrete serializer types. Dynamic strings return an unknown-valued serializer entry and reject unsupported types.

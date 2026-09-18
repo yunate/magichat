@@ -16,10 +16,10 @@ function Resolve-NativePath {
   }
 
   $fullPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $RelativePath))
-  $nativeRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd("\")
-  $nativePrefix = "$nativeRoot\"
-  if (-not $fullPath.StartsWith($nativePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Native project path escapes native-tools: $RelativePath"
+  $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..")).TrimEnd("\")
+  $workspacePrefix = "$workspaceRoot\"
+  if (-not $fullPath.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Native project path escapes workspace: $RelativePath"
   }
   return $fullPath
 }
@@ -61,11 +61,11 @@ function Get-SourceHash {
     }
   }
 
-  $nativeRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd("\")
+  $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..")).TrimEnd("\")
   $entries = $files |
     Sort-Object -Property FullName -Unique |
     ForEach-Object {
-      $relativePath = $_.FullName.Substring($nativeRoot.Length + 1).Replace("\", "/")
+      $relativePath = $_.FullName.Substring($workspaceRoot.Length + 1).Replace("\", "/")
       $fileHash = Get-Sha256Hash $_.FullName
       "$relativePath|$fileHash"
     }

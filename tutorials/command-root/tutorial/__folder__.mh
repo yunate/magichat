@@ -4,11 +4,10 @@
   "folderOrder": [
     "set-env",
     "targets",
-    "call"
+    "call",
+    "get-env"
   ],
-  "itemOrder": [
-    "Untitled command"
-  ],
+  "itemOrder": [],
   "data": {
     "selectedParamGroupId": "folder",
     "paramGroups": [

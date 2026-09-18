@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CircleHelp, Copy } from "@lucide/vue";
+import { ChevronRight, CircleHelp, Coffee, Copy, ExternalLink } from "@lucide/vue";
 import { onMounted, onUnmounted, ref } from "vue";
 import {
   MAX_UPDATE_CHECK_DELAY_SECONDS,
@@ -10,6 +10,8 @@ import {
   updateConfigSerializer,
   type UpdateCheckDelaySeconds,
 } from "../../../../../common/config/update";
+import kofiDonateQrUrl from "../../../assets/kofi-donate.png";
+import wechatDonateQrUrl from "../../../assets/wechat-donate.png";
 import { showAlertDialog } from "../../../components/confirmDialog";
 import { APP_VERSION } from "../../../environment";
 import { gMessageStore } from "../../../messages/messageStore";
@@ -151,6 +153,13 @@ async function openDiscussionsPage(): Promise<void> {
   await openExternalPage("discussions", async () => {
     const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
     await windowRpcObject.openDiscussionsPage();
+  });
+}
+
+async function openKoFiPage(): Promise<void> {
+  await openExternalPage("Ko-fi", async () => {
+    const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
+    await windowRpcObject.openKoFiPage();
   });
 }
 
@@ -362,6 +371,53 @@ async function onCheckDelayChange(): Promise<void> {
                 </dd>
               </div>
             </dl>
+          </section>
+
+          <section class="about-section" aria-labelledby="donation-title">
+            <details class="about-donation">
+              <summary>
+                <ChevronRight class="about-donation__chevron" :size="15" aria-hidden="true" />
+                <span id="donation-title" class="about-donation__title">
+                  What, you want to buy me a coffee?
+                  <Coffee :size="15" aria-hidden="true" />
+                </span>
+              </summary>
+              <ul class="about-donation__list">
+                <li>
+                  <button
+                    type="button"
+                    class="about-donation__item about-donation__item--link"
+                    title="https://ko-fi.com/magichat"
+                    :disabled="isExternalPageOpening"
+                    @click="openKoFiPage"
+                  >
+                    <img
+                      class="about-donation__image"
+                      :src="kofiDonateQrUrl"
+                      alt="Ko-fi donation QR code"
+                    >
+                    <span class="about-donation__description">
+                      <strong>Ko-fi</strong>
+                      <small class="about-donation__url">
+                        ko-fi.com/magichat
+                        <ExternalLink :size="12" aria-hidden="true" />
+                      </small>
+                    </span>
+                  </button>
+                </li>
+                <li class="about-donation__item">
+                  <img
+                    class="about-donation__image"
+                    :src="wechatDonateQrUrl"
+                    alt="WeChat donation QR code"
+                  >
+                  <span class="about-donation__description">
+                    <strong>WeChat</strong>
+                    <small>Scan the QR code with WeChat to pay.</small>
+                  </span>
+                </li>
+              </ul>
+            </details>
           </section>
         </div>
       </div>
@@ -657,5 +713,136 @@ async function onCheckDelayChange(): Promise<void> {
 
 .about-placeholder {
   color: var(--color-text-muted);
+}
+
+.about-donation summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.about-donation summary::-webkit-details-marker {
+  display: none;
+}
+
+.about-donation summary:hover {
+  color: var(--color-primary);
+}
+
+.about-donation summary:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.about-donation[open] summary {
+  margin-block-end: var(--space-2);
+}
+
+.about-donation__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.about-donation__chevron {
+  flex: 0 0 auto;
+  margin-inline-start: calc(var(--space-1) * -1);
+  color: var(--color-text-muted);
+  transition: transform 150ms ease-out;
+}
+
+.about-donation[open] .about-donation__chevron {
+  transform: rotate(90deg);
+}
+
+.about-donation__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+}
+
+.about-donation__item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--color-text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-small);
+  font: inherit;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.about-donation__item--link {
+  cursor: pointer;
+}
+
+.about-donation__item--link:hover:not(:disabled) {
+  color: var(--color-primary);
+}
+
+.about-donation__item--link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.about-donation__item--link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.about-donation__image {
+  width: 136px;
+  height: 136px;
+  flex: 0 0 136px;
+  padding: var(--space-1);
+  background: var(--color-generated-light-bg);
+  border-radius: var(--radius-medium);
+  object-fit: contain;
+  box-sizing: border-box;
+}
+
+.about-donation__description {
+  min-width: 0;
+  min-height: 36px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.about-donation__description strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.about-donation__description small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.about-donation__url {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
 }
 </style>

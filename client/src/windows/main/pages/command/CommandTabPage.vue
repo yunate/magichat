@@ -44,6 +44,8 @@ import SplitContainer from "../../../../components/SplitContainer.vue";
 import { TextEditComponent } from "../../../../components/textEdit";
 import type {
   TextEditAdditionalParamScope,
+  TextEditCompletion,
+  TextEditCompletionContext,
   TextEditParamGroup,
   TextEditTextResolution,
 } from "../../../../components/textEdit";
@@ -129,6 +131,32 @@ const scriptTypeOptions = SCRIPT_TYPES.map((scriptType) => ({
   value: scriptType,
   label: scriptType,
 }));
+const SCRIPT_HELPERS: readonly Readonly<{
+  name: string;
+  description: string;
+  insertText: Readonly<Record<ScriptType, string>>;
+}>[] = [
+  {
+    name: "mhsetenv",
+    description: "Persist Macro values in the selected Workspace Environment group or an optional target path.",
+    insertText: {
+      powershell: 'mhsetenv "${1:KEY}" "${2:value}"',
+      cmd: 'call mhsetenv "${1:KEY}" "${2:value}"',
+      node: 'mhsetenv({ "${1:KEY}": "${2:value}" });',
+      python: 'mhsetenv({"${1:KEY}": "${2:value}"})',
+    },
+  },
+  {
+    name: "mhcall",
+    description: "Run another saved Command synchronously and continue after it finishes.",
+    insertText: {
+      powershell: 'mhcall "${1:path/to/command.mh}"',
+      cmd: 'call mhcall "${1:path/to/command.mh}"',
+      node: 'mhcall("${1:path/to/command.mh}");',
+      python: 'mhcall("${1:path/to/command.mh}")',
+    },
+  },
+];
 
 const isDirty = computed(() => draft.value !== null && isDraftDirty(draft.value));
 const scriptType = computed(() => {
@@ -389,6 +417,24 @@ function selectedParamGroupUpdateHandler(groupId: string | null): void {
 function itemContentUpdateHandler(content: string): void {
   const current = requireDraft();
   if (current.kind === "item") replaceDraft({ ...current, data: { ...current.data, content } });
+}
+
+function getScriptCompletions(context: TextEditCompletionContext): readonly TextEditCompletion[] {
+  const scriptType = getItemDraft().data.scriptType;
+  const partialName = /\b(mh[a-z]*)$/iu.exec(context.linePrefix)?.[1];
+  if (partialName === undefined) return [];
+  const hasCallPrefix = /\bcall\s+mh[a-z]*$/iu.test(context.linePrefix);
+  return SCRIPT_HELPERS
+    .filter((helper) => helper.name.startsWith(partialName.toLowerCase()))
+    .map((helper) => ({
+      label: helper.name,
+      detail: "Command helper",
+      documentation: helper.description,
+      insertText: scriptType === "cmd" && hasCallPrefix
+        ? helper.insertText[scriptType].slice("call ".length)
+        : helper.insertText[scriptType],
+      isSnippet: true,
+    }));
 }
 
 function updateItemScriptType(scriptType: ScriptType): void {
@@ -1017,6 +1063,7 @@ function reportTerminalLastLine(): void {
         :param-priority-description="PARAM_PRIORITY_DESCRIPTION"
         :text-identity="entity.properties.id"
         :script-type="getItemDraft().data.scriptType"
+        :get-completions="getScriptCompletions"
         @update-param-groups="paramGroupsUpdateHandler"
         @update-selected-group-id="selectedParamGroupUpdateHandler"
         @update-text="itemContentUpdateHandler"

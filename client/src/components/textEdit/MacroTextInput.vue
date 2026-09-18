@@ -136,9 +136,11 @@ function onPointerMove(event: PointerEvent): void {
     if (segment.kind !== "macro") continue;
     const element = macroElements.get(segment.index);
     if (element === undefined) continue;
-    const bounds = element.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right
-      || event.clientY < bounds.top || event.clientY > bounds.bottom) continue;
+    const bounds = Array.from(element.getClientRects()).find((rect) => (
+      event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom
+    ));
+    if (bounds === undefined) continue;
     isMacroHovered.value = true;
     hoveredIndex.value = segment.index;
     popupAnchor.value = bounds;

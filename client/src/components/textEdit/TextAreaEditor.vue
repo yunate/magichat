@@ -9,7 +9,11 @@ import {
   getMonacoLanguage,
   monaco,
 } from "./monacoRuntime";
-import type { MacroAnalysis, MacroDisplayDetail } from "./textEditTypes";
+import type {
+  MacroAnalysis,
+  MacroDisplayDetail,
+  TextEditCompletionProvider,
+} from "./textEditTypes";
 
 type Props = {
   value: string;
@@ -17,9 +21,11 @@ type Props = {
   macroAnalysis: MacroAnalysis | null;
   ensureMacroAnalysis: () => MacroAnalysis;
   scriptType?: ScriptType;
+  getCompletions?: TextEditCompletionProvider;
   tabSize?: number;
   readonly?: boolean;
 };
+
 const props = withDefaults(defineProps<Props>(), { tabSize: 2, readonly: false });
 const emit = defineEmits<{
   update: [value: string];
@@ -34,7 +40,7 @@ let model: monaco.editor.ITextModel | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let unregisterThemeChangeHandler: (() => void) | null = null;
 let macroDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
-let macroCompletionDisposable: monaco.IDisposable | null = null;
+let completionDisposable: monaco.IDisposable | null = null;
 let isApplyingExternalValue = false;
 let hoveredMacroStart: number | null = null;
 
@@ -82,9 +88,10 @@ onMounted(() => {
     },
     showFoldingControls: "mouseover",
     tabSize: props.tabSize,
+    wordBasedSuggestions: "currentDocument",
     wordWrap: "off",
   });
-  macroCompletionDisposable = registerMacroCompletionProvider(model);
+  completionDisposable = registerCompletionProvider(model);
   editor.onDidChangeModelContent(() => {
     closeMacroPopup();
     if (!isApplyingExternalValue && model !== null) emit("update", model.getValue());
@@ -112,13 +119,13 @@ onUnmounted(() => {
   unregisterThemeChangeHandler?.();
   resizeObserver?.disconnect();
   macroDecorations?.clear();
-  macroCompletionDisposable?.dispose();
+  completionDisposable?.dispose();
   editor?.dispose();
   model?.dispose();
   unregisterThemeChangeHandler = null;
   resizeObserver = null;
   macroDecorations = null;
-  macroCompletionDisposable = null;
+  completionDisposable = null;
   editor = null;
   model = null;
 });
@@ -132,10 +139,10 @@ function createModel(): monaco.editor.ITextModel {
 function replaceModel(): void {
   if (editor === null) return;
   const previousModel = model;
-  macroCompletionDisposable?.dispose();
+  completionDisposable?.dispose();
   model = createModel();
   editor.setModel(model);
-  macroCompletionDisposable = registerMacroCompletionProvider(model);
+  completionDisposable = registerCompletionProvider(model);
   previousModel?.dispose();
   updateMacroDecorations();
 }
@@ -162,7 +169,7 @@ function updateModelOptions(): void {
   model?.updateOptions({ insertSpaces: true, tabSize: props.tabSize });
 }
 
-function registerMacroCompletionProvider(
+function registerCompletionProvider(
   completionModel: monaco.editor.ITextModel,
 ): monaco.IDisposable {
   return monaco.languages.registerCompletionItemProvider("*", {
@@ -172,7 +179,9 @@ function registerMacroCompletionProvider(
       const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1);
       const match = /mh\{\s*([A-Za-z0-9_.-]*)$/u.exec(linePrefix);
       const partialKey = match?.[1];
-      if (partialKey === undefined) return { suggestions: [] };
+      if (partialKey === undefined) {
+        return { suggestions: createCompletionSuggestions(currentModel, position, linePrefix) };
+      }
       const startColumn = position.column - partialKey.length;
       const hasClosingBrace = currentModel.getLineContent(position.lineNumber)[position.column - 1] === "}";
       const range = new monaco.Range(
@@ -195,6 +204,33 @@ function registerMacroCompletionProvider(
       };
     },
   });
+}
+
+function createCompletionSuggestions(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+  linePrefix: string,
+): monaco.languages.CompletionItem[] {
+  const getCompletions = props.getCompletions;
+  if (getCompletions === undefined) return [];
+  const word = currentModel.getWordUntilPosition(position);
+  const range = new monaco.Range(
+    position.lineNumber,
+    word.startColumn,
+    position.lineNumber,
+    word.endColumn,
+  );
+  return getCompletions({ linePrefix, word: word.word }).map((completion) => ({
+    label: completion.label,
+    kind: monaco.languages.CompletionItemKind.Function,
+    detail: completion.detail,
+    documentation: completion.documentation,
+    insertText: completion.insertText,
+    insertTextRules: completion.isSnippet
+      ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+      : monaco.languages.CompletionItemInsertTextRule.None,
+    range,
+  }));
 }
 
 function suppressFindButtonTooltips(event: MouseEvent): void {

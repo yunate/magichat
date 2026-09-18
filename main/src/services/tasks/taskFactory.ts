@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { ValidateUtils } from "../../../../common/validator";
 import { SCRIPT_TASK_KEY } from "../../../../common/tasks/scriptTaskDefinition";
 import type { TaskCreateParam } from "../../../../common/tasks/taskCreateParam";
@@ -8,18 +10,26 @@ import { readJsonFile, writeJsonFile } from "../../infra/jsonFile";
 import { getErrorMessage } from "../../utils/error";
 import { ScriptTask } from "./scriptTask";
 import { Task, type TaskCallbacks } from "./task";
-import { TaskPaths } from "./taskPaths";
 
 export type TaskRestoreResult =
   | { status: "restored"; task: Task }
   | { status: "malformed"; reason: "shape" | "idMismatch" };
 
 export class TaskFactory {
-  constructor(callbacks: TaskCallbacks, tmpDir: string) {
+  constructor(callbacks: TaskCallbacks, tmpDir: string, templatesFile: string) {
     this._callbacks = callbacks;
     this._tmpDir = tmpDir;
-    this._templatesFile = TaskPaths.templatesFile;
+    this._templatesFile = templatesFile;
     this._userTemplates = [];
+    fs.mkdirSync(path.dirname(this._templatesFile), { recursive: true });
+    this._loadTemplates();
+  }
+
+  useTemplatesFile(templatesFile: string): void {
+    if (templatesFile === this._templatesFile) return;
+    fs.mkdirSync(path.dirname(templatesFile), { recursive: true });
+    this._templatesFile = templatesFile;
+    this._userTemplates.splice(0);
     this._loadTemplates();
   }
 
@@ -157,6 +167,6 @@ export class TaskFactory {
 
   private readonly _callbacks: TaskCallbacks;
   private readonly _tmpDir: string;
-  private readonly _templatesFile: string;
+  private _templatesFile: string;
   private readonly _userTemplates: TaskTemplate[];
 }

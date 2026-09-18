@@ -46,6 +46,7 @@ const isSearchPatternValid = ref(true);
 const unregisterThemeChangeHandler = registerThemeChangeHandler(updateXtermTheme);
 const MIN_SCROLLBAR_THUMB_HEIGHT = 20;
 const RUNNING_CHECK_FUNNEL_DELAY_MS = 30;
+const RUNNING_CHECK_RESIZE_PAUSE_MS = 300;
 const IDLE_PROMPT_PATTERN = /^(?:PS|CMD) .+>$/;
 const oscColorOverrides = new TerminalOscColorOverrides();
 const runningCheckFunnelTask = new FunnelTask(() => {
@@ -158,6 +159,8 @@ function scheduleHeartbeatCheckRunning(): void {
 
 async function checkRunningOnce(): Promise<void> {
   if (isUnmounting) return;
+  if (lastResizeTime !== null
+    && performance.now() - lastResizeTime < RUNNING_CHECK_RESIZE_PAUSE_MS) return;
   const isRunning = isTerminalRunning();
   if (lastReportedRunning !== isRunning) {
     lastReportedRunning = isRunning;
@@ -198,9 +201,17 @@ function write(data: string): Promise<void> {
 }
 
 function getCurrentLine(): string {
-  const buffer = xterm?.buffer.active;
-  if (buffer === undefined) return "";
-  const cursorLineIndex = buffer.baseY + buffer.cursorY;
+  const terminal = xterm;
+  if (terminal === null) return "";
+  const buffer = terminal.buffer.active;
+  let cursorLineIndex = buffer.baseY + buffer.cursorY;
+  const cursorLineText = buffer.getLine(cursorLineIndex)?.translateToString(true).trim() ?? "";
+  const previousLastCell = buffer.getLine(cursorLineIndex - 1)?.getCell(terminal.cols - 1);
+  if (cursorLineText.length === 0
+    && previousLastCell !== undefined
+    && (previousLastCell.getChars().length > 0 || previousLastCell.getWidth() === 0)) {
+    cursorLineIndex -= 1;
+  }
   let firstLineIndex = cursorLineIndex;
   while (firstLineIndex > 0 && buffer.getLine(firstLineIndex)?.isWrapped === true) {
     firstLineIndex -= 1;
@@ -433,6 +444,28 @@ function getBufferColumn(row: number, stringOffset: number): number {
   return bufferColumn;
 }
 
+function selectTerminalText(terminal: XtermTerminal): void {
+  const buffer = terminal.buffer.active;
+  let firstRow = 0;
+  while (firstRow < buffer.length
+    && buffer.getLine(firstRow)?.translateToString(true).length === 0) {
+    firstRow += 1;
+  }
+  if (firstRow === buffer.length) {
+    terminal.clearSelection();
+    return;
+  }
+
+  let lastRow = buffer.length - 1;
+  let lastLineText = buffer.getLine(lastRow)?.translateToString(true) ?? "";
+  while (lastRow > firstRow && lastLineText.length === 0) {
+    lastRow -= 1;
+    lastLineText = buffer.getLine(lastRow)?.translateToString(true) ?? "";
+  }
+  const endColumn = getBufferColumn(lastRow, lastLineText.length);
+  terminal.select(0, firstRow, terminal.cols * (lastRow - firstRow) + endColumn);
+}
+
 function findNearestSearchResultIndex(): number {
   const terminal = xterm;
   if (terminal === null || searchMatches.length === 0) return 0;
@@ -614,7 +647,9 @@ function getDimensions(): { columns: number; rows: number } {
 }
 
 function scheduleResize(): void {
-  if (resizeScheduled || isUnmounting) return;
+  if (isUnmounting) return;
+  lastResizeTime = performance.now();
+  if (resizeScheduled) return;
   resizeScheduled = true;
   void enqueue(async () => {
     resizeScheduled = false;
@@ -643,6 +678,11 @@ function onCustomKeyEvent(event: KeyboardEvent): boolean {
   if (event.type !== "keydown" || terminal === null || !event.ctrlKey || event.altKey) return true;
 
   const key = event.key.toLowerCase();
+  if (key === "a" && !event.shiftKey) {
+    event.preventDefault();
+    selectTerminalText(terminal);
+    return false;
+  }
   if (key === "f" && !event.shiftKey) {
     event.preventDefault();
     openSearch();
@@ -684,12 +724,11 @@ function onTerminalDrop(event: DragEvent): void {
   event.preventDefault();
   const files = Array.from(event.dataTransfer?.files ?? []);
   if (files.length === 0) return;
-  const terminalType = activeTerminalType;
-  if (terminalType === null) return;
+  if (activeTerminalType === null) return;
   let writeData: string;
   try {
     writeData = files
-      .map((file) => quoteTerminalPath(window.electronFileSystem.getPathForFile(file), terminalType))
+      .map((file) => window.electronFileSystem.getPathForFile(file))
       .join(" ");
   } catch (error: unknown) {
     onOperationError(error);
@@ -710,13 +749,6 @@ function hasDraggedFiles(event: DragEvent): boolean {
 
 function isTerminalRunning(): boolean {
   return !IDLE_PROMPT_PATTERN.test(getCurrentLine());
-}
-
-function quoteTerminalPath(filePath: string, terminalType: TerminalType): string {
-  if (filePath.length === 0) return "";
-  return terminalType === "powershell"
-    ? `'${filePath.replaceAll("'", "''")}'`
-    : `"${filePath}"`;
 }
 
 async function disposeRuntime(): Promise<void> {
@@ -778,6 +810,7 @@ let scrollbarThumbHeight = 0;
 let scrollbarThumbTop = 0;
 let lastColumns = 0;
 let lastRows = 0;
+let lastResizeTime: number | null = null;
 let resizeScheduled = false;
 let isUnmounting = false;
 </script>

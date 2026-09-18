@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import { shell } from "electron";
-import { TASK_CENTER_CONFIG_KEY } from "../../../../common/config/taskCenter";
+import {
+  TASK_CENTER_CONFIG_KEY,
+  type TaskTemplateRootConfig,
+} from "../../../../common/config/taskCenter";
 import type { TaskCreateParam } from "../../../../common/tasks/taskCreateParam";
 import type { TaskInfo } from "../../../../common/tasks/taskInfo";
 import type { TaskTemplate } from "../../../../common/tasks/taskTemplate";
@@ -71,6 +74,10 @@ export class TaskManager implements TasksServerRpcApi {
     return task ? task.createParam : null;
   }
 
+  resolveTaskTemplateRoots(roots: readonly TaskTemplateRootConfig[]): TaskTemplateRootConfig[] {
+    return TaskPaths.resolveTemplateRoots(roots);
+  }
+
   setTaskPin(id: string, isPinned: boolean): void {
     const task = this._tasks.get(id);
     if (!task) return;
@@ -87,6 +94,24 @@ export class TaskManager implements TasksServerRpcApi {
     const task = this._tasks.get(id);
     if (!task) throw new Error("Task was not found");
     task.clearDisplayState();
+  }
+
+  setTaskTitle(id: string, title: string): void {
+    const task = this._tasks.get(id);
+    if (!task) throw new Error("Task was not found");
+    task.setTitle(title);
+  }
+
+  clearTaskTitle(id: string): void {
+    const task = this._tasks.get(id);
+    if (!task) throw new Error("Task was not found");
+    task.clearTitle();
+  }
+
+  setTaskDisplayDetails(id: string, displayDetails: readonly string[]): void {
+    const task = this._tasks.get(id);
+    if (!task) throw new Error("Task was not found");
+    task.setDisplayDetails(displayDetails);
   }
 
   // Live tasks retain runtime resources and must be stopped before deletion.
@@ -107,14 +132,17 @@ export class TaskManager implements TasksServerRpcApi {
   }
 
   listTaskTemplates(): TaskTemplate[] {
+    this._syncTemplateStorage();
     return this._factory.listTemplates();
   }
 
   saveTaskTemplate(params: TaskTemplate): TaskTemplate {
+    this._syncTemplateStorage();
     return this._factory.saveTemplate(params);
   }
 
   deleteTaskTemplate(id: string): boolean {
+    this._syncTemplateStorage();
     return this._factory.deleteTemplate(id);
   }
 
@@ -128,8 +156,26 @@ export class TaskManager implements TasksServerRpcApi {
     fs.rmSync(this._tmpDir, { recursive: true, force: true });
     fs.mkdirSync(this._tmpDir, { recursive: true });
     this._tasks = new Map();
-    this._factory = new TaskFactory(this._buildCallbacks(), this._tmpDir);
+    this._factory = new TaskFactory(
+      this._buildCallbacks(),
+      this._tmpDir,
+      this._getActiveTemplatesFile(),
+    );
     this._loadTasks();
+  }
+
+  private _syncTemplateStorage(): void {
+    this._factory.useTemplatesFile(this._getActiveTemplatesFile());
+  }
+
+  private _getActiveTemplatesFile(): string {
+    const config = gConfigManager.get(TASK_CENTER_CONFIG_KEY);
+    const rootIndex = config.templateRoots.findIndex(
+      (root) => root.key === config.activeTemplateRootKey,
+    );
+    const resolvedRoot = TaskPaths.resolveTemplateRoots(config.templateRoots)[rootIndex];
+    if (resolvedRoot === undefined) throw new Error("Active Task template root does not exist");
+    return TaskPaths.getTemplatesFile(resolvedRoot.path);
   }
 
   private _buildCallbacks(): TaskCallbacks {

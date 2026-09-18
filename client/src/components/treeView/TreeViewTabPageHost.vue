@@ -7,7 +7,7 @@ import {
   type TreeViewItem,
   type TreeViewTab,
 } from "../../../../common/treeView";
-import type { TreeView } from "./TreeView";
+import type { TreeViewTabsModel } from "./tabs/treeViewTabsModel";
 
 type TabResolution =
   | { state: "loading" }
@@ -17,7 +17,7 @@ type TabResolution =
 const props = defineProps<{
   tab: TreeViewTab;
   isActive: boolean;
-  treeView: TreeView;
+  model: TreeViewTabsModel;
   notifyReady: () => void;
 }>();
 
@@ -63,7 +63,7 @@ onUnmounted(() => {
 async function resolveTab(): Promise<void> {
   const currentRequestId = ++requestId;
   try {
-    const entity = await props.treeView.resolveTabEntity(props.tab);
+    const entity = await props.model.resolveTabEntity(props.tab);
     if (!isMounted || currentRequestId !== requestId) return;
     resolution.value = { state: "ready", entity };
     return;

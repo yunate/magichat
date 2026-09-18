@@ -431,7 +431,8 @@ async function hideWindow(): Promise<void> {
   outline-offset: -2px;
 }
 
-.app-nav__link--active {
+.app-nav__link--active,
+.app-nav__link--active:hover {
   color: var(--color-primary);
   background: var(--color-surface-selected);
 }

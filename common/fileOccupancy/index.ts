@@ -8,5 +8,5 @@ export type {
   FileOccupancyQueryResult,
   FileOccupyingProcess,
   ProcessIdentity,
-  TerminateProcessResult,
+  TerminateProcessTreeResult,
 } from "./fileOccupancyTypes";

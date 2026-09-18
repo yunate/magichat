@@ -1,7 +1,7 @@
 import type { Socket } from "node:net";
 import type { BridgeSocket } from "./peer";
 
-const MAX_MESSAGE_LENGTH = 64 * 1024;
+const MAX_MESSAGE_LENGTH = 64 * 1024 * 1024;
 const MESSAGE_LENGTH_SIZE = 4;
 
 export class PipeBridgeSocket implements BridgeSocket {

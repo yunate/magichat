@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -60,13 +61,37 @@ def mhsetenv(updates: Mapping[str, str], target_path: str | None = None) -> None
     _run_cli(arguments, "MagicHat environment update")
 
 
-def mhsettaskstate(text: str) -> None:
-    _ensure_non_blank_string(text, "Task state")
+def mhgetenv(key: str, target_path: str | None = None) -> str:
+    _ensure_non_blank_string(key, "Environment variable name")
+    arguments = ["get-env"]
+    if target_path is not None:
+        _ensure_non_blank_string(target_path, "Macro path")
+        arguments.append(f"--path={target_path}")
+    arguments.extend((key, "--json"))
+    value = json.loads(_run_cli(arguments, "MagicHat environment read", capture_output=True))
+    if not isinstance(value, str):
+        raise TypeError("MagicHat environment read returned an invalid value.")
+    return value
+
+
+def mhsettaskstate(text: str = "") -> None:
+    if not isinstance(text, str):
+        raise TypeError("Task state must be a string.")
     _run_cli(("set-task-state", text), "MagicHat task state update")
 
 
-def mhcleartaskstate() -> None:
-    _run_cli(("clear-task-state",), "MagicHat task state clear")
+def mhsettasktitle(title: str = "") -> None:
+    if not isinstance(title, str):
+        raise TypeError("Task title must be a string.")
+    _run_cli(("set-task-title", title), "MagicHat task title update")
+
+
+def mhsettaskdetail(details: Sequence[str]) -> None:
+    if isinstance(details, str) or not isinstance(details, Sequence):
+        raise TypeError("Task details must be a sequence of strings.")
+    for detail in details:
+        _ensure_non_blank_string(detail, "Task detail")
+    _run_cli(("set-task-detail", *details), "MagicHat task detail update")
 
 
 def _run_cli(

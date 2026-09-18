@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef, watch } from "vue";
+import { dirname, join, relative } from "pathe";
 import {
   commandFolderDataSerializer,
   commandItemDataSerializer,
@@ -20,6 +21,8 @@ import {
 } from "../../../../../../common/config/command";
 import type { ScriptType } from "../../../../../../common/tasks/scriptTaskDefinition";
 import type { TerminalRunRequest } from "../../../../../../common/terminal";
+import { MacroParser } from "../../../../../../common/macroParser";
+import { TREE_VIEW_ITEM_FILE_EXTENSION, TreeViewPath } from "../../../../../../common/treeView";
 import type {
   TreeViewEntityData,
   TreeViewFolder,
@@ -38,17 +41,17 @@ import {
 } from "../../../../components/confirmDialog";
 import type { ConfirmDialogAction } from "../../../../components/confirmDialogTypes";
 import { runWithOperationProgress } from "../../../../components/operationProgressDialog";
+import {
+  resolveTextEditText,
+  type TextEditAdditionalParamScope,
+  type TextEditParamGroup,
+} from "../../../../components/textEdit";
 import { gMessageStore } from "../../../../messages/messageStore";
 import {
   TreeView,
   TreeViewComponent,
 } from "../../../../components/treeView";
 import { gMainApplication } from "../../main";
-import {
-  createCommandCliRunRequest,
-  resolveCommandMacroTarget,
-  type CommandMacroTarget,
-} from "./commandCli";
 import CommandScriptIcon from "./CommandScriptIcon.vue";
 import { CommandClientRpcObject } from "./commandClientRpcObject";
 import CommandEnvPanel from "./CommandEnvPanel.vue";
@@ -69,6 +72,10 @@ import type {
 type GuardDecision = "save" | "discard" | "cancel";
 type GuardReason = "close-tabs" | "switch-workspace" | "refresh" | "close-app";
 type RunningGuardDecision = "close-all" | "skip" | "cancel";
+type CommandMacroTarget = Readonly<{
+  kind: "workspace" | "folder" | "item";
+  path: string;
+}>;
 type TabState = Readonly<{
   isDirty: boolean;
   isRunning: boolean;
@@ -153,7 +160,7 @@ async function initialize(): Promise<void> {
   commandStorage = await gMainApplication.window.getCommandStorageServerRpcObject();
   await initializeCommandClient(
     commandStorage,
-    new CommandClientRpcObject(setEnv, call),
+    new CommandClientRpcObject(setEnv, call, getEnv),
   );
   const activeRoot = currentConfig.value.roots.find(
     (root) => root.key === currentConfig.value.activeRootKey,
@@ -195,7 +202,12 @@ function scheduleItemScriptTypes(model: TreeView): void {
   const workspacePath = model.selectedWorkspaceRef.value?.workspacePath ?? null;
   if (workspacePath !== scriptTypeWorkspacePath) resetItemScriptTypes(workspacePath);
   if (workspacePath === null) return;
-  const items = collectTreeItems(model.rootFolder.value);
+  const rootFolder = model.rootFolder.value;
+  if (rootFolder === null) {
+    attemptedScriptTypeItems.clear();
+    return;
+  }
+  const items = collectTreeItems(rootFolder);
   for (const item of items) {
     const key = `${item.properties.id}:${item.path}`;
     if (attemptedScriptTypeItems.has(key)) continue;
@@ -235,12 +247,57 @@ async function call(
   requestedPath: string,
   sourceCommandPath: string | null,
 ): Promise<TerminalRunRequest> {
-  return createCommandCliRunRequest(
-    commandTreeView,
-    getSelectedEnvParams(workspaceData.value),
-    requestedPath,
-    sourceCommandPath,
-  );
+  const model = commandTreeView;
+  const workspaceRef = model?.selectedWorkspaceRef.value;
+  if (model === null || workspaceRef === null || workspaceRef === undefined) {
+    throw new Error("Command workspace is unavailable");
+  }
+  const workspaceEnv = getSelectedEnvParams(workspaceData.value);
+  const itemPath = resolveCliPath(requestedPath, workspaceRef.workspacePath, sourceCommandPath);
+  const item = await model.resolveItemByPath(itemPath);
+  const entityData = await model.controller.getEntityData({ kind: "item", path: item.path });
+  const data = commandItemDataSerializer.fromEntityData(entityData);
+  if (data.content.length === 0) {
+    throw new Error(`Called Command has no content: ${JSON.stringify(requestedPath)}`);
+  }
+
+  const folderScopes: TextEditAdditionalParamScope[] = [];
+  for (const folderPath of collectAncestorFolderPaths(workspaceRef.workspacePath, item.path)) {
+    const { dataJson: folderDataJson } = await model.controller.getEntityData({
+      kind: "folder",
+      path: folderPath,
+    });
+    const folderData = folderDataJson === null
+      ? commandFolderDataSerializer.getDefault()
+      : commandFolderDataSerializer.fromJson(folderDataJson);
+    const group = getSelectedParamGroup(folderData.paramGroups, folderData.selectedParamGroupId, "folder");
+    folderScopes.push({
+      label: "Folder",
+      sourcePath: relative(dirname(workspaceRef.workspacePath), folderPath),
+      params: group.params,
+    });
+  }
+  const selectedGroup = getSelectedParamGroup(data.paramGroups, data.selectedParamGroupId, "Command");
+  const itemGroup: TextEditParamGroup = {
+    id: selectedGroup.id,
+    name: selectedGroup.name,
+    sourceType: "Command",
+    sourcePath: relative(dirname(workspaceRef.workspacePath), item.path),
+    params: selectedGroup.params,
+  };
+  const environmentScopes: readonly TextEditAdditionalParamScope[] = [{
+    label: "Environment",
+    sourcePath: workspaceRef.workspaceName,
+    params: workspaceEnv,
+  }];
+  const resolution = resolveTextEditText(data.content, itemGroup, folderScopes, environmentScopes);
+  if (!resolution.successful) throw new Error(resolution.error ?? "Command content could not be resolved");
+  return {
+    scriptId: item.properties.id,
+    commandPath: item.path,
+    scriptType: data.scriptType,
+    scriptContent: resolution.value,
+  };
 }
 
 function enqueueWorkspaceDataOperation(operation: () => Promise<void>): Promise<void> {
@@ -260,38 +317,100 @@ async function setEnv(
         commandParamSerializer.validate({ ...update, enabled: true });
       }
       const model = commandTreeView;
-      const workspaceRef = model?.selectedWorkspaceRef.value;
-      if (model === null || workspaceRef === null || workspaceRef === undefined) {
-        throw new Error("Command workspace is unavailable");
-      }
-      if (target !== null) {
-        await persistTargetParams(model, await resolveCommandMacroTarget(model, target), updates);
-        return;
-      }
-      const entityData = await model.controller.getEntityData({
-        kind: "workspace",
-        path: workspaceRef.workspacePath,
-      });
-      const current = entityData.dataJson === null
-        ? commandWorkspaceDataSerializer.getDefault()
-        : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
-      const nextData: CommandWorkspaceData = {
-        ...current,
-        envGroups: current.envGroups.map((group) => group.id === current.selectedEnvGroupId
-          ? {
-              ...group,
-              params: updates.reduce(
-                (params, update) => updateEnv(params, update.key, update.value),
-                [...group.params],
-              ),
-            }
-          : group),
-      };
-      await persistWorkspaceData(model, workspaceRef.workspacePath, nextData, entityData.extends);
+      if (model === null) throw new Error("Command workspace is unavailable");
+      await persistTargetParams(model, await resolveCommandMacroTarget(model, target), updates);
     });
   } catch (reason: unknown) {
     gMessageStore.pushMessage("error", errorMessage(reason));
     throw reason;
+  }
+}
+
+async function getEnv(key: string, target: CommandEnvTarget | null): Promise<string> {
+  await workspaceDataOperation;
+  const model = commandTreeView;
+  const workspaceRef = model?.selectedWorkspaceRef.value;
+  if (model === null || workspaceRef === null || workspaceRef === undefined) {
+    throw new Error("Command workspace is unavailable");
+  }
+  let resolvedTarget: CommandMacroTarget;
+  let entityData: TreeViewEntityData;
+  try {
+    resolvedTarget = await resolveCommandMacroTarget(model, target);
+    entityData = await model.controller.getEntityData(resolvedTarget);
+  } catch (reason: unknown) {
+    if (reason instanceof Error && (
+      reason.message === "File does not exist" || reason.message === "Folder does not exist"
+    )) return "";
+    throw reason;
+  }
+  let params: readonly CommandParam[];
+  if (resolvedTarget.kind === "workspace") {
+    const data = entityData.dataJson === null
+      ? commandWorkspaceDataSerializer.getDefault()
+      : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
+    params = getSelectedEnvParams(data);
+  } else {
+    const data = resolvedTarget.kind === "item"
+      ? commandItemDataSerializer.fromEntityData(entityData)
+      : entityData.dataJson === null
+        ? commandFolderDataSerializer.getDefault()
+        : commandFolderDataSerializer.fromJson(entityData.dataJson);
+    params = getSelectedParamGroup(data.paramGroups, data.selectedParamGroupId, "Command").params;
+  }
+  const values = new Map(params.filter((param) => param.enabled).map((param) => [param.key, param.value]));
+  if (!values.has(key)) return "";
+  return MacroParser.replaceMacrosInText(MacroParser.formatReference(key), values);
+}
+
+async function resolveCommandMacroTarget(
+  model: TreeView,
+  target: CommandEnvTarget | null,
+): Promise<CommandMacroTarget> {
+  const workspaceRef = model.selectedWorkspaceRef.value;
+  if (workspaceRef === null) throw new Error("Command workspace is unavailable");
+  if (target === null || target.path === "__root__") {
+    return { kind: "workspace", path: workspaceRef.workspacePath };
+  }
+  const targetPath = resolveCliPath(target.path, workspaceRef.workspacePath, target.sourceCommandPath);
+  if (targetPath.endsWith(TREE_VIEW_ITEM_FILE_EXTENSION)) {
+    await model.resolveItemByPath(targetPath);
+    return { kind: "item", path: targetPath };
+  }
+  await model.resolveFolderByPath(targetPath);
+  return { kind: "folder", path: targetPath };
+}
+
+function resolveCliPath(
+  requestedPath: string,
+  workspacePath: string,
+  sourceCommandPath: string | null,
+): string {
+  const path = requestedPath.replaceAll("\\", "/");
+  const isAbsolute = /^[a-zA-Z]:\//.test(path) || path.startsWith("/");
+  const isExplicitRelative = path === "."
+    || path === ".."
+    || path.startsWith("./")
+    || path.startsWith("../");
+  if (isExplicitRelative && sourceCommandPath === null) {
+    throw new Error("Relative paths must run from a MagicHat Command");
+  }
+  if (path === "." || path === "./") return sourceCommandPath ?? workspacePath;
+  return TreeViewPath.normalize(
+    isAbsolute
+      ? path
+      : join(isExplicitRelative ? sourceCommandPath ?? workspacePath : dirname(workspacePath), path),
+    "CLI path",
+  );
+}
+
+function collectAncestorFolderPaths(workspacePath: string, itemPath: string): string[] {
+  const ancestors: string[] = [];
+  let folderPath = dirname(itemPath);
+  while (true) {
+    ancestors.unshift(folderPath);
+    if (folderPath === workspacePath) return ancestors;
+    folderPath = dirname(folderPath);
   }
 }
 
@@ -416,9 +535,20 @@ function getWorkspaceEnv(): readonly CommandParam[] {
 }
 
 function getSelectedEnvParams(data: CommandWorkspaceData): readonly CommandParam[] {
-  const group = data.envGroups.find((candidate) => candidate.id === data.selectedEnvGroupId);
-  if (group === undefined) throw new Error("Selected Workspace Environment group is unavailable");
-  return group.params;
+  return getSelectedParamGroup(data.envGroups, data.selectedEnvGroupId, "Workspace Environment").params;
+}
+
+function getSelectedParamGroup(
+  groups: readonly CommandParamGroup[],
+  selectedGroupId: string,
+  label: string,
+): CommandParamGroup {
+  const group = groups.find((candidate) => candidate.id === selectedGroupId);
+  if (group === undefined) {
+    const groupLabel = label === "Workspace Environment" ? "group" : "param group";
+    throw new Error(`Selected ${label} ${groupLabel} is unavailable`);
+  }
+  return group;
 }
 
 async function toggleEnvPanel(): Promise<void> {

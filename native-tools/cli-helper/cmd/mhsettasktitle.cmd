@@ -6,6 +6,6 @@ if not defined MAGICHAT_CLI (
   exit /b 1
 )
 
-"%MAGICHAT_CLI%" clear-task-state %*
+"%MAGICHAT_CLI%" set-task-title %*
 set "exitCode=%ERRORLEVEL%"
 endlocal & exit /b %exitCode%

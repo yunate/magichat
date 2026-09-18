@@ -20,6 +20,7 @@ type TaskInfoFields<K extends TaskType> = {
   finishedAt?: number;
   pinnedAt?: number;
   displayState?: string;
+  displayDetails?: string[];
   tasksSpectialInfo?: TaskSpectialInfo<K>;
 };
 
@@ -60,6 +61,12 @@ export class TaskInfoSerializer extends ISerializer<TaskInfo> {
     }
     if (value.displayState !== undefined) {
       ValidateUtils.ensureString(value.displayState);
+    }
+    if (value.displayDetails !== undefined) {
+      ValidateUtils.ensureArray(value.displayDetails, "Task displayDetails must be an array");
+      for (const detail of value.displayDetails) {
+        ValidateUtils.ensureNonBlankString(detail, "Task display detail must not be blank");
+      }
     }
     if (value.tasksSpectialInfo !== undefined) {
       const taskSerializer: TaskSerializerEntry = getTaskSerializer(value.type);

@@ -45,6 +45,21 @@ export class CommandService {
     await client.setEnv(updates, target);
   }
 
+  public async getEnv(
+    key: string,
+    targetPath: string | null,
+    sourceCommandPath: string | null,
+  ): Promise<string> {
+    commandParamSerializer.validate({ key, value: "", enabled: true });
+    const rpcObject = this._rpcObject;
+    if (rpcObject === null) throw new Error("Command storage object is not initialized");
+    const client = rpcObject.getCommandClientRpcApi();
+    const target: CommandEnvTarget | null = targetPath === null
+      ? null
+      : { path: targetPath, sourceCommandPath };
+    return client.getEnv(key, target);
+  }
+
   public async prepare(
     terminalId: string,
     path: string,

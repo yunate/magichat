@@ -9,7 +9,10 @@ import type {
   TreeViewTab,
   TreeViewWorkspace,
 } from "./treeViewTypes";
-import { TREE_VIEW_ITEM_FILE_EXTENSION } from "./treeViewTypes";
+import {
+  TREE_VIEW_DEFAULT_SIDEBAR_WIDTH,
+  TREE_VIEW_ITEM_FILE_EXTENSION,
+} from "./treeViewTypes";
 import { TreeViewPath } from "./treeViewPath";
 
 function ensureExactRecord(
@@ -166,7 +169,7 @@ class TreeViewTabSerializer extends ISerializer<TreeViewTab> {
     return {
       kind: "item",
       id: "00000000-0000-4000-8000-000000000000",
-      path: "C:/workspace/item.mh",
+      path: "item.mh",
       isPinned: false,
     };
   }
@@ -177,7 +180,7 @@ class TreeViewTabSerializer extends ISerializer<TreeViewTab> {
       throw new Error("TreeView tab kind is invalid");
     }
     ensureIdentifier(value.id, "TreeView tab id");
-    TreeViewPath.normalize(value.path, "TreeView tab path");
+    ValidateUtils.ensureNonBlankString(value.path, "TreeView tab path must be nonblank");
     ValidateUtils.ensureBoolean(value.isPinned, "TreeView tab isPinned must be a boolean");
   }
 }
@@ -249,7 +252,7 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
     tabs: [],
     activeTabId: null,
     previewTabId: null,
-    ui: { layout: { sidebarWidth: 240 } },
+    ui: { layout: { sidebarWidth: TREE_VIEW_DEFAULT_SIDEBAR_WIDTH } },
   };
   private static readonly _LEGACY_KEYS = Object.keys(TreeViewWorkspaceSerializer._DEFAULT)
     .filter((key) => key !== "previewTabId");

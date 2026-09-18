@@ -5,8 +5,8 @@
   --color-bg: var(--color-content-bg);
   --color-surface: var(--color-default-bg);
   --color-surface-raised: #efefef;
-  --color-surface-hover: var(--color-surface-selected);
-  --color-surface-selected: #efefef;
+  --color-surface-hover: #f3f3f3;
+  --color-surface-selected: #dbeafe;
   --color-divider: #d4d4d4;
   --color-border: var(--color-divider);
   --color-text: #1f1f1f;

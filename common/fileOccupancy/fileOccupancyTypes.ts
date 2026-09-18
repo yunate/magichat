@@ -1,6 +1,7 @@
 export type FileOccupyingProcess = Readonly<{
   pid: number;
   name: string;
+  targetPath: string;
   executablePath: string | null;
   commandLine: string | null;
   owner: string | null;
@@ -14,11 +15,12 @@ export type FileOccupancyQueryResult =
 
 export type ProcessIdentity = Readonly<{
   pid: number;
+  targetPath: string;
   startedAt: string;
   executablePath: string;
 }>;
 
-export type TerminateProcessResult =
+export type TerminateProcessTreeResult =
   | Readonly<{ status: "terminated" }>
   | Readonly<{ status: "alreadyExited" }>
   | Readonly<{ status: "stale" }>;

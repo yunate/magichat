@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import type { ComponentPublicInstance } from "vue";
-import type { TreeViewFolder, TreeViewItem } from "../../../../common/treeView";
-import type { TreeViewDropPosition, TreeViewSelection } from "./treeViewTypes";
+import type { TreeViewFolder, TreeViewItem } from "../../../../../common/treeView";
+import type { TreeViewDropPosition, TreeViewSelection } from "../treeViewTypes";
 
 type RenameTarget = { kind: "folder" | "item"; id: string } | null;
 type DropIndicator = {

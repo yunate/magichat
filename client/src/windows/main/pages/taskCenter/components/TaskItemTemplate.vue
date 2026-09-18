@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import SafeInlineMarkdown from "../../../../../components/SafeInlineMarkdown.vue";
 import SplitContainer from "../../../../../components/SplitContainer.vue";
 import TaskStatusBadge from "./TaskStatusBadge.vue";
 import type { TaskInfo } from "../../../../../../../common/tasks/taskInfo";
 import { vSelectAll } from "../../../../../directives/vSelectAll";
+import { gMessageStore } from "../../../../../messages/messageStore";
+import { gMainApplication } from "../../../main";
 
 const props = defineProps<{
   task: TaskInfo;
@@ -83,6 +86,16 @@ function onViewed(): void {
   if (props.isUnviewed) emit("viewed", props.task.id);
 }
 
+async function openExternalLink(url: string): Promise<void> {
+  try {
+    const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
+    await windowRpcObject.openExternalUrl(url);
+  } catch (reason: unknown) {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    gMessageStore.pushMessage("error", message);
+  }
+}
+
 // Click toggles to the opposite of the current pin state; allowed on every status (Complete can pin too).
 function onPin(): void {
   emit("pin", { id: props.task.id, isPinned: !isPinned.value });
@@ -131,8 +144,15 @@ function formatTime(value: number): string {
         </svg>
       </button>
       <div class="task-item__summary">
-        <div class="task-item__summary-line">
-          <span class="task-item__title">{{ props.task.title }}</span>
+        <div class="task-item__title-line">
+          <SafeInlineMarkdown
+            class="task-item__title"
+            :source="props.task.title"
+            :title="props.task.title"
+            @open-link="openExternalLink"
+          />
+        </div>
+        <div class="task-item__meta-line">
           <span class="task-item__type">{{ scriptType }}</span>
           <span class="task-item__created">{{ createdAt }}</span>
           <TaskStatusBadge
@@ -143,13 +163,13 @@ function formatTime(value: number): string {
             Exit code {{ exitCode }}
           </span>
         </div>
-        <span
+        <SafeInlineMarkdown
           v-if="props.task.displayState !== undefined"
           class="task-item__display-state"
+          :source="props.task.displayState"
           :title="props.task.displayState"
-        >
-          {{ props.task.displayState }}
-        </span>
+          @open-link="openExternalLink"
+        />
       </div>
       <div class="task-item__actions">
         <button
@@ -196,6 +216,14 @@ function formatTime(value: number): string {
     </div>
 
     <div v-show="props.isExpanded" class="task-item__body">
+      <ul
+        v-if="props.task.displayDetails !== undefined && props.task.displayDetails.length > 0"
+        class="task-item__display-details"
+      >
+        <li v-for="(detail, index) in props.task.displayDetails" :key="index">
+          <SafeInlineMarkdown :source="detail" @open-link="openExternalLink" />
+        </li>
+      </ul>
       <SplitContainer
         class="task-item__details-layout"
         orientation="horizontal"
@@ -275,7 +303,29 @@ function formatTime(value: number): string {
 }
 
 .task-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   min-height: 0;
+}
+
+.task-item__display-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  margin: 0;
+  border: 1px solid var(--color-divider);
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: var(--color-content-bg);
+  font-size: 12px;
+  list-style: none;
+}
+
+.task-item__display-details li {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .task-item__details-layout {
@@ -339,10 +389,13 @@ function formatTime(value: number): string {
 }
 
 .task-item__title {
-  flex: none;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -354,11 +407,16 @@ function formatTime(value: number): string {
   min-width: 0;
 }
 
-.task-item__summary-line {
+.task-item__title-line,
+.task-item__meta-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+}
+
+.task-item__title-line {
+  min-height: 20px;
 }
 
 .task-item__display-state {

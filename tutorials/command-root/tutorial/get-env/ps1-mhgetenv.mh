@@ -1,0 +1,27 @@
+{
+  "isDraft": false,
+  "id": "521a4edb-c0dc-43a6-a45b-d84ddddefcbf",
+  "data": {
+    "scriptType": "powershell",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": [
+          {
+            "key": "key",
+            "value": "value",
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}
+
+---MH:script---
+$key = "TEST_VALUE"
+mhsetenv $key "ps1-mhgetenv"
+$value = mhgetenv $key
+Write-Output $value

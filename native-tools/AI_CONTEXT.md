@@ -13,7 +13,7 @@ Windows native projects and their shared incremental build entry.
 
 ## Build Contract
 
-- Every input file contributes its native-tools-relative path and content hash, so content changes, additions, removals, and renames invalidate the project source hash.
+- Every input file contributes its workspace-relative path and content hash, so content changes, additions, removals, and renames invalidate the project source hash. Manifest paths remain relative to `native-tools/` and may reference fixed workspace build assets such as `../build/appIcon.ico`.
 - A project is current only when its target exists and both its source and target hashes match the table.
 - A stale project invokes only its declared fixed build script. Build failure, a missing target, or source changes during compilation stop the unified build without updating that project's hashes.
 - The table is updated after each successful project build. There is no automatic retry or fallback build path.

@@ -19,6 +19,7 @@ import {
   type ResolvedTextEditParamGroup,
   type TextEditAdditionalParamsProvider,
   type TextEditAdditionalParamScope,
+  type TextEditCompletionProvider,
   type TextEditParam,
   type TextEditParamGroup,
 } from "./textEditTypes";
@@ -40,6 +41,7 @@ type Props = {
   paramPriorityDescription?: string;
   accessibleLabel?: string;
   scriptType?: ScriptType;
+  getCompletions?: TextEditCompletionProvider;
 };
 
 const props = withDefaults(defineProps<Props>(), {
@@ -654,6 +656,7 @@ defineExpose({
         :macro-analysis="macroAnalysis"
         :ensure-macro-analysis="ensureMacroAnalysisCurrent"
         :script-type="scriptType"
+        :get-completions="getCompletions"
         :tab-size="tabSize"
         :readonly="readonly"
         @update="updateText"

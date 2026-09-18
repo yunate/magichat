@@ -2,6 +2,7 @@
 // Separate buses because payloads differ (full TaskInfo vs incremental log lines vs deleted ids); keys are
 // per-instance so each starts at 1.
 import type { TaskInfo } from "../../../../../../common/tasks/taskInfo";
+import type { TaskTemplate } from "../../../../../../common/tasks/taskTemplate";
 import { EventCenter } from "../../../../events/eventCenter";
 
 export interface TaskLogAppendedEventPayload {
@@ -16,7 +17,9 @@ export interface TasksDeletedEventPayload {
 export const TASK_UPDATED_EVENT = 1;
 export const TASK_LOG_APPENDED_EVENT = 1;
 export const TASK_DELETED_EVENT = 1;
+export const TASK_TEMPLATES_CHANGED_EVENT = 1;
 
 export const gTaskUpdatedCenter = new EventCenter<TaskInfo>();
 export const gTaskLogAppendedCenter = new EventCenter<TaskLogAppendedEventPayload>();
 export const gTaskDeletedCenter = new EventCenter<TasksDeletedEventPayload>();
+export const gTaskTemplatesChangedCenter = new EventCenter<readonly TaskTemplate[]>();

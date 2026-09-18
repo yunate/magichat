@@ -63,7 +63,7 @@ function Invoke-MagicHatRun {
   finally {
     $env:MAGICHAT_CLI_COMMAND_PATH = $previousCommandPath
     function global:prompt {
-      "PS $($executionContext.SessionState.Path.CurrentLocation)$(">" * ($nestedPromptLevel + 1)) "
+      "PS $($executionContext.SessionState.Path.CurrentLocation)$(">" * ($nestedPromptLevel + 1))"
     }
   }
 }
@@ -85,12 +85,30 @@ function Set-MagicHatEnvironment {
   }
 }
 
+function Get-MagicHatEnvironment {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
+    [string[]] $Arguments
+  )
+
+  if ([string]::IsNullOrWhiteSpace($env:MAGICHAT_CLI)) {
+    throw "MAGICHAT_CLI is not configured."
+  }
+
+  [string[]] $output = @(& $env:MAGICHAT_CLI get-env @Arguments --json 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "MagicHat environment read failed: $($output -join [Environment]::NewLine)"
+  }
+  return ConvertFrom-Json -InputObject ($output -join [Environment]::NewLine) -ErrorAction Stop
+}
+
 function Set-MagicHatTaskState {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateNotNullOrEmpty()]
-    [string] $Text
+    [Parameter(Position = 0)]
+    [AllowEmptyString()]
+    [string] $Text = ""
   )
 
   if ([string]::IsNullOrWhiteSpace($env:MAGICHAT_CLI)) {
@@ -103,24 +121,52 @@ function Set-MagicHatTaskState {
   }
 }
 
-function Clear-MagicHatTaskState {
+function Set-MagicHatTaskTitle {
   [CmdletBinding()]
-  param()
+  param(
+    [Parameter(Position = 0)]
+    [AllowEmptyString()]
+    [string] $Title = ""
+  )
 
   if ([string]::IsNullOrWhiteSpace($env:MAGICHAT_CLI)) {
     throw "MAGICHAT_CLI is not configured."
   }
-
-  & $env:MAGICHAT_CLI clear-task-state
+  & $env:MAGICHAT_CLI set-task-title $Title
   if ($LASTEXITCODE -ne 0) {
-    throw "MagicHat task state clear failed with exit code $LASTEXITCODE."
+    throw "MagicHat task title update failed with exit code $LASTEXITCODE."
+  }
+}
+
+function Set-MagicHatTaskDetail {
+  [CmdletBinding()]
+  param(
+    [Parameter(Position = 0)]
+    [AllowEmptyCollection()]
+    [string[]] $Details = @()
+  )
+
+  if ([string]::IsNullOrWhiteSpace($env:MAGICHAT_CLI)) {
+    throw "MAGICHAT_CLI is not configured."
+  }
+  foreach ($detail in $Details) {
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+      throw "Task details must not contain blank lines."
+    }
+  }
+
+  & $env:MAGICHAT_CLI set-task-detail @Details
+  if ($LASTEXITCODE -ne 0) {
+    throw "MagicHat task detail update failed with exit code $LASTEXITCODE."
   }
 }
 
 Set-Alias -Name mhcall -Value Invoke-MagicHatCommand -Scope Script
 Set-Alias -Name mhrun -Value Invoke-MagicHatRun -Scope Script
 Set-Alias -Name mhsetenv -Value Set-MagicHatEnvironment -Scope Script
+Set-Alias -Name mhgetenv -Value Get-MagicHatEnvironment -Scope Script
 Set-Alias -Name mhsettaskstate -Value Set-MagicHatTaskState -Scope Script
-Set-Alias -Name mhcleartaskstate -Value Clear-MagicHatTaskState -Scope Script
+Set-Alias -Name mhsettasktitle -Value Set-MagicHatTaskTitle -Scope Script
+Set-Alias -Name mhsettaskdetail -Value Set-MagicHatTaskDetail -Scope Script
 
-Export-ModuleMember -Function Invoke-MagicHatCommand, Invoke-MagicHatRun, Set-MagicHatEnvironment, Set-MagicHatTaskState, Clear-MagicHatTaskState -Alias mhcall, mhrun, mhsetenv, mhsettaskstate, mhcleartaskstate
+Export-ModuleMember -Function Invoke-MagicHatCommand, Invoke-MagicHatRun, Set-MagicHatEnvironment, Get-MagicHatEnvironment, Set-MagicHatTaskState, Set-MagicHatTaskTitle, Set-MagicHatTaskDetail -Alias mhcall, mhrun, mhsetenv, mhgetenv, mhsettaskstate, mhsettasktitle, mhsettaskdetail

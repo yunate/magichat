@@ -59,7 +59,7 @@
         <span>03</span>
         <div>
           <h2>Task CLI helpers</h2>
-          <p>Report short live progress text from a running Task Center script.</p>
+          <p>Update the title, summary state, and expanded details from a running Task Center script.</p>
         </div>
       </div>
 
@@ -67,26 +67,30 @@
         <div class="task-help__cli-heading">
           <div>
             <h3>mhsettaskstate</h3>
-            <p>Set the secondary state text displayed below the task title.</p>
+            <p>Set the secondary state text below the metadata. Call without text to clear it.</p>
           </div>
           <code>Task Center only</code>
         </div>
         <div class="task-help__examples">
           <figure>
             <figcaption>PowerShell</figcaption>
-            <pre><code>mhsettaskstate "Downloading dependencies"</code></pre>
+            <pre><code>mhsettaskstate "Downloading dependencies"
+mhsettaskstate</code></pre>
           </figure>
           <figure>
             <figcaption>CMD</figcaption>
-            <pre><code>call mhsettaskstate "Downloading dependencies"</code></pre>
+            <pre><code>call mhsettaskstate "Downloading dependencies"
+call mhsettaskstate</code></pre>
           </figure>
           <figure>
             <figcaption>Node.js</figcaption>
-            <pre><code>mhsettaskstate("Downloading dependencies");</code></pre>
+            <pre><code>mhsettaskstate("Downloading dependencies");
+mhsettaskstate();</code></pre>
           </figure>
           <figure>
             <figcaption>Python</figcaption>
-            <pre><code>mhsettaskstate("Downloading dependencies")</code></pre>
+            <pre><code>mhsettaskstate("Downloading dependencies")
+mhsettaskstate()</code></pre>
           </figure>
         </div>
       </div>
@@ -94,34 +98,75 @@
       <div class="task-help__cli-group">
         <div class="task-help__cli-heading">
           <div>
-            <h3>mhcleartaskstate</h3>
-            <p>Remove the current script-reported state text.</p>
+            <h3>mhsettasktitle</h3>
+            <p>Replace the task title. Call without text to restore its original creation name.</p>
           </div>
           <code>Task Center only</code>
         </div>
         <div class="task-help__examples">
           <figure>
             <figcaption>PowerShell</figcaption>
-            <pre><code>mhcleartaskstate</code></pre>
+            <pre><code>mhsettasktitle "Build release"
+mhsettasktitle</code></pre>
           </figure>
           <figure>
             <figcaption>CMD</figcaption>
-            <pre><code>call mhcleartaskstate</code></pre>
+            <pre><code>call mhsettasktitle "Build release"
+call mhsettasktitle</code></pre>
           </figure>
           <figure>
             <figcaption>Node.js</figcaption>
-            <pre><code>mhcleartaskstate();</code></pre>
+            <pre><code>mhsettasktitle("Build release");
+mhsettasktitle();</code></pre>
           </figure>
           <figure>
             <figcaption>Python</figcaption>
-            <pre><code>mhcleartaskstate()</code></pre>
+            <pre><code>mhsettasktitle("Build release")
+mhsettasktitle()</code></pre>
+          </figure>
+        </div>
+      </div>
+
+      <div class="task-help__cli-group">
+        <div class="task-help__cli-heading">
+          <div>
+            <h3>mhsettaskdetail</h3>
+            <p>Replace the ordered lines shown above the expanded task panes. Pass an empty list to clear them.</p>
+          </div>
+          <code>Task Center only</code>
+        </div>
+        <div class="task-help__examples">
+          <figure>
+            <figcaption>PowerShell</figcaption>
+            <pre><code>mhsettaskdetail @("**PR:** #42", "[Open PR](https://dev.azure.com/...)")
+mhsettaskdetail @()</code></pre>
+          </figure>
+          <figure>
+            <figcaption>CMD</figcaption>
+            <pre><code>call mhsettaskdetail "PR: #42" "Author: Ada"
+call mhsettaskdetail</code></pre>
+          </figure>
+          <figure>
+            <figcaption>Node.js</figcaption>
+            <pre><code>mhsettaskdetail(["**PR:** #42", "Author: Ada"]);
+mhsettaskdetail([]);</code></pre>
+          </figure>
+          <figure>
+            <figcaption>Python</figcaption>
+            <pre><code>mhsettaskdetail(["**PR:** #42", "Author: Ada"])
+mhsettaskdetail([])</code></pre>
           </figure>
         </div>
       </div>
 
       <div class="task-help__notice">
+        <strong>Inline Markdown</strong>
+        <p>Task title, state, and detail lines support links, automatic HTTPS URLs, <code>**bold**</code>, <code>*italic*</code>, <code>~~strikethrough~~</code>, and inline code. Raw HTML, block elements, images, and non-HTTPS links are disabled.</p>
+      </div>
+
+      <div class="task-help__notice">
         <strong>Availability</strong>
-        <p>These helpers work only inside a currently running Task Center task. They are unavailable from Command scripts. Display state is independent from lifecycle status and is not persisted across restart.</p>
+        <p>These helpers work only inside a currently running Task Center task. They are unavailable from Command scripts. State and details are not persisted across restart. Title changes are persisted.</p>
       </div>
     </section>
 

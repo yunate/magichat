@@ -14,6 +14,7 @@ export type CommandEnvTarget = Readonly<{
 
 export interface CommandClientRpcApi {
   setEnv(updates: readonly CommandEnvUpdate[], target: CommandEnvTarget | null): void;
+  getEnv(key: string, target: CommandEnvTarget | null): Promise<string>;
   call(path: string, sourceCommandPath: string | null): Promise<TerminalRunRequest>;
 }
 

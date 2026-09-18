@@ -1,4 +1,4 @@
-import { net } from "electron";
+import { app, net, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import originalFs from "node:original-fs";
@@ -28,6 +28,8 @@ StreamZip.setFs(originalFs);
 const RELEASE_API_URL = "https://api.github.com/repos/ddmagichat/magichat-release/releases/tags/latest";
 const RELEASE_DOWNLOAD_URL_PREFIX = "https://github.com/ddmagichat/magichat-release/releases/download/latest/";
 const ASSET_NAME_PATTERN = /MagicHat-(\d+\.\d+\.\d+\.\d+)-win-x64\.zip/;
+const APPLICATION_EXECUTABLE_NAME = "MagicHat.exe";
+const SHORTCUT_FILE_NAME = "MagicHat.lnk";
 
 function resolveUpdateCheckDelayMs(checkDelaySeconds: UpdateCheckDelaySeconds): number {
   const seconds = checkDelaySeconds === RANDOM_UPDATE_CHECK_DELAY
@@ -160,7 +162,7 @@ export class UpdateService {
   private async _verify(plan: UpdatePlan): Promise<void> {
     using scopeLogger = new ScopeLogger("[update] verify");
     const requiredFiles = [
-      "MagicHat.exe",
+      APPLICATION_EXECUTABLE_NAME,
       path.join("resources", "app.asar"),
       path.join("resources", "uac-broker", "index.js"),
       path.join("native-tools", "cli-helper", "bin", "magichat-cli.exe"),
@@ -185,6 +187,67 @@ export class UpdateService {
     await originalFs.promises.rm(plan.formalDirectory, { force: true, recursive: true });
     await fs.rename(plan.draftDirectory, plan.formalDirectory);
     await this._writeVersionFileAtomic(this._activeVersionPath, plan.version);
+    this._updateShortcutIcons(
+      path.join(plan.formalDirectory, APPLICATION_EXECUTABLE_NAME),
+    );
+  }
+
+  private _getShortcutPaths(): string[] {
+    const shortcutPaths = [
+      path.join(app.getPath("desktop"), SHORTCUT_FILE_NAME),
+      path.join(
+        app.getPath("appData"),
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        SHORTCUT_FILE_NAME,
+      ),
+    ];
+    const publicDirectory = process.env.PUBLIC;
+    if (publicDirectory !== undefined && path.isAbsolute(publicDirectory)) {
+      shortcutPaths.push(path.join(publicDirectory, "Desktop", SHORTCUT_FILE_NAME));
+    }
+    const programDataDirectory = process.env.ProgramData;
+    if (programDataDirectory !== undefined && path.isAbsolute(programDataDirectory)) {
+      shortcutPaths.push(path.join(
+        programDataDirectory,
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        SHORTCUT_FILE_NAME,
+      ));
+    }
+    shortcutPaths.push(path.join(
+      app.getPath("appData"),
+      "Microsoft",
+      "Internet Explorer",
+      "Quick Launch",
+      "User Pinned",
+      "TaskBar",
+      SHORTCUT_FILE_NAME,
+    ));
+    return [...new Set(shortcutPaths)];
+  }
+
+  private _updateShortcutIcons(iconPath: string): void {
+    for (const shortcutPath of this._getShortcutPaths()) {
+      if (!PathUtil.isFile(shortcutPath)) continue;
+      try {
+        const shortcut = shell.readShortcutLink(shortcutPath);
+        const isUpdated = shell.writeShortcutLink(shortcutPath, "update", {
+          target: shortcut.target,
+          icon: iconPath,
+          iconIndex: 0,
+        });
+        if (!isUpdated) throw new Error("Shortcut write returned false");
+        console.log(`[update] Updated shortcut icon: ${shortcutPath}.`);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[update] Skipped shortcut icon update: ${shortcutPath}. Reason: ${message}`);
+      }
+    }
   }
 
   private async _clean(): Promise<void> {

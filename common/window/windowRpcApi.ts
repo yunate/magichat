@@ -7,6 +7,8 @@ export interface WindowServerRpcApi {
   openLatestReleasePage(): Promise<void>;
   openIssuesPage(): Promise<void>;
   openDiscussionsPage(): Promise<void>;
+  openKoFiPage(): Promise<void>;
+  openExternalUrl(url: string): Promise<void>;
   minimize(): void;
   hide(): void;
   show(): void;

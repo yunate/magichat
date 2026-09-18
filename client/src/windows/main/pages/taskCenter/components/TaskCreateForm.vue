@@ -15,6 +15,8 @@ import PopupToast from "../../../../../components/PopupToast.vue";
 import PopupSelect from "../../../../../components/PopupSelect.vue";
 import { TextEditComponent } from "../../../../../components/textEdit";
 import type {
+  TextEditCompletion,
+  TextEditCompletionContext,
   TextEditParamGroup,
 } from "../../../../../components/textEdit";
 
@@ -40,6 +42,42 @@ interface FormState {
 }
 
 const SCRIPT_TYPE_OPTIONS = SCRIPT_TYPES.map((type) => ({ value: type, label: type }));
+const SCRIPT_HELPERS: readonly Readonly<{
+  name: string;
+  description: string;
+  insertText: Readonly<Record<ScriptType, string>>;
+}>[] = [
+  {
+    name: "mhsettaskstate",
+    description: "Set the running task's secondary state text. Call without text to clear it.",
+    insertText: {
+      powershell: 'mhsettaskstate "${1:State}"',
+      cmd: 'call mhsettaskstate "${1:State}"',
+      node: 'mhsettaskstate("${1:State}");',
+      python: 'mhsettaskstate("${1:State}")',
+    },
+  },
+  {
+    name: "mhsettasktitle",
+    description: "Set the running task's title. Call without text to use its original creation name.",
+    insertText: {
+      powershell: 'mhsettasktitle "${1:Title}"',
+      cmd: 'call mhsettasktitle "${1:Title}"',
+      node: 'mhsettasktitle("${1:Title}");',
+      python: 'mhsettasktitle("${1:Title}")',
+    },
+  },
+  {
+    name: "mhsettaskdetail",
+    description: "Replace the running task's ordered detail lines. Pass an empty list to clear them.",
+    insertText: {
+      powershell: 'mhsettaskdetail @("${1:Detail}")',
+      cmd: 'call mhsettaskdetail "${1:Detail}"',
+      node: 'mhsettaskdetail(["${1:Detail}"]);',
+      python: 'mhsettaskdetail(["${1:Detail}"])',
+    },
+  },
+];
 
 const form = reactive<FormState>({
   scriptType: "powershell",
@@ -94,6 +132,23 @@ const isDirty = computed(
   () => templateBaseline.value !== null
     && JSON.stringify(createTemplateFromForm()) !== JSON.stringify(templateBaseline.value),
 );
+
+function getScriptCompletions(context: TextEditCompletionContext): readonly TextEditCompletion[] {
+  const partialName = /\b(mh[a-z]*)$/iu.exec(context.linePrefix)?.[1];
+  if (partialName === undefined) return [];
+  const hasCallPrefix = /\bcall\s+mh[a-z]*$/iu.test(context.linePrefix);
+  return SCRIPT_HELPERS
+    .filter((helper) => helper.name.startsWith(partialName.toLowerCase()))
+    .map((helper) => ({
+      label: helper.name,
+      detail: "Task Center helper",
+      documentation: helper.description,
+      insertText: form.scriptType === "cmd" && hasCallPrefix
+        ? helper.insertText[form.scriptType].slice("call ".length)
+        : helper.insertText[form.scriptType],
+      isSnippet: true,
+    }));
+}
 
 function onSubmit(): void {
   if (!canSubmit.value) return;
@@ -344,8 +399,10 @@ onUnmounted(removeKeydownListener);
               :selected-group-id="selectedVariableGroupId"
               :text-identity="selectedVariableGroupId"
               :script-type="form.scriptType"
+              :get-completions="getScriptCompletions"
               :is-script-macro-param-sync-enabled="true"
               :is-param-group-management-disabled="true"
+              :is-param-expanded-initially="true"
               accessible-label="Script content and variables"
               @update-param-groups="updateVariableGroups"
               @update-text="form.scriptContent = $event"
@@ -385,6 +442,14 @@ onUnmounted(removeKeydownListener);
             </button>
           </div>
           <div class="task-form__actions-right">
+            <button
+              type="button"
+              class="task-form__btn task-form__btn--ghost"
+              :disabled="!canSaveTemplate || !isDirty"
+              @click="onSaveTemplate"
+            >
+              {{ editingTemplateId === null ? "Save as template" : "Save template" }}
+            </button>
             <button type="button" class="task-form__btn task-form__btn--ghost" @click="onClose">
               Cancel
             </button>

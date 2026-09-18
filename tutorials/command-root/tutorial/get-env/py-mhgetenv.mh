@@ -1,0 +1,21 @@
+{
+  "isDraft": false,
+  "id": "35e031f0-a92f-4871-aa83-6d5612f06a7d",
+  "data": {
+    "scriptType": "python",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+key = "TEST_VALUE"
+mhsetenv({key: "py-mhgetenv"})
+value = mhgetenv(key)
+print(value)

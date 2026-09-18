@@ -1,0 +1,21 @@
+{
+  "id": "8b7d44e2-1d57-4dbc-a999-519cafc1cf23",
+  "isExpanded": false,
+  "folderOrder": [],
+  "itemOrder": [
+    "ps1-mhgetenv",
+    "cmd-mhgetenv",
+    "node-mhgetenv",
+    "py-mhgetenv"
+  ],
+  "data": {
+    "selectedParamGroupId": "folder",
+    "paramGroups": [
+      {
+        "id": "folder",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 export const TREE_VIEW_ITEM_FILE_EXTENSION = ".mh";
+export const TREE_VIEW_DEFAULT_SIDEBAR_WIDTH = 400;
 
 export type TreeViewFolderProperties = {
   id: string;

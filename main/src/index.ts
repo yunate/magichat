@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, Tray } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { BridgeRouter } from "../../common/ipc_bridge/rpc";
 import { RpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
@@ -15,6 +16,12 @@ import { WindowManager } from "./window/windowManager";
 let gIsShutdownStarted = false;
 let gIsShutdownComplete = false;
 let gTray: Tray | null = null;
+
+function configureChromiumScheduling(): void {
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+}
 
 function configureInstanceScope(): void {
   if (app.isPackaged) return;
@@ -72,6 +79,7 @@ function createTray(): void {
   gTray = tray;
 }
 
+configureChromiumScheduling();
 configureInstanceScope();
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -82,7 +90,8 @@ if (!hasSingleInstanceLock) {
 
   void app.whenReady().then(async () => {
     await gLogger.start();
-    console.log("[main] Application started.");
+    const buildVersion = fs.readFileSync(gApplicationPaths.buildVersionPath, "utf8").trim();
+    console.log(`[main] Application started. Version: ${buildVersion}.`);
     RpcObjectRegistry.register(BridgeRouter.getRouter());
     await gCliBridge.start(app.getPath("userData"));
     gTaskManager.startQueuedTasks();

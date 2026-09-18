@@ -28,6 +28,7 @@ export class MainWindow extends Window {
       ...(bounds.x === null || bounds.y === null ? {} : { x: bounds.x, y: bounds.y }),
       minWidth: MAIN_WINDOW_MIN_WIDTH,
       minHeight: MAIN_WINDOW_MIN_HEIGHT,
+      show: false,
       frame: false,
       icon: gApplicationPaths.appIconPath,
       backgroundColor: theme.name === "light" ? "#ffffff" : "#181818",
@@ -45,6 +46,8 @@ export class MainWindow extends Window {
       if (url !== browserWindow.webContents.getURL()) event.preventDefault();
     });
     browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    browserWindow.maximize();
+    browserWindow.show();
     return browserWindow;
   }
 

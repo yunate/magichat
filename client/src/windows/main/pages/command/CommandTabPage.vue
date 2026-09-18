@@ -28,6 +28,7 @@ import type {
   TreeViewEntityData,
   TreeViewFolder,
   TreeViewItem,
+  TreeViewTab,
 } from "../../../../../../common/treeView";
 import type { TerminalPlacement } from "../../../../../../common/config/command";
 import {
@@ -36,6 +37,7 @@ import {
 } from "../../../../../../common/treeView";
 import { confirmActionDialog, showAlertDialog } from "../../../../components/confirmDialog";
 import { runWithOperationProgress } from "../../../../components/operationProgressDialog";
+import type { PopupToastHandle } from "../../../../components/popupToast";
 import PopupSelect from "../../../../components/PopupSelect.vue";
 import PopupToast from "../../../../components/PopupToast.vue";
 import SplitContainer from "../../../../components/SplitContainer.vue";
@@ -78,6 +80,7 @@ type TerminalStatus = Readonly<{
 }>;
 
 type Props = {
+  tab: TreeViewTab;
   entity: TreeViewFolder | TreeViewItem;
   isActive: boolean;
   notifyReady: () => void;
@@ -110,7 +113,7 @@ const terminalStatus = shallowRef<TerminalStatus>({
 const isAncestorDataLoading = ref(false);
 const ancestorDataError = shallowRef("");
 const ancestorDataRevision = ref(0);
-const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
+const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const terminal = useTemplateRef<TerminalExposed>("terminal");
 const textEdit = useTemplateRef<TextEditExposed>("textEdit");
 let itemRenameOperation: Promise<string | null> | null = null;
@@ -119,6 +122,7 @@ let isMounted = false;
 let isRegistered = false;
 let ancestorDataLoadId = 0;
 const ancestorFolderData = new Map<string, CommandFolderData>();
+const ancestorFolders = shallowRef<readonly TreeViewFolder[]>([]);
 const TERMINAL_STATUS_CHECK_INTERVAL_MS = 1000;
 const PARAM_PRIORITY_DESCRIPTION = "Priority, highest first: Workspace Environment, current group, nearest parent Folder, then outer parent Folders.";
 const scriptTypeOptions = SCRIPT_TYPES.map((scriptType) => ({
@@ -131,7 +135,7 @@ const scriptType = computed(() => {
   const current = draft.value;
   return current?.kind === "item" ? current.data.scriptType : null;
 });
-const isItemDraft = computed(() => isTreeViewItem(props.entity) && props.entity.properties.isDraft);
+const isItemDraft = ref(isTreeViewItem(props.entity) && props.entity.properties.isDraft);
 const isSaveDisabled = computed(() => (!isDirty.value && !isItemDraft.value) || isSaving.value);
 const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
   const current = draft.value;
@@ -140,7 +144,7 @@ const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
     id: group.id,
     name: group.name,
     sourceType: current.kind === "folder" ? "Folder" : "Command",
-    sourcePath: workspaceRelativePath(props.entity.path),
+    sourcePath: workspaceRelativePath(props.tab.path),
     params: group.params,
   }));
 });
@@ -165,7 +169,7 @@ watch([isDirty, isItemDraft, isCommandRunning, scriptType], () => emitState());
 watch(() => props.entity.name, () => {
   titleError.value = "";
 });
-watch(() => props.entity.path, (path, previousPath) => {
+watch(() => props.tab.path, (path, previousPath) => {
   if (!isMounted || draft.value === null || dirname(path) === dirname(previousPath)) return;
   void refreshAncestorFolderData(path);
 });
@@ -202,7 +206,7 @@ function terminalMessageHandler(message: string): void {
 
 function requestTabPromoted(): void {
   void ensureTabPromoted().catch((reason: unknown) => {
-    popupToast.value?.show(errorMessage(reason));
+    popupToast.value?.show(errorMessage(reason), { level: "error" });
   });
 }
 
@@ -227,11 +231,11 @@ async function loadDraft(): Promise<void> {
   isLoading.value = true;
   let shouldNotifyReady = false;
   try {
-    replaceAncestorFolderData(await loadAncestorFolderData(props.entity.path));
+    replaceAncestorFolderData(await loadAncestorFolderData(props.tab.path));
     const kind = isTreeViewItem(props.entity) ? "item" : "folder";
     const entityData = await props.treeView.controller.getEntityData({
       kind,
-      path: props.entity.path,
+      path: props.tab.path,
     });
     const loadedDraft = createDraft(props.entity, entityData);
     if (!isMounted) return;
@@ -243,7 +247,7 @@ async function loadDraft(): Promise<void> {
   } catch (reason: unknown) {
     if (isMounted) {
       loadError.value = errorMessage(reason);
-      popupToast.value?.show(loadError.value);
+      popupToast.value?.show(loadError.value, { level: "error" });
       shouldNotifyReady = true;
     }
   } finally {
@@ -261,13 +265,13 @@ async function refreshAncestorFolderData(entityPath: string): Promise<void> {
   try {
     const loadedData = await loadAncestorFolderData(entityPath);
     if (!isMounted || loadId !== ancestorDataLoadId
-      || dirname(props.entity.path) !== dirname(entityPath)) return;
+      || dirname(props.tab.path) !== dirname(entityPath)) return;
     replaceAncestorFolderData(loadedData);
   } catch (reason: unknown) {
     if (!isMounted || loadId !== ancestorDataLoadId
-      || dirname(props.entity.path) !== dirname(entityPath)) return;
+      || dirname(props.tab.path) !== dirname(entityPath)) return;
     ancestorDataError.value = errorMessage(reason);
-    popupToast.value?.show(ancestorDataError.value);
+    popupToast.value?.show(ancestorDataError.value, { level: "error" });
   } finally {
     if (isMounted && loadId === ancestorDataLoadId) isAncestorDataLoading.value = false;
   }
@@ -275,7 +279,9 @@ async function refreshAncestorFolderData(entityPath: string): Promise<void> {
 
 async function loadAncestorFolderData(entityPath: string): Promise<Map<string, CommandFolderData>> {
   const loadedData = new Map<string, CommandFolderData>();
-  for (const folder of collectAncestorFolders(entityPath)) {
+  const folders = await resolveAncestorFolders(entityPath);
+  ancestorFolders.value = folders;
+  for (const folder of folders) {
     const entityData = await props.treeView.controller.getEntityData({
       kind: "folder",
       path: folder.path,
@@ -285,6 +291,24 @@ async function loadAncestorFolderData(entityPath: string): Promise<Map<string, C
       : commandFolderDataSerializer.fromJson(entityData.dataJson));
   }
   return loadedData;
+}
+
+async function resolveAncestorFolders(entityPath: string): Promise<TreeViewFolder[]> {
+  const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
+  if (workspacePath === undefined) throw new Error("Command workspace is unavailable");
+  if (entityPath === workspacePath) return [];
+  const paths: string[] = [];
+  let parentPath = dirname(entityPath);
+  while (true) {
+    paths.unshift(parentPath);
+    if (parentPath === workspacePath) break;
+    const nextParentPath = dirname(parentPath);
+    if (nextParentPath === parentPath) throw new Error("Command ancestor path is invalid");
+    parentPath = nextParentPath;
+  }
+  const folders: TreeViewFolder[] = [];
+  for (const path of paths) folders.push(await props.treeView.resolveFolderByPath(path));
+  return folders;
 }
 
 function replaceAncestorFolderData(loadedData: ReadonlyMap<string, CommandFolderData>): void {
@@ -376,7 +400,7 @@ async function save(): Promise<boolean> {
   const current = requireDraft();
   if (isSaving.value) return false;
   if (!isDraftDirty(current)) {
-    return isItemDraft.value ? props.requestDraftSave() : true;
+    return publishItemDraft();
   }
   isSaving.value = true;
   try {
@@ -386,20 +410,16 @@ async function save(): Promise<boolean> {
       if (renameError !== null) throw new Error(renameError);
     }
     if (current.kind === "folder") {
-      const folder = props.treeView.getFolderById(current.id);
-      if (folder === null) throw new Error("Command folder is no longer available");
       await props.treeView.controller.updateEntityData(
-        { kind: "folder", path: folder.path },
+        { kind: "folder", path: props.tab.path },
         {
           dataJson: commandFolderDataSerializer.toJson(cloneFolderData(current.data)),
           extends: current.extends,
         },
       );
     } else {
-      const item = props.treeView.getItemById(current.id);
-      if (item === null) throw new Error("Command item is no longer available");
       await props.treeView.controller.updateEntityData(
-        { kind: "item", path: item.path },
+        { kind: "item", path: props.tab.path },
         commandItemDataSerializer.toEntityData(cloneItemData(current.data), current.extends),
       );
     }
@@ -409,18 +429,25 @@ async function save(): Promise<boolean> {
     } else if (latest?.kind === "item" && current.kind === "item") {
       replaceDraft({ ...latest, baseline: cloneItemData(current.data) });
     }
-    return isItemDraft.value ? await props.requestDraftSave() : true;
+    return await publishItemDraft();
   } catch (reason: unknown) {
-    popupToast.value?.show(errorMessage(reason));
+    popupToast.value?.show(errorMessage(reason), { level: "error" });
     throw reason;
   } finally {
     isSaving.value = false;
   }
 }
 
+async function publishItemDraft(): Promise<boolean> {
+  if (!isItemDraft.value) return true;
+  const isSaved = await props.requestDraftSave();
+  if (isSaved) isItemDraft.value = false;
+  return isSaved;
+}
+
 async function discardDraft(): Promise<void> {
   if (!isItemDraft.value) return;
-  await props.treeView.controller.deleteItem(api.id);
+  await props.treeView.controller.discardDraft(api.id);
 }
 
 async function saveClickHandler(): Promise<void> {
@@ -433,18 +460,15 @@ async function saveClickHandler(): Promise<void> {
 }
 
 async function renameItem(name: string): Promise<string | null> {
-  const entity = props.treeView.getItemById(api.id);
-  if (entity === null) return "Command is no longer available";
   try {
     TreeViewPath.ensureName(name, "Command title");
-    if (name === entity.name) return null;
-    const parent = findFolderByPath(props.treeView.rootFolder.value, dirname(entity.path));
-    if (parent === null) return "Command parent folder is unavailable";
+    if (name === props.entity.name) return null;
+    const parent = await props.treeView.resolveFolderByPath(dirname(props.tab.path));
     const targetOrder = parent.items.findIndex((item) => item.properties.id === api.id);
     if (targetOrder < 0) return "Command order is unavailable";
     await props.treeView.controller.move({
       kind: "item",
-      sourcePath: entity.path,
+      sourcePath: props.tab.path,
       targetPath: join(parent.path, `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}`),
       targetOrder,
     });
@@ -469,7 +493,7 @@ async function itemTitleBlurHandler(event: Event): Promise<void> {
   }
   if (message !== null) {
     titleError.value = message;
-    popupToast.value?.show(message);
+    popupToast.value?.show(message, { level: "error" });
     return;
   }
   titleError.value = "";
@@ -482,7 +506,7 @@ function itemTitleEnterHandler(event: KeyboardEvent): void {
 
 function collectAdditionalParams(): readonly TextEditAdditionalParamScope[] {
   void ancestorDataRevision.value;
-  return collectAncestorFolders(props.entity.path).map((folder) => {
+  return ancestorFolders.value.map((folder) => {
     const data = props.getOpenFolderData(folder.properties.id)
       ?? ancestorFolderData.get(folder.properties.id);
     if (data === undefined) throw new Error("Command folder data is not loaded");
@@ -511,32 +535,6 @@ function workspaceRelativePath(entityPath: string): string {
     : relative(dirname(workspacePath), entityPath);
 }
 
-function collectAncestorFolders(entityPath: string): TreeViewFolder[] {
-  const ancestors: TreeViewFolder[] = [];
-  let parentPath = dirname(entityPath);
-  while (true) {
-    const folder = findFolderByPath(props.treeView.rootFolder.value, parentPath);
-    if (folder === null) break;
-    ancestors.unshift(folder);
-    const nextParentPath = dirname(parentPath);
-    if (nextParentPath === parentPath) break;
-    parentPath = nextParentPath;
-  }
-  return ancestors;
-}
-
-function findFolderByPath(root: TreeViewFolder | null, path: string): TreeViewFolder | null {
-  if (root === null) return null;
-  const pending = [root];
-  while (pending.length > 0) {
-    const folder = pending.shift();
-    if (folder === undefined) continue;
-    if (folder.path === path) return folder;
-    pending.push(...folder.folders);
-  }
-  return null;
-}
-
 async function runHandler(): Promise<void> {
   if (isCommandRunning.value || isAncestorDataLoading.value || ancestorDataError.value.length > 0) return;
   try {
@@ -544,20 +542,20 @@ async function runHandler(): Promise<void> {
     if (terminalApi === null) throw new Error("Terminal is unavailable");
     const current = getItemDraft();
     if (current.data.content.length === 0) {
-      popupToast.value?.show("Command content is empty.");
+      popupToast.value?.show("Command content is empty.", { level: "warning" });
       return;
     }
     const resolution = textEdit.value?.getResolvedText();
     if (resolution === undefined || !resolution.successful) {
       const message = resolution?.error ?? "Command content could not be resolved";
-      popupToast.value?.show(message);
+      popupToast.value?.show(message, { level: "error" });
       reportTerminalError(message);
       return;
     }
     if (!await prepareTerminalForRun(terminalApi, current.data.scriptType)) return;
     await terminalApi.run({
       scriptId: current.id,
-      commandPath: props.entity.path,
+      commandPath: props.tab.path,
       scriptType: current.data.scriptType,
       scriptContent: resolution.value,
     });

@@ -6,7 +6,7 @@ import {
   type CommandParam,
 } from "../../../../../../common/command";
 import type { TerminalRunRequest } from "../../../../../../common/terminal";
-import { TreeViewPath, type TreeViewFolder } from "../../../../../../common/treeView";
+import { TREE_VIEW_ITEM_FILE_EXTENSION, TreeViewPath } from "../../../../../../common/treeView";
 import {
   resolveTextEditText,
   type TextEditAdditionalParamScope,
@@ -30,12 +30,7 @@ export async function createCommandCliRunRequest(
     throw new Error("Command workspace is unavailable");
   }
   const itemPath = resolveCliPath(requestedPath, workspaceRef.workspacePath, sourceCommandPath);
-  const item = model.getItemByPath(itemPath);
-  if (item === null) {
-    throw new Error(
-      `Command path does not identify an Item in the current workspace. Requested: ${JSON.stringify(requestedPath)}. Resolved: ${JSON.stringify(itemPath)}`,
-    );
-  }
+  const item = await model.resolveItemByPath(itemPath);
   const entityData = await model.controller.getEntityData({ kind: "item", path: item.path });
   const data = commandItemDataSerializer.fromEntityData(entityData);
   if (data.content.length === 0) {
@@ -43,10 +38,10 @@ export async function createCommandCliRunRequest(
   }
 
   const folderScopes: TextEditAdditionalParamScope[] = [];
-  for (const folder of collectAncestorFolders(model.rootFolder.value, item.path)) {
+  for (const folderPath of collectAncestorFolderPaths(workspaceRef.workspacePath, item.path)) {
     const { dataJson: folderDataJson } = await model.controller.getEntityData({
       kind: "folder",
-      path: folder.path,
+      path: folderPath,
     });
     const folderData = folderDataJson === null
       ? commandFolderDataSerializer.getDefault()
@@ -57,7 +52,7 @@ export async function createCommandCliRunRequest(
     if (group === undefined) throw new Error("Selected folder param group is unavailable");
     folderScopes.push({
       label: "Folder",
-      sourcePath: relative(dirname(workspaceRef.workspacePath), folder.path),
+      sourcePath: relative(dirname(workspaceRef.workspacePath), folderPath),
       params: group.params,
     });
   }
@@ -85,18 +80,15 @@ export async function createCommandCliRunRequest(
   };
 }
 
-export function resolveCommandMacroTarget(
+export async function resolveCommandMacroTarget(
   model: TreeView | null,
   target: CommandEnvTarget,
-): CommandMacroTarget {
+): Promise<CommandMacroTarget> {
   const workspaceRef = model?.selectedWorkspaceRef.value;
-  const rootFolder = model?.rootFolder.value;
   if (
     model === null
     || workspaceRef === null
     || workspaceRef === undefined
-    || rootFolder === null
-    || rootFolder === undefined
   ) {
     throw new Error("Command workspace is unavailable");
   }
@@ -108,13 +100,12 @@ export function resolveCommandMacroTarget(
     workspaceRef.workspacePath,
     target.sourceCommandPath,
   );
-  if (model.getItemByPath(targetPath) !== null) return { kind: "item", path: targetPath };
-  if (findFolderByPath(rootFolder, targetPath) !== null) {
-    return { kind: "folder", path: targetPath };
+  if (targetPath.endsWith(TREE_VIEW_ITEM_FILE_EXTENSION)) {
+    await model.resolveItemByPath(targetPath);
+    return { kind: "item", path: targetPath };
   }
-  throw new Error(
-    `Macro path does not identify an entity in the current workspace. Requested: ${JSON.stringify(target.path)}. Resolved: ${JSON.stringify(targetPath)}`,
-  );
+  await model.resolveFolderByPath(targetPath);
+  return { kind: "folder", path: targetPath };
 }
 
 function resolveCliPath(
@@ -140,26 +131,12 @@ function resolveCliPath(
   );
 }
 
-function collectAncestorFolders(root: TreeViewFolder | null, itemPath: string): TreeViewFolder[] {
-  if (root === null) throw new Error("Command workspace is unavailable");
-  const ancestors: TreeViewFolder[] = [];
+function collectAncestorFolderPaths(workspacePath: string, itemPath: string): string[] {
+  const ancestors: string[] = [];
   let folderPath = dirname(itemPath);
   while (true) {
-    const folder = findFolderByPath(root, folderPath);
-    if (folder === null) throw new Error("Command ancestor folder is unavailable");
-    ancestors.unshift(folder);
-    if (folder.path === root.path) return ancestors;
+    ancestors.unshift(folderPath);
+    if (folderPath === workspacePath) return ancestors;
     folderPath = dirname(folderPath);
   }
-}
-
-function findFolderByPath(root: TreeViewFolder, path: string): TreeViewFolder | null {
-  const pending = [root];
-  while (pending.length > 0) {
-    const folder = pending.shift();
-    if (folder === undefined) continue;
-    if (folder.path === path) return folder;
-    pending.push(...folder.folders);
-  }
-  return null;
 }

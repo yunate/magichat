@@ -1,0 +1,18 @@
+{
+  "isDraft": false,
+  "id": "33366b29-b58e-4ac7-9542-21c512af50ec",
+  "data": {
+    "scriptType": "powershell",
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+mhsetenv --path=tutorial/set-env/ps1-mhsetenv.mh key value 

@@ -10,14 +10,17 @@ import { TREE_VIEW_ITEM_FILE_EXTENSION } from "../../../../common/treeView";
 import { confirmActionDialog } from "../confirmDialog";
 import ContextMenu from "../ContextMenu.vue";
 import type { ContextMenuArea, ContextMenuPosition } from "../contextMenuTypes";
+import { runWithOperationProgress } from "../operationProgressDialog";
+import type { PopupToastHandle } from "../popupToast";
 import PopupToast from "../PopupToast.vue";
 import PopupSelect from "../PopupSelect.vue";
 import SplitContainer from "../SplitContainer.vue";
 import type { TreeView } from "./TreeView";
-import type { TreeViewSelection } from "./treeViewTypes";
+import type { TreeViewDropPosition, TreeViewSelection } from "./treeViewTypes";
 import PersistentStack from "../PersistentStack.vue";
 import TreeViewNode from "./TreeViewNode.vue";
 import TreeViewSaveDraftDialog from "./TreeViewSaveDraftDialog.vue";
+import TreeViewTabPageHost from "./TreeViewTabPageHost.vue";
 import TreeViewTabs from "./TreeViewTabs.vue";
 
 type MenuState = {
@@ -62,8 +65,9 @@ const props = withDefaults(defineProps<{
 defineSlots<{
   folderOverlay(props: { folder: TreeViewFolder; isSelected: boolean }): unknown;
   itemIcon(props: { item: TreeViewItem; isSelected: boolean }): unknown;
+  tabItemIcon(props: { tab: TreeViewTab; isSelected: boolean }): unknown;
   itemOverlay(props: { item: TreeViewItem; isSelected: boolean }): unknown;
-  tabOverlay(props: { tab: TreeViewTab; entity: TreeViewFolder | TreeViewItem; isActive: boolean }): unknown;
+  tabOverlay(props: { tab: TreeViewTab; isActive: boolean }): unknown;
   tabPage(props: {
     tab: TreeViewTab;
     entity: TreeViewFolder | TreeViewItem;
@@ -76,7 +80,7 @@ defineSlots<{
 const menu = ref<MenuState>(null);
 const treeViewElement = useTemplateRef<HTMLElement>("treeViewElement");
 const renameTarget = ref<TreeViewSelection | null>(null);
-const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
+const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const isSidebarCollapsed = ref(false);
 const sidebarWidth = ref(240);
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
@@ -97,34 +101,24 @@ const workspaceOptions = computed(() => props.treeView.workspaceRefs.value.lengt
     })));
 const tabPageKeyPrefix = computed(() => props.treeView.selectedWorkspaceRef.value?.workspacePath ?? "");
 const isTabContentVisible = computed(() => props.isFolderTabVisible || props.isItemTabVisible);
-const tabs = computed(() => workspace.value?.tabs.flatMap((tab) => {
-  if (tab.kind === "folder" && !props.isFolderTabVisible) return [];
-  if (tab.kind === "item" && !props.isItemTabVisible) return [];
-  const entity = tab.kind === "folder"
-    ? props.treeView.getFolderById(tab.id)
-    : props.treeView.getItemById(tab.id);
-  return entity === null ? [] : [{ tab, entity }];
-}) ?? []);
-const activeEntry = computed(() => tabs.value.find((entry) => entry.tab.id === workspace.value?.activeTabId) ?? null);
-const activeTabPageKey = computed(() => activeEntry.value === null ? null : getTabPageKey(activeEntry.value.tab));
+const tabs = computed(() => workspace.value?.tabs.filter((tab) => (
+  tab.kind === "folder" ? props.isFolderTabVisible : props.isItemTabVisible
+)) ?? []);
+const activeTab = computed(() => tabs.value.find((tab) => tab.id === workspace.value?.activeTabId) ?? null);
+const activeTabPageKey = computed(() => activeTab.value === null ? null : getTabPageKey(activeTab.value));
 const contextMenuTab = computed(() => {
   const target = menu.value;
   if (target?.kind !== "tab") return null;
-  return tabs.value.find((entry) => entry.tab.id === target.id)?.tab ?? null;
+  return tabs.value.find((tab) => tab.id === target.id) ?? null;
 });
 const breadcrumbPath = computed(() => {
-  const entry = activeEntry.value;
+  const tab = activeTab.value;
   const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
-  if (entry === null || workspacePath === undefined) return "";
-  return relative(dirname(workspacePath), entry.entity.path);
+  if (tab === null || workspacePath === undefined) return "";
+  return relative(dirname(workspacePath), tab.path);
 });
 const breadcrumbSegments = computed<readonly string[]>(() => {
   return breadcrumbPath.value.length === 0 ? [] : breadcrumbPath.value.split("/");
-});
-const activeDraft = computed(() => {
-  const entry = activeEntry.value;
-  if (entry?.tab.kind !== "item" || !isTreeViewItem(entry.entity)) return null;
-  return entry.entity.properties.isDraft ? entry.entity : null;
 });
 const selectedNodeKeys = computed<ReadonlySet<string>>(() => new Set(
   selectedNodes.value.map(selectionKey),
@@ -138,6 +132,7 @@ const highlightedNodeKeys = computed<ReadonlySet<string>>(() => {
     const entity = resolveSelection(selection);
     return entity === null ? [] : [entity.path];
   });
+  if (activeTab.value !== null) selectedPaths.push(activeTab.value.path);
   const pending = [...root.folders];
   while (pending.length > 0) {
     const folder = pending.pop();
@@ -181,7 +176,10 @@ watch(rootFolder, () => {
 
 function report(operation: Promise<unknown>): void {
   void operation.catch((reason: unknown) => {
-    popupToast.value?.show(reason instanceof Error ? reason.message : String(reason));
+    popupToast.value?.show(
+      reason instanceof Error ? reason.message : String(reason),
+      { level: "error" },
+    );
   });
 }
 
@@ -200,15 +198,20 @@ function activate(
 }
 
 function switchTab(tab: TreeViewTab): void {
-  selectedNodes.value = [{ kind: tab.kind, id: tab.id }];
-  report(props.treeView.controller.switchTab({ tabId: tab.id }));
+  report(props.treeView.controller.switchTab({ tabId: tab.id }).then(() => {
+    selectedNodes.value = selectionArray(props.treeView.selection.value);
+  }));
 }
 
 function toggleFolder(folder: TreeViewFolder): void {
-  report(props.treeView.controller.updateFolder(folder.path, {
-    ...structuredClone(folder.properties),
-    isExpanded: !folder.properties.isExpanded,
-  }));
+  const isExpanded = !folder.properties.isExpanded;
+  report((async (): Promise<void> => {
+    await props.treeView.controller.updateFolder(folder.path, {
+      ...structuredClone(folder.properties),
+      isExpanded,
+    });
+    if (isExpanded) await props.treeView.controller.loadFolderChildren(folder.path);
+  })());
 }
 
 function openMenu(event: MouseEvent | KeyboardEvent, selection: TreeViewSelection): void {
@@ -255,14 +258,14 @@ function closeMenuTabs(mode: "others" | "left" | "right" | "othersExceptPinned")
   const target = menu.value;
   menu.value = null;
   if (target?.kind !== "tab") return;
-  const targetIndex = tabs.value.findIndex((entry) => entry.tab.id === target.id);
+  const targetIndex = tabs.value.findIndex((tab) => tab.id === target.id);
   if (targetIndex < 0) return;
-  const tabIds = tabs.value.flatMap((entry, index) => {
-    if (entry.tab.id === target.id) return [];
-    if (mode === "left") return index < targetIndex ? [entry.tab.id] : [];
-    if (mode === "right") return index > targetIndex ? [entry.tab.id] : [];
-    if (mode === "othersExceptPinned" && entry.tab.isPinned) return [];
-    return [entry.tab.id];
+  const tabIds = tabs.value.flatMap((tab, index) => {
+    if (tab.id === target.id) return [];
+    if (mode === "left") return index < targetIndex ? [tab.id] : [];
+    if (mode === "right") return index > targetIndex ? [tab.id] : [];
+    if (mode === "othersExceptPinned" && tab.isPinned) return [];
+    return [tab.id];
   });
   report(props.treeView.controller.closeTabs({
     tabIds,
@@ -388,28 +391,36 @@ function deleteTarget(): void {
 
 async function deleteSelections(selections: readonly TreeViewSelection[]): Promise<void> {
   for (const selection of selections) {
-    if (selection.kind === "folder") {
-      const folder = props.treeView.getFolderById(selection.id);
-      if (folder === null) continue;
-      if (folder.path === rootFolder.value?.path) {
-        const action = await confirmActionDialog({
-          title: "Delete workspace",
-          descriptions: [
-            `Delete "${folder.name}" and all of its contents?`,
-            "This action cannot be undone.",
-          ],
-          actionId: "delete",
-          actionLabel: "Delete",
-        });
-        if (action === "cancel") return;
-        await props.treeView.controller.deleteWorkspace(folder.path);
-      } else {
-        await props.treeView.controller.deleteFolder(selection.id);
-      }
-    } else {
-      await props.treeView.controller.deleteItem(selection.id);
+    if (selection.kind !== "folder") continue;
+    const folder = props.treeView.getFolderById(selection.id);
+    if (folder !== null && folder.path === rootFolder.value?.path) {
+      const action = await confirmActionDialog({
+        title: "Delete workspace",
+        descriptions: [
+          `Delete "${folder.name}" and all of its contents?`,
+          "This action cannot be undone.",
+        ],
+        actionId: "delete",
+        actionLabel: "Delete",
+      });
+      if (action === "cancel") return;
     }
   }
+  await runWithOperationProgress("Deleting...", async () => {
+    for (const selection of selections) {
+      if (selection.kind === "folder") {
+        const folder = props.treeView.getFolderById(selection.id);
+        if (folder === null) continue;
+        if (folder.path === rootFolder.value?.path) {
+          await props.treeView.controller.deleteWorkspace(folder.path);
+        } else {
+          await props.treeView.controller.deleteFolder(selection.id);
+        }
+      } else {
+        await props.treeView.controller.deleteItem(selection.id);
+      }
+    }
+  }, 0);
   selectedNodes.value = selectionArray(props.treeView.selection.value);
 }
 
@@ -421,7 +432,11 @@ function cloneTarget(): void {
   const selections = selectedNodeKeys.value.has(selectionKey(selection))
     ? normalizeSelections(selectedNodes.value)
     : [selection];
-  report(cloneSelections(selections));
+  report(runWithOperationProgress(
+    selections.length === 1 ? "Cloning..." : "Cloning items...",
+    () => cloneSelections(selections),
+    0,
+  ));
 }
 
 async function cloneSelections(selections: readonly TreeViewSelection[]): Promise<void> {
@@ -449,6 +464,7 @@ async function cloneSelection(target: TreeViewSelection): Promise<void> {
       sourcePath: entity.path,
       targetPath: join(parent, cloneName),
     });
+    popupToast.value?.show("Workspace cloned. Please switch manually.", { level: "success" });
     return;
   }
   const cloneKind = target.kind;
@@ -498,7 +514,7 @@ function openMenuTargetInExplorer(): void {
   if (target === null) return;
   if (target.kind === "tab") {
     if (tab === null) return;
-    report(props.treeView.controller.openInExplorer({ kind: tab.kind, id: tab.id }));
+    report(props.treeView.controller.openPathInExplorer(tab.kind, tab.path));
     return;
   }
   report(props.treeView.controller.openInExplorer({ kind: target.kind, id: target.id }));
@@ -506,16 +522,21 @@ function openMenuTargetInExplorer(): void {
 
 async function copyMenuPath(kind: "relative" | "full"): Promise<void> {
   const target = menu.value;
-  const entity = resolveMenuEntity(target);
+  const targetPath = target?.kind === "tab"
+    ? contextMenuTab.value?.path ?? null
+    : resolveMenuEntity(target)?.path ?? null;
   const workspacePath = props.treeView.selectedWorkspaceRef.value?.workspacePath;
   menu.value = null;
-  if (entity === null || workspacePath === undefined) return;
-  const path = kind === "full" ? entity.path : relative(dirname(workspacePath), entity.path);
+  if (targetPath === null || workspacePath === undefined) return;
+  const path = kind === "full" ? targetPath : relative(dirname(workspacePath), targetPath);
   try {
     await navigator.clipboard.writeText(path);
-    popupToast.value?.show(kind === "full" ? "Full path copied." : "Path copied.");
+    popupToast.value?.show(
+      kind === "full" ? "Full path copied." : "Path copied.",
+      { level: "success" },
+    );
   } catch (reason: unknown) {
-    popupToast.value?.show("Failed to copy path.");
+    popupToast.value?.show("Failed to copy path.", { level: "error" });
     console.error("Failed to copy TreeView path:", reason);
   }
 }
@@ -527,17 +548,22 @@ function setMenuSubtreeExpanded(isExpanded: boolean): void {
   const folder = props.treeView.getFolderById(target.id);
   if (folder === null) return;
   report((async (): Promise<void> => {
-    const pending = [folder];
+    const pending = [folder.path];
     while (pending.length > 0) {
-      const current = pending.shift();
-      if (current === undefined) continue;
+      const path = pending.shift();
+      if (path === undefined) continue;
+      let current = props.treeView.findLoadedFolderByPath(path);
+      if (current === null) continue;
       if (current.properties.isExpanded !== isExpanded) {
         await props.treeView.controller.updateFolder(current.path, {
           ...structuredClone(current.properties),
           isExpanded,
         });
       }
-      pending.push(...current.folders);
+      if (isExpanded) {
+        current = await props.treeView.controller.loadFolderChildren(current.path);
+      }
+      pending.push(...current.folders.map((child) => child.path));
     }
   })());
 }
@@ -546,7 +572,7 @@ function moveNode(
   dragSources: readonly TreeViewDragSource[],
   targetKind: "folder" | "item",
   targetPath: string,
-  position: "before" | "inside" | "after",
+  position: TreeViewDropPosition,
 ): void {
   const draggedSelection = selectionFromSource(dragSources[0]);
   if (draggedSelection === null) return;
@@ -560,7 +586,7 @@ async function moveSelections(
   selections: readonly TreeViewSelection[],
   targetKind: "folder" | "item",
   targetPath: string,
-  position: "before" | "inside" | "after",
+  position: TreeViewDropPosition,
 ): Promise<void> {
   const targetEntity = targetKind === "folder"
     ? findFolderByPath(targetPath)
@@ -570,12 +596,15 @@ async function moveSelections(
     kind: targetKind,
     id: targetEntity.properties.id,
   }))) return;
-  const targetFolder = targetKind === "folder" && position === "inside"
+  const targetFolder = targetKind === "folder"
+    && (position === "inside" || position === "inside-before")
     ? targetEntity
     : findFolderByPath(dirname(targetPath));
   if (!isTreeViewFolder(targetFolder)) return;
   validateMoveSelections(selections, targetFolder);
-  const moveOrder = position === "after"
+  const moveOrder = position === "inside-before"
+    ? [...selections].reverse()
+    : position === "after"
     ? [
         ...selections.filter((selection) => selection.kind === targetKind).reverse(),
         ...selections.filter((selection) => selection.kind !== targetKind),
@@ -586,7 +615,9 @@ async function moveSelections(
     if (entity === null) continue;
     const currentTargetFolder = findFolderByPath(targetFolder.path);
     if (currentTargetFolder === null) throw new Error("TreeView move target folder is missing");
-    const targetOrder = position === "inside" || selection.kind !== targetKind
+    const targetOrder = position === "inside-before"
+      ? 0
+      : position === "inside" || selection.kind !== targetKind
       ? childCount(currentTargetFolder, selection.kind)
       : entityOrder(targetKind, targetPath) + (position === "after" ? 1 : 0);
     await props.treeView.controller.move({
@@ -677,8 +708,8 @@ function menuTargetSelection(target: MenuState): TreeViewSelection | null {
 
 function resolveMenuEntity(target: MenuState): TreeViewFolder | TreeViewItem | null {
   if (target === null) return null;
-  if (target.kind !== "tab") return resolveSelection({ kind: target.kind, id: target.id });
-  return tabs.value.find((entry) => entry.tab.id === target.id)?.entity ?? null;
+  if (target.kind === "tab") return null;
+  return resolveSelection({ kind: target.kind, id: target.id });
 }
 
 function selectionArray(selection: TreeViewSelection | null): readonly TreeViewSelection[] {
@@ -759,12 +790,16 @@ function closeWorkspaceDialog(): void {
   workspaceDialog.value = null;
 }
 
-function openDraftDialog(): Promise<boolean> {
-  if (activeDraft.value === null || draftDialog.value !== null) return Promise.resolve(false);
-  draftDialog.value = { item: activeDraft.value, error: "", isSubmitting: false };
+function openDraftDialog(item: TreeViewItem): Promise<boolean> {
+  if (!item.properties.isDraft || draftDialog.value !== null) return Promise.resolve(false);
+  draftDialog.value = { item, error: "", isSubmitting: false };
   return new Promise<boolean>((resolve) => {
     resolveDraftDialog = resolve;
   });
+}
+
+function requestDraftSave(entity: TreeViewFolder | TreeViewItem): Promise<boolean> {
+  return isTreeViewItem(entity) ? openDraftDialog(entity) : Promise.resolve(false);
 }
 
 async function saveDraft(name: string, folderId: string): Promise<void> {
@@ -773,7 +808,14 @@ async function saveDraft(name: string, folderId: string): Promise<void> {
   state.isSubmitting = true;
   state.error = "";
   try {
-    await props.treeView.controller.saveDraft(state.item.properties.id, folderId, name);
+    const targetFolder = props.treeView.getFolderById(folderId);
+    if (targetFolder === null) throw new Error("TreeView target folder is unavailable");
+    await props.treeView.controller.saveDraft({
+      itemId: state.item.properties.id,
+      sourcePath: state.item.path,
+      targetFolderPath: targetFolder.path,
+      name,
+    });
     draftDialog.value = null;
     resolveDraftDialog?.(true);
     resolveDraftDialog = null;
@@ -839,8 +881,10 @@ function reorderTabs(
 
 onMounted(() => {
   window.addEventListener("pointerdown", onWindowPointerDown);
+  props.treeView.startBackgroundTasks();
 });
 onUnmounted(() => {
+  props.treeView.pauseBackgroundTasks();
   window.removeEventListener("pointerdown", onWindowPointerDown);
   resolveDraftDialog?.(false);
   resolveDraftDialog = null;
@@ -934,11 +978,11 @@ onUnmounted(() => {
             @reorder="reorderTabs"
             @add="createItem(true)"
           >
-            <template v-if="$slots.itemIcon" #itemIcon="slotProps"><slot name="itemIcon" v-bind="slotProps"></slot></template>
+            <template v-if="$slots.tabItemIcon" #itemIcon="slotProps"><slot name="tabItemIcon" v-bind="slotProps"></slot></template>
             <template #tabOverlay="slotProps"><slot name="tabOverlay" v-bind="slotProps"></slot></template>
           </TreeViewTabs>
         </header>
-        <nav v-if="activeEntry" class="tree-view__breadcrumb" aria-label="Current path">
+        <nav v-if="activeTab" class="tree-view__breadcrumb" aria-label="Current path">
           <span class="tree-view__breadcrumb-segments" :title="breadcrumbPath">
             <template v-for="(segment, index) in breadcrumbSegments" :key="`${index}:${segment}`">
               <span v-if="index > 0" class="tree-view__breadcrumb-separator" aria-hidden="true"></span>
@@ -949,21 +993,30 @@ onUnmounted(() => {
       </div>
       <section class="tree-view__content">
         <PersistentStack
-          v-if="activeEntry !== null"
+          v-if="activeTab !== null"
           :entries="tabs"
           :active-key="activeTabPageKey"
-          :get-entry-key="(entry) => getTabPageKey(entry.tab)"
+          :get-entry-key="getTabPageKey"
           defer-display-until-ready
         >
-          <template #default="{ entry, isActive, notifyReady }">
-            <slot
-              name="tabPage"
-              :tab="entry.tab"
-              :entity="entry.entity"
+          <template #default="{ entry: tab, isActive, notifyReady }">
+            <TreeViewTabPageHost
+              :tab="tab"
               :is-active="isActive"
+              :tree-view="treeView"
               :notify-ready="notifyReady"
-              :request-draft-save="openDraftDialog"
-            ></slot>
+            >
+              <template #default="{ entity, notifyReady: notifyTabPageReady }">
+                <slot
+                  name="tabPage"
+                  :tab="tab"
+                  :entity="entity"
+                  :is-active="isActive"
+                  :notify-ready="notifyTabPageReady"
+                  :request-draft-save="() => requestDraftSave(entity)"
+                ></slot>
+              </template>
+            </TreeViewTabPageHost>
           </template>
         </PersistentStack>
         <div v-if="!hasWorkspace" class="tree-view__empty">
@@ -975,7 +1028,7 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <p v-else-if="activeEntry === null" class="tree-view__empty">Select or create an item.</p>
+        <p v-else-if="activeTab === null" class="tree-view__empty">Select or create an item.</p>
       </section>
       </main>
     </SplitContainer>

@@ -8,6 +8,7 @@ import {
 } from "../../../../components/confirmDialog";
 import type { ConfirmDialogAction } from "../../../../components/confirmDialogTypes";
 import PersistentStack from "../../../../components/PersistentStack.vue";
+import type { PopupToastHandle } from "../../../../components/popupToast";
 import PopupToast from "../../../../components/PopupToast.vue";
 import TaskList from "./components/TaskList.vue";
 import TemplateSidebar from "./components/TemplateSidebar.vue";
@@ -75,7 +76,7 @@ const activeTemplate = ref<TaskTemplate | null>(null);
 const formInitialParams = ref<TaskCreateParam | null>(null);
 const isSubmitting = ref(false);
 const taskCreateForm = ref<TaskCreateFormApi | null>(null);
-const popupToast = ref<{ show: (text: string) => void } | null>(null);
+const popupToast = ref<PopupToastHandle | null>(null);
 
 const maxParallelInput = ref<number | "">("");
 const logsById = reactive<Record<string, string[]>>({});

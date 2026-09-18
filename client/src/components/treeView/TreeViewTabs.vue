@@ -1,18 +1,14 @@
 <script setup lang="ts">
+import { basename } from "pathe";
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
-import type { TreeViewFolder, TreeViewItem, TreeViewTab } from "../../../../common/treeView";
-
-type DisplayTab = {
-  tab: TreeViewTab;
-  entity: TreeViewFolder | TreeViewItem;
-};
+import { TREE_VIEW_ITEM_FILE_EXTENSION, type TreeViewTab } from "../../../../common/treeView";
 type TabDropIndicator = Readonly<{
   targetId: string;
   position: "before" | "after";
 }>;
 
 const props = withDefaults(defineProps<{
-  tabs: readonly DisplayTab[];
+  tabs: readonly TreeViewTab[];
   activeTabId: string | null;
   previewTabId: string | null;
   isMultiline?: boolean;
@@ -22,8 +18,8 @@ const props = withDefaults(defineProps<{
   isAddVisible: true,
 });
 defineSlots<{
-  itemIcon(props: { item: TreeViewItem; isSelected: boolean }): unknown;
-  tabOverlay(props: { tab: TreeViewTab; entity: TreeViewFolder | TreeViewItem; isActive: boolean }): unknown;
+  itemIcon(props: { tab: TreeViewTab; isSelected: boolean }): unknown;
+  tabOverlay(props: { tab: TreeViewTab; isActive: boolean }): unknown;
 }>();
 const emit = defineEmits<{
   activate: [tab: TreeViewTab];
@@ -47,7 +43,7 @@ const scrollbarThumbStyle = computed(() => ({
 }));
 
 watch(
-  () => props.tabs.map((entry) => `${entry.tab.id}:${entry.entity.name}`).join("|"),
+  () => props.tabs.map((tab) => `${tab.id}:${tab.path}`).join("|"),
   () => void nextTick(updateScrollMetrics),
 );
 watch(() => props.isMultiline, () => void nextTick(updateScrollMetrics));
@@ -154,8 +150,10 @@ function stopTabDrag(): void {
   dropIndicator.value = null;
 }
 
-function isTreeViewItem(entity: TreeViewFolder | TreeViewItem): entity is TreeViewItem {
-  return "isDraft" in entity.properties;
+function tabTitle(tab: TreeViewTab): string {
+  return tab.kind === "item"
+    ? basename(tab.path, TREE_VIEW_ITEM_FILE_EXTENSION)
+    : basename(tab.path);
 }
 
 function onDrop(event: DragEvent, targetId: string): void {
@@ -172,44 +170,44 @@ function onDrop(event: DragEvent, targetId: string): void {
   <div class="tree-tabs-shell" :class="{ 'is-dragging-scrollbar': scrollDrag !== null }">
     <nav ref="tabsViewport" class="tree-tabs" :class="{ 'is-multiline': isMultiline }" aria-label="Open items" @scroll="updateScrollMetrics" @wheel="onTabsWheel">
       <div
-        v-for="entry in tabs"
-        :key="entry.tab.id"
+        v-for="tab in tabs"
+        :key="tab.id"
         class="tree-tab"
         :class="{
-          'is-active': activeTabId === entry.tab.id,
-          'is-preview': previewTabId === entry.tab.id,
-          'is-drop-before': dropIndicator?.targetId === entry.tab.id && dropIndicator.position === 'before',
-          'is-drop-after': dropIndicator?.targetId === entry.tab.id && dropIndicator.position === 'after',
+          'is-active': activeTabId === tab.id,
+          'is-preview': previewTabId === tab.id,
+          'is-drop-before': dropIndicator?.targetId === tab.id && dropIndicator?.position === 'before',
+          'is-drop-after': dropIndicator?.targetId === tab.id && dropIndicator?.position === 'after',
         }"
         draggable="true"
-        @dragstart="onDragStart($event, entry.tab.id)"
-        @dragover="onDragOver($event, entry.tab.id)"
+        @dragstart="onDragStart($event, tab.id)"
+        @dragover="onDragOver($event, tab.id)"
         @dragend="stopTabDrag"
-        @drop="onDrop($event, entry.tab.id)"
-        @contextmenu.prevent="emit('contextMenu', $event, entry.tab)"
+        @drop="onDrop($event, tab.id)"
+        @contextmenu.prevent="emit('contextMenu', $event, tab)"
       >
-        <button type="button" class="tree-tab__label" @click="emit('activate', entry.tab)" @dblclick="emit('promote', entry.tab)">
-          <svg v-if="entry.tab.kind === 'folder'" class="tree-tab__folder-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <button type="button" class="tree-tab__label" @click="emit('activate', tab)" @dblclick="emit('promote', tab)">
+          <svg v-if="tab.kind === 'folder'" class="tree-tab__folder-icon" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M1.75 4.25h4l1.3 1.5h7.2v6.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-8Z" />
             <path d="M1.75 5.75v-2h4l1.3 1.5" />
           </svg>
-          <span v-else-if="isTreeViewItem(entry.entity)" class="tree-tab__item-icon">
-            <slot name="itemIcon" :item="entry.entity" :is-selected="activeTabId === entry.tab.id">
+          <span v-else class="tree-tab__item-icon">
+            <slot name="itemIcon" :tab="tab" :is-selected="activeTabId === tab.id">
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M3 1.75h6l4 4v8.5H3z" />
                 <path d="M9 1.75v4h4" />
               </svg>
             </slot>
           </span>
-          <span class="tree-tab__title">{{ entry.entity.name }}</span>
+          <span class="tree-tab__title">{{ tabTitle(tab) }}</span>
         </button>
         <div class="tree-tab__overlay">
-          <slot name="tabOverlay" :tab="entry.tab" :entity="entry.entity" :is-active="activeTabId === entry.tab.id"></slot>
+          <slot name="tabOverlay" :tab="tab" :is-active="activeTabId === tab.id"></slot>
         </div>
-        <button v-if="entry.tab.isPinned" type="button" class="tree-tab__icon tree-tab__pin" aria-label="Unpin tab" title="Unpin tab" @click="emit('pin', entry.tab, false)">
+        <button v-if="tab.isPinned" type="button" class="tree-tab__icon tree-tab__pin" aria-label="Unpin tab" title="Unpin tab" @click="emit('pin', tab, false)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 1.5 14.5 6.5 12 7l-2.5 2.5.5 3.5-1.5 1.5-3-3-3.5 3.5-.5-.5L5.5 11l-3-3L4 6.5l3.5.5L10 4.5z" /></svg>
         </button>
-        <button v-else type="button" class="tree-tab__icon tree-tab__close" aria-label="Close tab" title="Close tab" @click="emit('close', entry.tab)">
+        <button v-else type="button" class="tree-tab__icon tree-tab__close" aria-label="Close tab" title="Close tab" @click="emit('close', tab)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7" /></svg>
         </button>
       </div>

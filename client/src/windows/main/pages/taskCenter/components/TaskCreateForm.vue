@@ -10,6 +10,7 @@ import {
 import type { TaskCreateParam } from "../../../../../../../common/tasks/taskCreateParam";
 import type { TaskTemplate } from "../../../../../../../common/tasks/taskTemplate";
 import { hasConfirmDialogRequest } from "../../../../../components/confirmDialog";
+import type { PopupToastHandle } from "../../../../../components/popupToast";
 import PopupToast from "../../../../../components/PopupToast.vue";
 import PopupSelect from "../../../../../components/PopupSelect.vue";
 import { TextEditComponent } from "../../../../../components/textEdit";
@@ -49,7 +50,7 @@ const form = reactive<FormState>({
 
 const variableGroups = ref<TextEditParamGroup[]>([createVariableGroup({})]);
 const selectedVariableGroupId = ref<string>(variableGroups.value[0]?.id ?? "");
-const popupToast = ref<{ show: (text: string) => void } | null>(null);
+const popupToast = ref<PopupToastHandle | null>(null);
 const templateBaseline = ref<TaskTemplate | null>(null);
 
 // Re-seed on source change: initialParams (Run new) wins over the template default; sidebar flow (no initialParams) seeds from the template.
@@ -201,7 +202,7 @@ function onScriptTypeUpdate(value: string): void {
 }
 
 function showTemplateSaved(name: string, operation: "updated" | "cloned"): void {
-  popupToast.value?.show(`Template "${name}" ${operation}.`);
+  popupToast.value?.show(`Template "${name}" ${operation}.`, { level: "success" });
 }
 
 function getTemplateDraft(): TaskTemplate {

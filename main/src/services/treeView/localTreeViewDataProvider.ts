@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { shell } from "electron";
 import type { ISerializer } from "../../../../common/serializer";
 import { ValidateUtils } from "../../../../common/validator";
@@ -23,16 +24,20 @@ import {
   type TreeViewItem,
   type TreeViewItemProperties,
   type TreeViewMoveParams,
-  type TreeViewTab,
   type TreeViewWorkspace,
 } from "../../../../common/treeView";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import { TimerLogger } from "../../infra/logger";
 import { MFFileSerializer, type MHFile } from "../../infra/mhFile";
 import { PathUtil } from "../../utils/pathUtil";
 
 const WORKSPACE_FILE_NAME = "__workspace__.mh";
 const FOLDER_FILE_NAME = "__folder__.mh";
+const FILE_OPERATION_TIME_SLICE_MS = 30;
+const FILE_OPERATION_YIELD_DELAY_MS = 3;
+const STAGED_RENAME_RETRY_COUNT = 5;
+const STAGED_RENAME_RETRY_DELAY_MS = 50;
 
 export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   public constructor(peer: BridgePeer) {
@@ -47,7 +52,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public async init(notifierRegisterName: string): Promise<void> {
-    return this._enqueue(async () => {
+    return this._enqueueMutation(async () => {
       if (this._notifier !== null) throw new Error("TreeView DataProvider is already initialized");
       this._notifier = await BridgeRouter.createRemoteObj<TreeViewDataNotifierClientRpcApi>(
         this._peer,
@@ -57,7 +62,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public async dispose(): Promise<void> {
-    return this._enqueue(async () => {
+    return this._enqueueMutation(async () => {
       const notifier = this._notifier;
       if (notifier === null) return;
       await BridgeRouter.destroyRemoteObj(notifier);
@@ -66,7 +71,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public getWorkspaces(rootPath: string): Promise<string[]> {
-    return this._enqueue(async () => {
+    return this._enqueueMutation(async () => {
       const root = TreeViewPath.normalize(rootPath, "TreeView storage root");
       if (!fs.existsSync(root)) return [];
       const workspacePaths: string[] = [];
@@ -92,23 +97,21 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public getWorkspaceProperties(workspacePath: string): Promise<TreeViewWorkspace> {
-    return this._enqueue(() => {
-      const workspaceDirectory = TreeViewPath.normalize(
-        workspacePath,
-        "TreeView workspace path",
-      );
-      PathUtil.ensureFileExist(path.join(workspaceDirectory, FOLDER_FILE_NAME));
-      const workspaceFilePath = path.join(workspaceDirectory, WORKSPACE_FILE_NAME);
-      return this._readWorkspaceProperties(workspaceFilePath, true);
-    });
+  public async getWorkspaceProperties(workspacePath: string): Promise<TreeViewWorkspace> {
+    const workspaceDirectory = TreeViewPath.normalize(
+      workspacePath,
+      "TreeView workspace path",
+    );
+    PathUtil.ensureFileExist(path.join(workspaceDirectory, FOLDER_FILE_NAME));
+    const workspaceFilePath = path.join(workspaceDirectory, WORKSPACE_FILE_NAME);
+    return this._readWorkspaceProperties(workspaceFilePath, true);
   }
 
   public updateWorkspaceProperties(
     workspacePath: string,
     properties: TreeViewWorkspace,
   ): Promise<void> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       treeViewWorkspaceSerializer.validate(properties);
       const workspaceDirectory = TreeViewPath.normalize(
         workspacePath,
@@ -127,7 +130,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     workspaceName: string,
     isSelected: boolean,
   ): Promise<string> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       const root = TreeViewPath.normalize(rootPath, "TreeView storage root");
       TreeViewPath.ensureName(workspaceName, "TreeView workspace name");
       const target = path.join(root, workspaceName);
@@ -152,7 +155,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public renameWorkspace(workspacePath: string, newName: string): Promise<string> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       const source = TreeViewPath.normalize(workspacePath, "TreeView workspace path");
       PathUtil.ensureFileExist(path.join(source, FOLDER_FILE_NAME));
       TreeViewPath.ensureName(newName, "TreeView workspace name");
@@ -163,31 +166,35 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public deleteWorkspace(workspacePath: string): Promise<void> {
-    return this.deleteFolder(workspacePath);
+  public deleteWorkspace(operationId: string, workspacePath: string): void {
+    this._enqueueRemoteOperation(
+      operationId,
+      "workspace deletion",
+      "TreeView workspace deletion failed. See the application log for details.",
+      () => this._deleteFolder(workspacePath),
+    );
   }
 
-  public getFolder(folderPath: string): Promise<TreeViewFolder> {
-    return this._enqueue(async () => {
-      const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
-      const warnings: string[] = [];
-      const folder = this._readFolder(folderDirectory, warnings);
-      this._folderSerializer.validate(folder);
-      await this._notifyStorageWarnings(warnings);
-      return folder;
-    });
+  public async getFolder(folderPath: string, depth?: number): Promise<TreeViewFolder> {
+    if (depth !== undefined && (!Number.isInteger(depth) || depth < 1)) {
+      throw new Error("TreeView folder depth must be a positive integer");
+    }
+    const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
+    const warnings: string[] = [];
+    const folder = this._readFolder(folderDirectory, warnings, depth);
+    this._folderSerializer.validate(folder);
+    await this._notifyStorageWarnings(warnings);
+    return folder;
   }
 
-  public getFolderProperties(folderPath: string): Promise<TreeViewFolderProperties> {
-    return this._enqueue(() => {
-      const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
-      PathUtil.ensureFolderExist(folderDirectory);
-      return this._readFolderProperties(path.join(folderDirectory, FOLDER_FILE_NAME));
-    });
+  public async getFolderProperties(folderPath: string): Promise<TreeViewFolderProperties> {
+    const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
+    PathUtil.ensureFolderExist(folderDirectory);
+    return this._readFolderProperties(path.join(folderDirectory, FOLDER_FILE_NAME));
   }
 
   public createFolder(folderPath: string): Promise<string> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       const target = TreeViewPath.normalize(folderPath, "TreeView folder path");
       TreeViewPath.ensureName(path.basename(target), "TreeView folder name");
       PathUtil.ensurePathNotExist(target);
@@ -211,7 +218,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     folderPath: string,
     properties: TreeViewFolderProperties,
   ): Promise<void> {
-    return this._enqueue(async () => {
+    return this._enqueueMutation(async () => {
       this._folderPropertiesSerializer.validate(properties);
       const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
       PathUtil.ensureFolderExist(folderDirectory);
@@ -231,33 +238,26 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public deleteFolder(folderPath: string): Promise<void> {
-    return this._enqueue(() => {
-      const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
-      PathUtil.ensureFolderExist(folderDirectory);
-      const workspaceDirectory = this._findWorkspaceDirectory(folderDirectory);
-      if (PathUtil.resolve(folderDirectory) !== workspaceDirectory) {
-        const parent = path.dirname(folderDirectory);
-        this._ensureOrderMetadataWritable(parent);
-        this._removeOrder(parent, "folder", path.basename(folderDirectory));
-      }
-      fs.rmSync(folderDirectory, { recursive: true });
-    });
+  public deleteFolder(operationId: string, folderPath: string): void {
+    this._enqueueRemoteOperation(
+      operationId,
+      "folder deletion",
+      "TreeView folder deletion failed. See the application log for details.",
+      () => this._deleteFolder(folderPath),
+    );
   }
 
-  public getItem(itemPath: string): Promise<TreeViewItem> {
-    return this._enqueue(() => {
-      const itemFile = this._resolveItemFile(itemPath);
-      PathUtil.ensureFileExist(itemFile);
-      return this._createItemView(itemFile, this._readItemProperties(itemFile));
-    });
+  public async getItem(itemPath: string): Promise<TreeViewItem> {
+    const itemFile = this._resolveItemFile(itemPath);
+    PathUtil.ensureFileExist(itemFile);
+    return this._createItemView(itemFile, this._readItemProperties(itemFile));
   }
 
   public createItem(
     itemPath: string,
     properties: TreeViewCreateItemProperties,
   ): Promise<TreeViewItem> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       const target = this._resolveItemFile(itemPath);
       PathUtil.ensurePathNotExist(target);
 
@@ -281,7 +281,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       this._itemPropertiesSerializer.validate(properties);
       const itemFile = this._resolveItemFile(itemPath);
       PathUtil.ensureFileExist(itemFile);
@@ -305,7 +305,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   }
 
   public repairEntityId(params: TreeViewEntityDataParams, id: string): Promise<void> {
-    return this._enqueue(async () => {
+    return this._enqueueMutation(async () => {
       try {
         if (params.kind === "folder") {
           const folderDirectory = TreeViewPath.normalize(params.path, "TreeView folder path");
@@ -327,36 +327,30 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public deleteItem(itemPath: string): Promise<void> {
-    return this._enqueue(() => {
-      const itemFile = this._resolveItemFile(itemPath);
-      PathUtil.ensureFileExist(itemFile);
-      this._removeOrder(
-        path.dirname(itemFile),
-        "item",
-        path.basename(itemFile, TREE_VIEW_ITEM_FILE_EXTENSION),
-      );
-      fs.rmSync(itemFile);
-    });
+  public deleteItem(operationId: string, itemPath: string): void {
+    this._enqueueRemoteOperation(
+      operationId,
+      "item deletion",
+      "TreeView item deletion failed. See the application log for details.",
+      () => this._deleteItem(itemPath),
+    );
   }
 
-  public getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData> {
-    return this._enqueue(() => {
-      const filePath = this._resolveEntityFile(params);
-      const persistedFile = this._readPersistedFile(filePath);
-      const data = persistedFile.record.data;
-      let dataJson: string | null = null;
-      if (data !== null) {
-        const json = JSON.stringify(data);
-        if (json === undefined) throw new Error(`TreeView entity data is missing: ${filePath}`);
-        dataJson = json;
-      }
-      return { dataJson, extends: [...persistedFile.file.extends] };
-    });
+  public async getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData> {
+    const filePath = this._resolveEntityFile(params);
+    const persistedFile = this._readPersistedFile(filePath);
+    const data = persistedFile.record.data;
+    let dataJson: string | null = null;
+    if (data !== null) {
+      const json = JSON.stringify(data);
+      if (json === undefined) throw new Error(`TreeView entity data is missing: ${filePath}`);
+      dataJson = json;
+    }
+    return { dataJson, extends: [...persistedFile.file.extends] };
   }
 
   public updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       const filePath = this._resolveEntityFile(params);
       const persistedFile = this._readPersistedFile(filePath);
       const parsedData = this._parseEntityData(data);
@@ -368,92 +362,33 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     });
   }
 
-  public openInExplorer(kind: "folder" | "item", targetPath: string): Promise<void> {
-    return this._enqueue(() => {
-      if (kind === "folder") {
-        const folderDirectory = TreeViewPath.normalize(targetPath, "TreeView folder path");
-        PathUtil.ensureFolderExist(folderDirectory);
-        shell.showItemInFolder(folderDirectory);
-        return;
-      }
-      if (kind === "item") {
-        const itemFile = this._resolveItemFile(targetPath);
-        PathUtil.ensureFileExist(itemFile);
-        shell.showItemInFolder(itemFile);
-        return;
-      }
-      throw new Error("TreeView Explorer target kind is invalid");
-    });
+  public async openInExplorer(kind: "folder" | "item", targetPath: string): Promise<void> {
+    if (kind === "folder") {
+      const folderDirectory = TreeViewPath.normalize(targetPath, "TreeView folder path");
+      PathUtil.ensureFolderExist(folderDirectory);
+      shell.showItemInFolder(folderDirectory);
+      return;
+    }
+    if (kind === "item") {
+      const itemFile = this._resolveItemFile(targetPath);
+      PathUtil.ensureFileExist(itemFile);
+      shell.showItemInFolder(itemFile);
+      return;
+    }
+    throw new Error("TreeView Explorer target kind is invalid");
   }
 
-  public clone(params: TreeViewCloneParams): Promise<void> {
-    return this._enqueue(() => {
-      const sourcePath = TreeViewPath.normalize(params.sourcePath, "TreeView clone source");
-      PathUtil.ensurePathExist(sourcePath);
-      const targetPath = TreeViewPath.normalize(params.targetPath, "TreeView clone target");
-      PathUtil.ensurePathNotExist(targetPath);
-      if (params.kind === "item") {
-        const source = this._resolveItemFile(sourcePath);
-        const target = this._resolveItemFile(targetPath);
-        TreeViewPath.ensureName(
-          path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION),
-          "TreeView item clone target name",
-        );
-        const properties = this._readItemProperties(source);
-        const persistedFile = this._readPersistedFile(source);
-        this._runStagedCreate(target, (stage) => this._writePersistedRecord(
-          stage,
-          { ...persistedFile.record, id: randomUUID() },
-          persistedFile.file.extends,
-        ));
-        if (!properties.isDraft) {
-          this._appendOrder(
-            path.dirname(target),
-            "item",
-            path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION),
-          );
-        }
-      } else {
-        TreeViewPath.ensureName(
-          path.basename(targetPath),
-          params.kind === "workspace"
-            ? "TreeView workspace clone target name"
-            : "TreeView folder clone target name",
-        );
-        PathUtil.ensureFileExist(path.join(sourcePath, FOLDER_FILE_NAME));
-        if (params.kind === "folder") {
-          this._ensureOrderMetadataWritable(path.dirname(targetPath));
-        }
-        this._runStagedCreate(targetPath, (stage) => {
-          // fs.cpSync can terminate Electron 37 on Windows paths containing non-ASCII names.
-          this._copyFolder(sourcePath, stage);
-          const idMap = this._rewriteIds(stage);
-          if (params.kind === "workspace") {
-            const workspacePath = path.join(stage, WORKSPACE_FILE_NAME);
-            const properties = this._readWorkspaceProperties(workspacePath);
-            properties.isSelected = false;
-            properties.tabs = properties.tabs.flatMap((tab): TreeViewTab[] => {
-              const id = idMap.get(tab.id);
-              return id === undefined ? [] : [{ ...tab, id }];
-            });
-            properties.activeTabId = properties.activeTabId === null
-              ? null
-              : idMap.get(properties.activeTabId) ?? properties.tabs[0]?.id ?? null;
-            properties.previewTabId = properties.previewTabId === null
-              ? null
-              : idMap.get(properties.previewTabId) ?? null;
-            this._writeWorkspaceProperties(workspacePath, properties);
-          }
-        });
-        if (params.kind === "folder") {
-          this._appendOrder(path.dirname(targetPath), "folder", path.basename(targetPath));
-        }
-      }
-    });
+  public clone(operationId: string, params: TreeViewCloneParams): void {
+    this._enqueueRemoteOperation(
+      operationId,
+      "clone",
+      "TreeView clone failed. See the application log for details.",
+      () => this._clone(params),
+    );
   }
 
   public move(params: TreeViewMoveParams): Promise<void> {
-    return this._enqueue(() => {
+    return this._enqueueMutation(() => {
       if (!Number.isInteger(params.targetOrder) || params.targetOrder < 0) {
         throw new Error("TreeView target order must be a nonnegative integer");
       }
@@ -526,6 +461,7 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   private _readFolder(
     directory: string,
     warnings: string[] = [],
+    depth?: number,
   ): TreeViewFolder {
     PathUtil.ensureFolderExist(directory);
     const metadataPath = path.join(directory, FOLDER_FILE_NAME);
@@ -540,7 +476,11 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       if (entry.isDirectory()) {
         if (!fs.existsSync(path.join(entryPath, FOLDER_FILE_NAME))) continue;
         try {
-          childFolders.push(this._readFolder(entryPath, warnings));
+          childFolders.push(depth === 1
+            ? this._createFolderView(entryPath, this._readFolderProperties(
+              path.join(entryPath, FOLDER_FILE_NAME),
+            ))
+            : this._readFolder(entryPath, warnings, depth === undefined ? undefined : depth - 1));
         } catch {
           warnings.push(
             `Skipped invalid TreeView folder "${entryPath}": metadata or contents could not be read.`,
@@ -590,6 +530,19 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       properties,
       folders,
       items,
+    };
+  }
+
+  private _createFolderView(
+    directory: string,
+    properties: TreeViewFolderProperties,
+  ): TreeViewFolder {
+    return {
+      path: TreeViewPath.normalize(directory, "TreeView storage path"),
+      name: path.basename(directory),
+      properties,
+      folders: [],
+      items: [],
     };
   }
 
@@ -759,46 +712,122 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     return properties;
   }
 
-  private _copyFolder(source: string, target: string): void {
-    fs.mkdirSync(target);
+  private async _deleteFolder(folderPath: string): Promise<void> {
+    const folderDirectory = TreeViewPath.normalize(folderPath, "TreeView folder path");
+    PathUtil.ensureFolderExist(folderDirectory);
+    const workspaceDirectory = this._findWorkspaceDirectory(folderDirectory);
+    if (PathUtil.resolve(folderDirectory) !== workspaceDirectory) {
+      const parent = path.dirname(folderDirectory);
+      this._ensureOrderMetadataWritable(parent);
+      this._removeOrder(parent, "folder", path.basename(folderDirectory));
+    }
+    await this._deleteFolderTree(folderDirectory, Date.now());
+  }
+
+  private async _deleteItem(itemPath: string): Promise<void> {
+    const itemFile = this._resolveItemFile(itemPath);
+    PathUtil.ensureFileExist(itemFile);
+    this._removeOrder(
+      path.dirname(itemFile),
+      "item",
+      path.basename(itemFile, TREE_VIEW_ITEM_FILE_EXTENSION),
+    );
+    await fs.promises.rm(itemFile);
+  }
+
+  private async _deleteFolderTree(directory: string, lastYieldTime: number): Promise<number> {
+    for (const entry of await fs.promises.readdir(directory, { withFileTypes: true })) {
+      lastYieldTime = await this._yieldFileOperationIfNeeded(lastYieldTime);
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        lastYieldTime = await this._deleteFolderTree(entryPath, lastYieldTime);
+      } else {
+        await fs.promises.rm(entryPath);
+      }
+    }
+    await fs.promises.rmdir(directory);
+    return lastYieldTime;
+  }
+
+  private async _clone(params: TreeViewCloneParams): Promise<void> {
+    const sourcePath = TreeViewPath.normalize(params.sourcePath, "TreeView clone source");
+    PathUtil.ensurePathExist(sourcePath);
+    const targetPath = TreeViewPath.normalize(params.targetPath, "TreeView clone target");
+    PathUtil.ensurePathNotExist(targetPath);
+    if (params.kind === "item") {
+      const source = this._resolveItemFile(sourcePath);
+      const target = this._resolveItemFile(targetPath);
+      TreeViewPath.ensureName(
+        path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION),
+        "TreeView item clone target name",
+      );
+      const properties = this._readItemProperties(source);
+      const persistedFile = this._readPersistedFile(source);
+      this._runStagedCreate(target, (stage) => this._writePersistedRecord(
+        stage,
+        { ...persistedFile.record, id: randomUUID() },
+        persistedFile.file.extends,
+      ));
+      if (!properties.isDraft) {
+        this._appendOrder(
+          path.dirname(target),
+          "item",
+          path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION),
+        );
+      }
+      return;
+    }
+
+    TreeViewPath.ensureName(path.basename(targetPath), params.kind === "workspace" ?
+      "TreeView workspace clone target name" : "TreeView folder clone target name");
+    PathUtil.ensureFileExist(path.join(sourcePath, FOLDER_FILE_NAME));
+    if (params.kind === "folder") {
+      this._ensureOrderMetadataWritable(path.dirname(targetPath));
+    }
+    await this._runStagedCreateAsync(targetPath, async (stage) => {
+      using timerLogger = new TimerLogger("[treeView] clone copy");
+      await this._copyFolder(sourcePath, stage, Date.now());
+      if (params.kind === "workspace") {
+        const workspacePath = path.join(stage, WORKSPACE_FILE_NAME);
+        const properties = this._readWorkspaceProperties(workspacePath);
+        properties.isSelected = false;
+        this._writeWorkspaceProperties(workspacePath, properties);
+      }
+    });
+    if (params.kind === "folder") {
+      this._appendOrder(path.dirname(targetPath), "folder", path.basename(targetPath));
+    }
+  }
+
+  private async _copyFolder(
+    source: string,
+    target: string,
+    lastYieldTime: number,
+  ): Promise<number> {
+    await fs.promises.mkdir(target);
     for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) throw new Error("TreeView storage cannot contain links");
+      lastYieldTime = await this._yieldFileOperationIfNeeded(lastYieldTime);
       const sourcePath = path.join(source, entry.name);
       const targetPath = path.join(target, entry.name);
       if (entry.isDirectory()) {
-        this._copyFolder(sourcePath, targetPath);
+        lastYieldTime = await this._copyFolder(
+          sourcePath,
+          targetPath,
+          lastYieldTime,
+        );
       } else if (entry.isFile()) {
-        fs.copyFileSync(sourcePath, targetPath);
+        await fs.promises.copyFile(sourcePath, targetPath);
       } else {
         throw new Error("TreeView folder contains an invalid entry");
       }
     }
+    return lastYieldTime;
   }
 
-  private _rewriteIds(directory: string): Map<string, string> {
-    const idMap = new Map<string, string>();
-    const folderMetadataPath = path.join(directory, FOLDER_FILE_NAME);
-    const folder = this._readFolderProperties(folderMetadataPath);
-    const folderId = randomUUID();
-    idMap.set(folder.id, folderId);
-    this._writeFolderProperties(folderMetadataPath, { ...folder, id: folderId });
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith("__")) continue;
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!fs.existsSync(path.join(entryPath, FOLDER_FILE_NAME))) continue;
-        for (const [sourceId, targetId] of this._rewriteIds(entryPath)) {
-          idMap.set(sourceId, targetId);
-        }
-      }
-      else if (entry.isFile() && path.extname(entry.name) === TREE_VIEW_ITEM_FILE_EXTENSION) {
-        const item = this._readItemProperties(entryPath);
-        const itemId = randomUUID();
-        idMap.set(item.id, itemId);
-        this._writeItemProperties(entryPath, { ...item, id: itemId });
-      }
-    }
-    return idMap;
+  private async _yieldFileOperationIfNeeded(lastYieldTime: number): Promise<number> {
+    if (Date.now() - lastYieldTime < FILE_OPERATION_TIME_SLICE_MS) return lastYieldTime;
+    await sleep(FILE_OPERATION_YIELD_DELAY_MS);
+    return Date.now();
   }
 
   private _reconcileOrder(
@@ -1005,6 +1034,62 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     }
   }
 
+  private async _runStagedCreateAsync(
+    target: string,
+    operation: (stage: string) => Promise<void>,
+  ): Promise<void> {
+    const stage = path.join(path.dirname(target), `__${path.basename(target)}`);
+    if (fs.existsSync(target)) throw new Error("TreeView target already exists");
+    try {
+      await fs.promises.rm(stage, { recursive: true, force: true });
+      await operation(stage);
+      await this._renameStagedCreate(stage, target);
+    } catch (error: unknown) {
+      await fs.promises.rm(stage, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  private async _renameStagedCreate(stage: string, target: string): Promise<void> {
+    for (let retryCount = 0; ; retryCount += 1) {
+      try {
+        await fs.promises.rename(stage, target);
+        return;
+      } catch (error: unknown) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        const isRetryable = code === "EPERM" || code === "EBUSY";
+        if (!isRetryable || retryCount >= STAGED_RENAME_RETRY_COUNT) throw error;
+        console.warn(
+          `[treeView] staged rename failed with ${code}; retrying ${retryCount + 1}/${STAGED_RENAME_RETRY_COUNT}.`,
+        );
+        await sleep(STAGED_RENAME_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  private _enqueueRemoteOperation(
+    operationId: string,
+    operationName: string,
+    failureMessage: string,
+    operation: () => Promise<void> | void,
+  ): void {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(operationId)) {
+      throw new Error("TreeView operation ID is invalid");
+    }
+    const notifier = this._notifier;
+    if (notifier === null) throw new Error("TreeView DataProvider's notifier is not initialized");
+    void this._enqueueMutation(operation).then(
+      () => notifier.operationCompleted(operationId, null),
+      (error: unknown) => {
+        console.error(`[treeView] ${operationName} ${operationId} failed:`, error);
+        return notifier.operationCompleted(operationId, failureMessage);
+      },
+    ).catch((error: unknown): void => {
+      console.error(`[treeView] ${operationName} ${operationId} completion notification failed:`, error);
+    });
+  }
+
   private _ensureRenameTargetAvailable(source: string, target: string): void {
     if (source === target
       || source.toLocaleLowerCase("en-US") === target.toLocaleLowerCase("en-US")) return;
@@ -1029,9 +1114,9 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
       && relative !== ".." && !path.isAbsolute(relative));
   }
 
-  protected _enqueue<TResult>(operation: () => Promise<TResult> | TResult): Promise<TResult> {
-    const result = this._queue.then(operation, operation);
-    this._queue = result.then(() => undefined, () => undefined);
+  protected _enqueueMutation<TResult>(operation: () => Promise<TResult> | TResult): Promise<TResult> {
+    const result = this._mutationQueue.then(operation, operation);
+    this._mutationQueue = result.then(() => undefined, () => undefined);
     return result;
   }
 
@@ -1040,6 +1125,6 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
   private readonly _itemPropertiesSerializer: TreeViewItemPropertiesSerializer;
   private readonly _itemSerializer: TreeViewItemSerializer;
   private readonly _folderSerializer: TreeViewFolderSerializer;
-  private _queue: Promise<void> = Promise.resolve();
+  private _mutationQueue: Promise<void> = Promise.resolve();
   private _notifier: RemoteObject<TreeViewDataNotifierClientRpcApi> | null = null;
 }

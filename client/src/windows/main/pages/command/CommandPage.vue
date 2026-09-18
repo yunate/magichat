@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import {
   commandFolderDataSerializer,
   commandItemDataSerializer,
@@ -91,8 +91,11 @@ let unregisterBeforeAppQuitHandler: (() => void) | null = null;
 let unregisterBeforeSettingsSaveHandler: (() => void) | null = null;
 let unregisterEnvHandler: (() => void) | null = null;
 let unregisterRefreshHandler: (() => void) | null = null;
+let unregisterItemScriptTypeLoader: (() => void) | null = null;
 let workspaceDataOperation: Promise<void> = Promise.resolve();
 let workspaceExtensions: TreeViewEntityData["extends"] = [];
+let scriptTypeWorkspacePath: string | null = null;
+const attemptedScriptTypeItems = new Set<string>();
 const GUARD_ACTIONS: readonly ConfirmDialogAction<GuardDecision>[] = [
   { id: "cancel", label: "Cancel" },
   { id: "discard", label: "Don't Save" },
@@ -124,6 +127,8 @@ onUnmounted(() => {
   unregisterEnvHandler = null;
   unregisterRefreshHandler?.();
   unregisterRefreshHandler = null;
+  unregisterItemScriptTypeLoader?.();
+  unregisterItemScriptTypeLoader = null;
   gCommandEnvPanelOpen.value = false;
   window.removeEventListener("keydown", onWindowKeydown);
   tabPages.clear();
@@ -160,13 +165,16 @@ async function initialize(): Promise<void> {
   });
   commandTreeView = model;
   installTabGuards(model);
+  unregisterItemScriptTypeLoader = watch(model.rootFolder, () => {
+    scheduleItemScriptTypes(model);
+  });
   await model.controller.initialize();
   treeView.value = model;
 }
 
 async function loadWorkspaceData(model: TreeView): Promise<void> {
-  itemScriptTypes.value = await loadItemScriptTypes(model);
   const workspaceRef = model.selectedWorkspaceRef.value;
+  resetItemScriptTypes(workspaceRef?.workspacePath ?? null);
   if (workspaceRef === null) {
     workspaceData.value = commandWorkspaceDataSerializer.getDefault();
     workspaceExtensions = [];
@@ -180,27 +188,39 @@ async function loadWorkspaceData(model: TreeView): Promise<void> {
     ? commandWorkspaceDataSerializer.getDefault()
     : commandWorkspaceDataSerializer.fromJson(entityData.dataJson);
   workspaceExtensions = entityData.extends;
+  scheduleItemScriptTypes(model);
 }
 
-async function loadItemScriptTypes(model: TreeView): Promise<ReadonlyMap<string, ScriptType>> {
+function scheduleItemScriptTypes(model: TreeView): void {
+  const workspacePath = model.selectedWorkspaceRef.value?.workspacePath ?? null;
+  if (workspacePath !== scriptTypeWorkspacePath) resetItemScriptTypes(workspacePath);
+  if (workspacePath === null) return;
   const items = collectTreeItems(model.rootFolder.value);
-  const entries = await Promise.all(items.map(async (
-    item,
-  ): Promise<readonly [string, ScriptType] | null> => {
-    try {
-      const entityData = await model.controller.getEntityData({ kind: "item", path: item.path });
-      const data = commandItemDataSerializer.fromEntityData(entityData);
-      return [item.properties.id, data.scriptType];
-    } catch (reason: unknown) {
-      console.warn(`[command] skipped invalid item "${item.path}"`, reason);
-      return null;
-    }
-  }));
-  const scriptTypes = new Map<string, ScriptType>();
-  for (const entry of entries) {
-    if (entry !== null) scriptTypes.set(...entry);
+  for (const item of items) {
+    const key = `${item.properties.id}:${item.path}`;
+    if (attemptedScriptTypeItems.has(key)) continue;
+    attemptedScriptTypeItems.add(key);
+    model.enqueueBackgroundTask(async () => {
+      try {
+        const entityData = await model.operations.getEntityData({ kind: "item", path: item.path });
+        const data = commandItemDataSerializer.fromEntityData(entityData);
+        const currentItem = model.findLoadedItemByPath(item.path);
+        if (model.selectedWorkspaceRef.value?.workspacePath !== workspacePath
+          || currentItem?.properties.id !== item.properties.id) return;
+        const next = new Map(itemScriptTypes.value);
+        next.set(item.properties.id, data.scriptType);
+        itemScriptTypes.value = next;
+      } catch (reason: unknown) {
+        console.warn(`[command] skipped invalid item "${item.path}"`, reason);
+      }
+    });
   }
-  return scriptTypes;
+}
+
+function resetItemScriptTypes(workspacePath: string | null): void {
+  scriptTypeWorkspacePath = workspacePath;
+  attemptedScriptTypeItems.clear();
+  itemScriptTypes.value = new Map();
 }
 
 function collectTreeItems(root: TreeViewFolder | null): TreeViewItem[] {
@@ -245,7 +265,7 @@ async function setEnv(
         throw new Error("Command workspace is unavailable");
       }
       if (target !== null) {
-        await persistTargetParams(model, resolveCommandMacroTarget(model, target), updates);
+        await persistTargetParams(model, await resolveCommandMacroTarget(model, target), updates);
         return;
       }
       const entityData = await model.controller.getEntityData({
@@ -304,7 +324,7 @@ async function persistTargetParams(
       dataJson: commandFolderDataSerializer.toJson(next),
       extends: entityData.extends,
     });
-    notifyPersistedFolderParams(model, target.path, next, updates);
+    await notifyPersistedFolderParams(model, target.path, next, updates);
     return;
   }
   const current = commandItemDataSerializer.fromEntityData(entityData);
@@ -316,34 +336,23 @@ async function persistTargetParams(
     target,
     commandItemDataSerializer.toEntityData(next, entityData.extends),
   );
-  const item = model.getItemByPath(target.path);
-  if (item !== null) tabPages.get(item.properties.id)?.applyPersistedParams(next, updates);
+  const tab = model.workspace.value?.tabs.find((candidate) => (
+    candidate.kind === "item" && candidate.path === target.path
+  ));
+  if (tab !== undefined) tabPages.get(tab.id)?.applyPersistedParams(next, updates);
 }
 
-function notifyPersistedFolderParams(
+async function notifyPersistedFolderParams(
   model: TreeView,
   folderPath: string,
   data: CommandFolderData,
   updates: readonly CommandEnvUpdate[],
-): void {
-  const folder = findTreeFolderByPath(model.rootFolder.value, folderPath);
-  if (folder === null) return;
+): Promise<void> {
+  const folder = await model.resolveFolderByPath(folderPath);
   tabPages.get(folder.properties.id)?.applyPersistedParams(data, updates);
   for (const page of tabPages.values()) {
     page.applyAncestorFolderData(folder.properties.id, data);
   }
-}
-
-function findTreeFolderByPath(root: TreeViewFolder | null, path: string): TreeViewFolder | null {
-  if (root === null) return null;
-  const pending = [root];
-  while (pending.length > 0) {
-    const folder = pending.shift();
-    if (folder === undefined) continue;
-    if (folder.path === path) return folder;
-    pending.push(...folder.folders);
-  }
-  return null;
 }
 
 function updateSelectedParamGroup(
@@ -562,6 +571,8 @@ function installTabGuards(model: TreeView): void {
   const setStorageRoots = model.operations.setStorageRoots;
   const createWorkspace = model.operations.createWorkspace;
   const deleteWorkspace = model.operations.deleteWorkspace;
+  const deleteFolder = model.operations.deleteFolder;
+  const deleteItem = model.operations.deleteItem;
   const closeTabs = model.operations.closeTabs;
   const switchWorkspace = model.operations.switchWorkspace;
   model.operations.initialize = async (): Promise<void> => {
@@ -585,14 +596,34 @@ function installTabGuards(model: TreeView): void {
     await deleteWorkspace(workspacePath);
     await loadWorkspaceData(model);
   };
+  model.operations.deleteFolder = async (folderId): Promise<void> => {
+    const folder = model.getFolderById(folderId);
+    if (folder === null) throw new Error("Command folder is unavailable");
+    const tabIds = model.workspace.value?.tabs
+      .filter((tab) => tab.path === folder.path || tab.path.startsWith(`${folder.path}/`))
+      .map((tab) => tab.id) ?? [];
+    if (!await prepareEntityDeletion(tabIds)) return;
+    await deleteFolder(folderId);
+  };
+  model.operations.deleteItem = async (itemId): Promise<void> => {
+    const item = model.getItemById(itemId);
+    if (item === null) throw new Error("Command item is unavailable");
+    const tabIds = model.workspace.value?.tabs
+      .filter((tab) => tab.kind === "item" && tab.path === item.path)
+      .map((tab) => tab.id) ?? [];
+    if (!await prepareEntityDeletion(tabIds)) return;
+    await deleteItem(itemId);
+  };
   model.operations.closeTabs = async (params): Promise<void> => {
     const unsavedIds = params.tabIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
     const discardedDraftIds = await prepareToLeave("close-tabs", unsavedIds);
     if (discardedDraftIds === null) return;
     const skippedIds = await prepareRunningTerminals("close-tabs", params.tabIds);
     if (skippedIds === null) return;
-    const tabIds = params.tabIds.filter((id) => !skippedIds.has(id));
-    await discardDrafts([...discardedDraftIds].filter((id) => tabIds.includes(id)));
+    const closableIds = params.tabIds.filter((id) => !skippedIds.has(id));
+    const discardedIds = [...discardedDraftIds].filter((id) => closableIds.includes(id));
+    await discardDrafts(discardedIds);
+    const tabIds = closableIds.filter((id) => !discardedDraftIds.has(id));
     if (tabIds.length > 0) await closeTabs({ ...params, tabIds });
   };
   model.operations.switchWorkspace = async (workspaceName): Promise<void> => {
@@ -606,6 +637,12 @@ function installTabGuards(model: TreeView): void {
     await switchWorkspace(workspaceName);
     await loadWorkspaceData(model);
   };
+}
+
+async function prepareEntityDeletion(tabIds: readonly string[]): Promise<boolean> {
+  const dirtyIds = tabIds.filter((id) => tabPages.get(id)?.isDirty() ?? false);
+  if (await prepareToLeave("close-tabs", dirtyIds) === null) return false;
+  return await prepareRunningTerminals("close-tabs", tabIds) !== null;
 }
 
 async function beforeAppQuit(): Promise<boolean> {
@@ -763,17 +800,26 @@ function errorMessage(reason: unknown): string {
         />
       </template>
 
-      <template #tabOverlay="{ entity }">
+      <template #tabItemIcon="{ tab }">
+        <CommandScriptIcon
+          :script-type="tabStates.get(tab.id)?.scriptType
+            ?? itemScriptTypes.get(tab.id)"
+          :is-running="tabStates.get(tab.id)?.isRunning"
+        />
+      </template>
+
+      <template #tabOverlay="{ tab }">
         <span
-          v-if="tabStates.get(entity.properties.id)?.isDirty"
+          v-if="tabStates.get(tab.id)?.isDirty"
           class="command-tab-dirty"
           aria-label="Unsaved changes"
           title="Unsaved changes"
         ></span>
       </template>
 
-      <template #tabPage="{ entity, isActive, notifyReady, requestDraftSave }">
+      <template #tabPage="{ tab, entity, isActive, notifyReady, requestDraftSave }">
         <CommandTabPage
+          :tab="tab"
           :entity="entity"
           :is-active="isActive"
           :notify-ready="notifyReady"

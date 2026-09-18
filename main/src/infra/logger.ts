@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { formatWithOptions } from "node:util";
 import { gApplicationPaths } from "./applicationPaths";
 
@@ -20,6 +21,21 @@ export class ScopeLogger implements Disposable {
   }
 
   private readonly _name: string;
+}
+
+export class TimerLogger implements Disposable {
+  public constructor(name: string) {
+    this._name = name;
+    this._startTimeMs = performance.now();
+  }
+
+  public [Symbol.dispose](): void {
+    const elapsedMs = performance.now() - this._startTimeMs;
+    console.log(`${this._name} took ${elapsedMs.toFixed(2)} ms`);
+  }
+
+  private readonly _name: string;
+  private readonly _startTimeMs: number;
 }
 
 export class Logger {

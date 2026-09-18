@@ -3,6 +3,8 @@ export type TreeViewSelection = {
   id: string;
 };
 
+export type TreeViewDropPosition = "before" | "inside" | "inside-before" | "after";
+
 export type TreeViewActivateParams = TreeViewSelection & {
   openMode?: "preview" | "normal" | "pinned";
 };
@@ -25,4 +27,11 @@ export type TreeViewReorderTabsParams = {
 
 export type TreeViewSwitchTabParams = {
   tabId: string;
+};
+
+export type TreeViewSaveDraftParams = {
+  itemId: string;
+  sourcePath: string;
+  targetFolderPath: string;
+  name: string;
 };

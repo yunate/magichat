@@ -2,13 +2,14 @@
 import { computed, nextTick, ref, watch } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import type { TreeViewFolder, TreeViewItem } from "../../../../common/treeView";
-import type { TreeViewSelection } from "./treeViewTypes";
+import type { TreeViewDropPosition, TreeViewSelection } from "./treeViewTypes";
 
 type RenameTarget = { kind: "folder" | "item"; id: string } | null;
 type DropIndicator = {
   kind: "folder" | "item";
   id: string;
   position: "before" | "inside" | "after";
+  lineStart: number;
 } | null;
 
 type TreeViewDragSource = {
@@ -40,7 +41,7 @@ const emit = defineEmits<{
     sources: readonly TreeViewDragSource[],
     targetKind: "folder" | "item",
     targetPath: string,
-    position: "before" | "inside" | "after",
+    position: TreeViewDropPosition,
   ];
 }>();
 
@@ -161,8 +162,32 @@ function onDragOver(
     : canDropInside && offset < bounds.height * 2 / 3
       ? "inside"
       : "after";
-  dropIndicator.value = { kind, id, position };
+  dropIndicator.value = {
+    kind,
+    id,
+    position,
+    lineStart: position === "inside" ? 0 : resolveDropLineStart(event.currentTarget, kind, position),
+  };
   if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
+}
+
+function resolveDropLineStart(
+  row: HTMLElement,
+  kind: "folder" | "item",
+  position: "before" | "inside" | "after",
+): number {
+  const treeNode = row.closest(".tree-node");
+  const isCurrentFolderTarget = kind === "item"
+    || (position === "after" && props.folder.properties.isExpanded);
+  const targetTreeNode = isCurrentFolderTarget
+    ? treeNode
+    : treeNode?.parentElement?.closest(".tree-node") ?? null;
+  const targetRow = targetTreeNode?.querySelector(":scope > .tree-row.is-folder");
+  if (!(targetRow instanceof HTMLElement)) return 0;
+  const rowBounds = row.getBoundingClientRect();
+  const targetBounds = targetRow.getBoundingClientRect();
+  const targetPadding = Number.parseFloat(getComputedStyle(targetRow).paddingInlineStart);
+  return Math.min(targetBounds.left - rowBounds.left + targetPadding + 18, rowBounds.width - 8);
 }
 
 function clearDropIndicator(event?: DragEvent): void {
@@ -180,11 +205,9 @@ function onDrop(
 ): void {
   event.preventDefault();
   event.stopPropagation();
-  const position = dropIndicator.value?.kind === targetKind
-    && dropIndicator.value.id === targetId
-    ? dropIndicator.value.position
-    : targetKind === "folder" ? "inside" : "after";
+  const indicator = dropIndicator.value;
   dropIndicator.value = null;
+  if (indicator?.kind !== targetKind || indicator.id !== targetId) return;
   const value = event.dataTransfer?.getData("application/x-tree-view-node");
   if (!value) return;
   try {
@@ -198,6 +221,11 @@ function onDrop(
         || typeof candidate.sourcePath !== "string") return;
       sources.push({ kind: candidate.kind, sourcePath: candidate.sourcePath });
     }
+    const position = targetKind === "folder"
+      && indicator.position === "after"
+      && props.folder.properties.isExpanded
+      ? "inside-before"
+      : indicator.position;
     if (sources.length > 0) emit("move", sources, targetKind, targetPath, position);
   } catch {
     return;
@@ -231,7 +259,7 @@ function forwardMove(
   sources: readonly TreeViewDragSource[],
   targetKind: "folder" | "item",
   targetPath: string,
-  position: "before" | "inside" | "after",
+  position: TreeViewDropPosition,
 ): void {
   emit("move", sources, targetKind, targetPath, position);
 }
@@ -262,7 +290,10 @@ function isHighlighted(selection: TreeViewSelection): boolean {
         'is-drop-inside': dropIndicator?.kind === 'folder' && dropIndicator.id === folder.properties.id && dropIndicator.position === 'inside',
         'is-drop-after': dropIndicator?.kind === 'folder' && dropIndicator.id === folder.properties.id && dropIndicator.position === 'after',
       }"
-      :style="{ paddingInlineStart: folderPadding }"
+      :style="{
+        paddingInlineStart: folderPadding,
+        '--tree-drop-line-left': `${dropIndicator?.lineStart ?? 0}px`,
+      }"
       :draggable="renameTarget?.kind !== 'folder' || renameTarget.id !== folder.properties.id"
       @click="emit('activate', { kind: 'folder', id: folder.properties.id }, 'preview', $event.ctrlKey || $event.metaKey)"
       @dblclick="onFolderDoubleClick(folder)"
@@ -322,7 +353,7 @@ function isHighlighted(selection: TreeViewSelection): boolean {
     </div>
 
     <ul
-      v-show="folder.properties.isExpanded"
+      v-if="folder.properties.isExpanded"
       class="tree-node__children"
       :class="{ 'has-guide': depth > 0 }"
       :style="{ '--tree-guide-left': `${depth * 12 + 20}px` }"
@@ -356,7 +387,10 @@ function isHighlighted(selection: TreeViewSelection): boolean {
             'is-drop-before': dropIndicator?.kind === 'item' && dropIndicator.id === item.properties.id && dropIndicator.position === 'before',
             'is-drop-after': dropIndicator?.kind === 'item' && dropIndicator.id === item.properties.id && dropIndicator.position === 'after',
           }"
-          :style="{ paddingInlineStart: itemPadding }"
+          :style="{
+            paddingInlineStart: itemPadding,
+            '--tree-drop-line-left': `${dropIndicator?.lineStart ?? 0}px`,
+          }"
           :draggable="renameTarget?.kind !== 'item' || renameTarget.id !== item.properties.id"
           @click="onItemClick($event, item)"
           @dblclick="onItemDoubleClick(item)"
@@ -437,7 +471,7 @@ function isHighlighted(selection: TreeViewSelection): boolean {
 .tree-row.is-selected { color: var(--color-text); background: var(--color-surface-selected); }
 .tree-row.is-path-highlighted { color: var(--color-text); }
 .tree-row.is-path-highlighted .tree-row__caret { color: var(--color-primary-emphasis); }
-.tree-row.is-drop-before::before, .tree-row.is-drop-after::after { position: absolute; z-index: 4; right: 0; left: 0; height: 2px; content: ""; background: var(--color-primary); pointer-events: none; }
+.tree-row.is-drop-before::before, .tree-row.is-drop-after::after { position: absolute; z-index: 4; right: 0; left: var(--tree-drop-line-left, 0); height: 2px; content: ""; background: var(--color-primary); pointer-events: none; }
 .tree-row.is-drop-before::before { top: -1px; }
 .tree-row.is-drop-after::after { bottom: -1px; }
 .tree-row.is-drop-inside { background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 55%, transparent); }

@@ -48,10 +48,7 @@ export class MFFileSerializer {
       content += `\n---MH:${key}---\n${extensionValue}`;
     }
 
-    const temporaryPath = path.join(
-      path.dirname(filePath),
-      `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
-    );
+    const temporaryPath = MFFileSerializer._createTemporaryPath(filePath);
     try {
       fs.writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
       fs.renameSync(temporaryPath, filePath);
@@ -74,6 +71,13 @@ export class MFFileSerializer {
     if (key.length === 0 || key.includes("\r") || key.includes("\n")) {
       throw new Error("MH file extension key must be a nonempty single-line string");
     }
+  }
+
+  private static _createTemporaryPath(filePath: string): string {
+    return path.join(
+      path.dirname(filePath),
+      `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+    );
   }
 
   private static _skipLineBreak(content: string, index: number): number {

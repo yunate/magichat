@@ -6,6 +6,7 @@ import {
 } from "../../../../../common/config/global";
 import { DEFAULT_THEME_NAME } from "../../../../../common/theme";
 import PopupSelect, { type PopupSelectOption } from "../../../components/PopupSelect.vue";
+import type { PopupToastHandle } from "../../../components/popupToast";
 import PopupToast from "../../../components/PopupToast.vue";
 import { showAlertDialog } from "../../../components/confirmDialog";
 import { IS_DEBUG } from "../../../environment";
@@ -33,7 +34,7 @@ const isRefreshing = ref(false);
 const isThemeLoading = ref(true);
 const selectedThemeName = ref(DEFAULT_THEME_NAME);
 const themeOptions = ref<readonly PopupSelectOption[]>([]);
-const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
+const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const settingsPopover = useTemplateRef<{
   getCurrent: () => Promise<unknown>;
   save: () => Promise<void>;

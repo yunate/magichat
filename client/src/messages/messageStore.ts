@@ -22,14 +22,29 @@ export const messageLevelMeta: Record<MessageLevel, MessageLevelMeta> = {
 };
 
 const MAX_MESSAGES = 100;
+const DUPLICATE_WINDOW_MS = 1000;
+const MESSAGE_LEVEL_RANK: Record<MessageLevel, number> = {
+  info: 0,
+  success: 1,
+  warning: 2,
+  error: 3,
+};
 
 class MessageStore {
   pushMessage(level: MessageLevel, text: string): void {
+    const timestamp = Date.now();
+    const latest = this._messages[this._messages.length - 1];
+    if (latest !== undefined
+      && latest.text === text
+      && timestamp - latest.timestamp <= DUPLICATE_WINDOW_MS) {
+      if (MESSAGE_LEVEL_RANK[level] > MESSAGE_LEVEL_RANK[latest.level]) latest.level = level;
+      return;
+    }
     this._messages.push({
       id: this._nextMessageId++,
       level,
       text,
-      timestamp: Date.now(),
+      timestamp,
     });
     this._capOverflow();
     this._unreadCount.value += 1;

@@ -9,7 +9,7 @@ Local filesystem, configuration, JSON, and log primitives. This module contains 
 - `jsonFile.ts` provides guarded JSON reads and atomic writes.
 - `mhFile.ts` owns TreeView's `.mh` container format. It stores one strict JSON document followed by standalone `---MH:<key>---` extension sections, applies last-value-wins semantics to duplicate keys, and writes through a unique sibling temporary file before rename.
 - `logFile.ts` provides failure-tolerant task log append and read operations.
-- `logger.ts` owns the process-wide `gLogger`, mirrors `console` output, serializes file writes, and creates one `mh-YYYY-MM-DD-HH-mm-ss.log` file per process start. It removes matching log files older than seven days in the background. Error objects are normalized to their name and message before file output, without the stack. `ScopeLogger` implements `Disposable` for paired start/end logging through `using`.
+- `logger.ts` owns the process-wide `gLogger`, mirrors `console` output, serializes file writes, and creates one `mh-YYYY-MM-DD-HH-mm-ss.log` file per process start. It removes matching log files older than seven days in the background. Error objects are normalized to their name and message before file output, without the stack. `ScopeLogger` implements `Disposable` for paired start/end logging through `using`; `TimerLogger` uses the same pattern to emit elapsed milliseconds when its scope ends.
 - `utils/pathUtil.ts` checks physical files and directories through Electron's unpatched `node:original-fs`, so paths containing an `app.asar` filename are not interpreted as virtual archive paths.
 
 ## Boundaries

@@ -12,6 +12,7 @@ import type {
 } from "./treeViewTypes";
 
 export interface TreeViewDataNotifierClientRpcApi {
+  operationCompleted(operationId: string, errorMessage: string | null): void;
   storageChanged(): void;
   storageWarning(message: string): void;
 }
@@ -28,12 +29,12 @@ export interface TreeViewDataProvider {
     isSelected: boolean,
   ): Promise<string>;
   renameWorkspace(workspacePath: string, newName: string): Promise<string>;
-  deleteWorkspace(workspacePath: string): Promise<void>;
-  getFolder(folderPath: string): Promise<TreeViewFolder>;
+  deleteWorkspace(operationId: string, workspacePath: string): void;
+  getFolder(folderPath: string, depth?: number): Promise<TreeViewFolder>;
   getFolderProperties(folderPath: string): Promise<TreeViewFolderProperties>;
   createFolder(folderPath: string): Promise<string>;
   updateFolderProperties(folderPath: string, properties: TreeViewFolderProperties): Promise<void>;
-  deleteFolder(folderPath: string): Promise<void>;
+  deleteFolder(operationId: string, folderPath: string): void;
   getItem(itemPath: string): Promise<TreeViewItem>;
   createItem(
     itemPath: string,
@@ -41,10 +42,10 @@ export interface TreeViewDataProvider {
   ): Promise<TreeViewItem>;
   updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void>;
   repairEntityId(params: TreeViewEntityDataParams, id: string): Promise<void>;
-  deleteItem(itemPath: string): Promise<void>;
+  deleteItem(operationId: string, itemPath: string): void;
   getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData>;
   updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void>;
   openInExplorer(kind: "folder" | "item", targetPath: string): Promise<void>;
-  clone(params: TreeViewCloneParams): Promise<void>;
+  clone(operationId: string, params: TreeViewCloneParams): void;
   move(params: TreeViewMoveParams): Promise<void>;
 }

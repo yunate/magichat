@@ -6,7 +6,9 @@
     "targets",
     "call"
   ],
-  "itemOrder": [],
+  "itemOrder": [
+    "Untitled command"
+  ],
   "data": {
     "selectedParamGroupId": "folder",
     "paramGroups": [

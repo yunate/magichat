@@ -3,26 +3,60 @@
   "tabs": [
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000016",
+      "id": "4f2fba4c-6c6d-4b7f-9c8e-7fe90b15d981",
+      "path": "F:/My/magichat/tutorials/command-root/tutorial/Untitled.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000017",
+      "id": "33366b29-b58e-4ac7-9542-21c512af50ec",
+      "path": "F:/My/magichat/tutorials/command-root/tutorial/Untitled command.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000018",
+      "id": "10000000-0000-4000-8000-000000000011",
+      "path": "F:/My/magichat/tutorials/command-root/tutorial/set-env/ps1-mhsetenv.mh",
       "isPinned": false
     },
     {
       "kind": "item",
       "id": "10000000-0000-4000-8000-000000000019",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/call/test-py-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000018",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/call/test-node-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000017",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/call/test-cmd-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000015",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/targets/show env.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "id": "10000000-0000-4000-8000-000000000004",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/call",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "id": "10000000-0000-4000-8000-000000000003",
+      "path": "E:/My/ddworkspace/magichat/tutorials/command-root/tutorial/targets",
       "isPinned": false
     }
   ],
-  "activeTabId": "10000000-0000-4000-8000-000000000019",
+  "activeTabId": "10000000-0000-4000-8000-000000000017",
   "previewTabId": null,
   "ui": {
     "layout": {

@@ -10,5 +10,6 @@ Transient notifications authored by frontend features. Messages exist only in th
 
 ## Contracts
 
-- Messages append in creation order and retain only the latest 100 entries.
+- Messages append in creation order and retain only the latest 100 entries. Adjacent messages with identical text within one second are stored once; a duplicate with a higher severity upgrades the retained entry.
+- Every `PopupToast.show()` call also records the message in this store. Callers may provide its message level; the default is `info`.
 - Opening the panel marks all messages as read. Clearing resets both messages and unread state.

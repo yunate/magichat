@@ -14,6 +14,7 @@ import {
 } from "../../bridge/remote_rpc_objects/terminalRuntime";
 import { gMainApplication } from "../../windows/main/main";
 import { registerThemeChangeHandler } from "../../windows/main/themes/theme";
+import type { PopupToastHandle } from "../popupToast";
 import PopupToast from "../PopupToast.vue";
 import { findTextMatches, TEXT_SEARCH_RESULT_LIMIT, type TextSearchOptions } from "../textSearch";
 import { TerminalClientRpcObject } from "./terminalClientRpcObject";
@@ -33,7 +34,7 @@ const emit = defineEmits<{
 const container = useTemplateRef<HTMLDivElement>("container");
 const scrollbarTrack = useTemplateRef<HTMLDivElement>("scrollbarTrack");
 const findBar = useTemplateRef<{ focus: () => void }>("findBar");
-const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
+const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const hasScrollableContent = ref(false);
 const scrollbarThumbStyle = ref<CSSProperties>({});
 const scrollbarValueNow = ref(0);
@@ -667,7 +668,7 @@ async function pasteClipboardText(terminal: XtermTerminal): Promise<void> {
 
 async function copySelectedText(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
-  popupToast.value?.show("Terminal selection copied.");
+  popupToast.value?.show("Terminal selection copied.", { level: "success" });
 }
 
 function onTerminalDragOver(event: DragEvent): void {

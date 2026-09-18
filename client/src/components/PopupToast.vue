@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref, useTemplateRef } from "vue";
+import { gMessageStore } from "../messages/messageStore";
+import type { PopupToastOptions } from "./popupToast";
 import PopupWindow from "./PopupWindow.vue";
-
-type ShowOptions = Readonly<{
-  actionText?: string;
-  isPersistent?: boolean;
-}>;
 
 const DISPLAY_DURATION_MS = 1500;
 
@@ -15,7 +12,8 @@ const message = ref("");
 const actionText = ref("Close");
 const popupWindow = useTemplateRef<{ restartDismiss: () => void }>("popupWindow");
 
-function show(text: string, options: ShowOptions = {}): void {
+function show(text: string, options: PopupToastOptions = {}): void {
+  gMessageStore.pushMessage(options.level ?? "info", text);
   message.value = text;
   actionText.value = options.actionText ?? "Close";
   isPersistent.value = options.isPersistent ?? false;

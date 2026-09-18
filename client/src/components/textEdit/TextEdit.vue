@@ -4,6 +4,7 @@ import type { CSSProperties } from "vue";
 import { FunnelTask } from "../../../../common/funnelTask";
 import { MacroParser } from "../../../../common/macroParser";
 import type { ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
+import type { PopupToastHandle } from "../popupToast";
 import PopupSelect from "../PopupSelect.vue";
 import PopupToast from "../PopupToast.vue";
 import SplitContainer from "../SplitContainer.vue";
@@ -68,7 +69,7 @@ const paramPanel = useTemplateRef<HTMLElement>("paramPanel");
 const groupRenameInput = useTemplateRef<HTMLInputElement>("groupRenameInput");
 const paramHelpButton = useTemplateRef<HTMLButtonElement>("paramHelpButton");
 const paramHelp = useTemplateRef<HTMLElement>("paramHelp");
-const popupToast = useTemplateRef<{ show: (text: string) => void }>("popupToast");
+const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const paramEditor = useTemplateRef<{
   removeParam: (index: number) => void;
 }>("paramEditor");
@@ -192,12 +193,12 @@ function commitGroupRename(): void {
   }
   const name = groupRenameValue.value.trim();
   if (name.length === 0) {
-    popupToast.value?.show("Parameter group name is required.");
+    popupToast.value?.show("Parameter group name is required.", { level: "warning" });
     cancelGroupRename();
     return;
   }
   if (groups.value.some((candidate) => candidate.id !== group.id && candidate.name === name)) {
-    popupToast.value?.show("Parameter group names must be unique.");
+    popupToast.value?.show("Parameter group names must be unique.", { level: "warning" });
     cancelGroupRename();
     return;
   }
@@ -461,14 +462,17 @@ function onParamHelpKeydown(event: KeyboardEvent): void {
 async function copyResolvedCode(): Promise<void> {
   const resolution = getResolvedText();
   if (!resolution.successful) {
-    popupToast.value?.show(`Failed to copy code: ${resolution.error ?? "Macro resolution failed."}`);
+    popupToast.value?.show(
+      `Failed to copy code: ${resolution.error ?? "Macro resolution failed."}`,
+      { level: "error" },
+    );
     return;
   }
   try {
     await navigator.clipboard.writeText(resolution.value);
-    popupToast.value?.show("Copied resolved code.");
+    popupToast.value?.show("Copied resolved code.", { level: "success" });
   } catch (reason: unknown) {
-    popupToast.value?.show("Failed to copy code.");
+    popupToast.value?.show("Failed to copy code.", { level: "error" });
     console.error("Failed to copy resolved code:", reason);
   }
 }

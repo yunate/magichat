@@ -5,7 +5,6 @@ import originalFs from "node:original-fs";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { setTimeout as sleep } from "node:timers/promises";
 import StreamZip from "node-stream-zip";
 import {
   MAX_UPDATE_CHECK_DELAY_SECONDS,
@@ -14,6 +13,7 @@ import {
   UPDATE_CONFIG_KEY,
   type UpdateCheckDelaySeconds,
 } from "../../../../common/config/update";
+import { UpdateState, type UpdateServerRpcApi } from "../../../../common/update/updateRpcApi";
 import { gApplicationPaths } from "../../infra/applicationPaths";
 import { gConfigManager } from "../../infra/configManager";
 import { ScopeLogger } from "../../infra/logger";
@@ -49,34 +49,51 @@ type UpdatePlan = {
   formalDirectory: string;
 };
 
-export class UpdateService {
-  public start(): void {
-    if (!gApplicationPaths.isPackaged || this._hasStarted) return;
-    this._hasStarted = true;
-    void this._run();
+export class UpdateService implements UpdateServerRpcApi {
+  public constructor() {
+    const updateConfig = gConfigManager.get(UPDATE_CONFIG_KEY);
+    if (updateConfig.isAutoUpdateEnabled) {
+      setTimeout(() => {
+        void this.start();
+      }, resolveUpdateCheckDelayMs(updateConfig.checkDelaySeconds));
+    }
   }
 
-  public dispose(): void {
-    this._isDisposed = true;
+  public get state(): UpdateState {
+    return this._state;
+  }
+
+  public getState(): UpdateState {
+    return this._state;
+  }
+
+  public startUpdate(): void {
+    void this.start();
+  }
+
+  public async start(): Promise<void> {
+    if (
+      this._state !== UpdateState.NOT_START && this._state !== UpdateState.CHECKED
+    ) return;
+
+    this._state = UpdateState.UPDATING;
+    await this._run();
   }
 
   private async _run(): Promise<void> {
+    let nextState = UpdateState.CHECKED;
     try {
-      const updateConfig = gConfigManager.get(UPDATE_CONFIG_KEY);
-      if (!updateConfig.isAutoUpdateEnabled) return;
-
-      await sleep(resolveUpdateCheckDelayMs(updateConfig.checkDelaySeconds));
-      if (this._isDisposed) return;
-
       await this._cleanVersions();
       const plan = await this._checkUpdate();
-      if (plan === null) return;
-      if (this._isDisposed) return;
+      if (plan === null) {
+        return;
+      }
 
       await this._download(plan);
       await this._unzip(plan);
       await this._verify(plan);
       await this._promote(plan);
+      nextState = UpdateState.NEED_RESTART;
     } catch (error: unknown) {
       const message = error instanceof Error
         ? `${error.name}: ${error.message}`
@@ -84,6 +101,7 @@ export class UpdateService {
       console.error(`[update] ${message}`);
     } finally {
       await this._clean();
+      this._state = nextState;
     }
   }
 
@@ -330,8 +348,7 @@ export class UpdateService {
     await fs.rename(temporaryPath, filePath);
   }
 
-  private _hasStarted = false;
-  private _isDisposed = false;
+  private _state = UpdateState.NOT_START;
   private readonly _activeVersionPath = path.join(gApplicationPaths.appRoot, "active-version");
   private readonly _versionsDirectoryPath = path.join(gApplicationPaths.appRoot, "version");
   private readonly _temporaryDirectoryPath = path.join(gApplicationPaths.appRoot, "tmp", "update");

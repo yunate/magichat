@@ -9,9 +9,11 @@ import {
   getMonacoLanguage,
   monaco,
 } from "./monacoRuntime";
+import { getScriptLanguageCompletions } from "./scriptLanguageCompletions";
 import type {
   MacroAnalysis,
   MacroDisplayDetail,
+  TextEditCompletion,
   TextEditCompletionProvider,
 } from "./textEditTypes";
 
@@ -173,7 +175,7 @@ function registerCompletionProvider(
   completionModel: monaco.editor.ITextModel,
 ): monaco.IDisposable {
   return monaco.languages.registerCompletionItemProvider("*", {
-    triggerCharacters: ["{"],
+    triggerCharacters: ["{", ".", "-"],
     provideCompletionItems(currentModel, position) {
       if (currentModel !== completionModel || props.readonly) return { suggestions: [] };
       const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1);
@@ -211,16 +213,28 @@ function createCompletionSuggestions(
   position: monaco.Position,
   linePrefix: string,
 ): monaco.languages.CompletionItem[] {
-  const getCompletions = props.getCompletions;
-  if (getCompletions === undefined) return [];
   const word = currentModel.getWordUntilPosition(position);
+  const context = { linePrefix, word: word.word };
   const range = new monaco.Range(
     position.lineNumber,
     word.startColumn,
     position.lineNumber,
     word.endColumn,
   );
-  return getCompletions({ linePrefix, word: word.word }).map((completion) => ({
+  return [
+    ...(props.getCompletions?.(context) ?? []).map((completion) => createCompletionItem(completion, range)),
+    ...getScriptLanguageCompletions(props.scriptType, context).map((completion) => createCompletionItem(
+      completion,
+      new monaco.Range(position.lineNumber, position.column - completion.prefixLength, position.lineNumber, word.endColumn),
+    )),
+  ];
+}
+
+function createCompletionItem(
+  completion: TextEditCompletion,
+  range: monaco.Range,
+): monaco.languages.CompletionItem {
+  return {
     label: completion.label,
     kind: monaco.languages.CompletionItemKind.Function,
     detail: completion.detail,
@@ -230,7 +244,7 @@ function createCompletionSuggestions(
       ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
       : monaco.languages.CompletionItemInsertTextRule.None,
     range,
-  }));
+  };
 }
 
 function suppressFindButtonTooltips(event: MouseEvent): void {

@@ -14,6 +14,7 @@ Shared TypeScript imported directly by renderer and main. This layer owns cross-
 - [`treeView/`](treeView/AI_CONTEXT.md) owns generic TreeView models, strict base serializers, absolute storage-path validation, and DataProvider/DataNotifier RPC contracts.
 - `terminal/` owns Terminal shell types and the bidirectional Terminal runtime RPC contracts.
 - `theme/` owns safe theme-folder naming, the built-in default name, resolved theme data, and the client-to-server Theme RPC interface for listing and resolving themes.
+- `update/` owns the four-state `UpdateState` enum and `UpdateServerRpcApi`. `CHECKED` means a completed check found no available update and allows another check. `startUpdate()` triggers the update without waiting for completion; `getState()` supplies the authoritative state for renderer polling.
 - `window/` owns client-to-main window controls, including hide-to-tray, fixed application- and log-directory reveal, fixed release, issue, discussion, and Ko-fi page links, and validated external HTTPS link opening, plus the main-to-client close-request event contract.
 - [`ipc_bridge/`](ipc_bridge/AI_CONTEXT.md) owns MessagePort and local named-pipe transport adapters, peers, and typed RPC routing.
 - `uac/` owns only the Main-to-UAC-Broker lifecycle RPC interface.

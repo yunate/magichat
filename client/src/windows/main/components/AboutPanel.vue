@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ChevronRight, CircleHelp, Coffee, Copy, ExternalLink } from "@lucide/vue";
-import { onMounted, onUnmounted, ref } from "vue";
+import { ChevronRight, CircleCheck, CircleHelp, Coffee, Copy, Download, ExternalLink, LoaderCircle, RotateCw } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   MAX_UPDATE_CHECK_DELAY_SECONDS,
   MIN_UPDATE_CHECK_DELAY_SECONDS,
@@ -10,6 +10,7 @@ import {
   updateConfigSerializer,
   type UpdateCheckDelaySeconds,
 } from "../../../../../common/config/update";
+import { UpdateState } from "../../../../../common/update/updateRpcApi";
 import kofiDonateQrUrl from "../../../assets/kofi-donate.png";
 import wechatDonateQrUrl from "../../../assets/wechat-donate.png";
 import { showAlertDialog } from "../../../components/confirmDialog";
@@ -18,6 +19,26 @@ import { gMessageStore } from "../../../messages/messageStore";
 import { gMainApplication } from "../main";
 
 const emit = defineEmits<{ close: [] }>();
+const updateServerRpcObject = gMainApplication.window.getUpdateServerRpcObject();
+const updateState = ref<UpdateState | null>(null);
+const updateStateError = ref("");
+const isUpdateStarting = ref(false);
+const isUpdateBusy = computed(() => isUpdateStarting.value || updateState.value === UpdateState.UPDATING);
+const isUpdateButtonDisabled = computed(() =>
+  isUpdateStarting.value
+    || (updateState.value !== UpdateState.NOT_START && updateState.value !== UpdateState.CHECKED)
+    || updateStateError.value.length > 0,
+);
+const updateButtonText = computed(() => {
+  if (isUpdateBusy.value) return "Updating...";
+  return updateState.value === UpdateState.NEED_RESTART ? "Restart required" : "Update";
+});
+const updateStatusText = computed(() => {
+  if (isUpdateBusy.value) return "Updating MagicHat...";
+  if (updateState.value === UpdateState.CHECKED) return "No new version found.";
+  if (updateState.value === UpdateState.NEED_RESTART) return "Update ready. Restart MagicHat to apply it.";
+  return updateState.value === null ? "Loading update status..." : "Ready to check for updates.";
+});
 const isAutoUpdateEnabled = ref(true);
 const isUpdateConfigLoading = ref(true);
 const isUpdateConfigSaving = ref(false);
@@ -31,17 +52,70 @@ const logDirectoryPath = ref("");
 const isLogDirectoryLoading = ref(true);
 const isLogDirectoryOpening = ref(false);
 const isExternalPageOpening = ref(false);
+let isAboutPanelActive = false;
+let isUpdateStateReading = false;
+let updateStateRequestVersion = 0;
+let updateStateTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
+  isAboutPanelActive = true;
   window.addEventListener("keydown", onWindowKeydown);
+  void loadUpdateState();
+  updateStateTimer = setInterval(() => { void loadUpdateState(); }, 1000);
   void loadUpdateConfig();
   void loadApplicationDirectoryPath();
   void loadLogDirectoryPath();
 });
-onUnmounted(() => window.removeEventListener("keydown", onWindowKeydown));
+onUnmounted(() => {
+  isAboutPanelActive = false;
+  window.removeEventListener("keydown", onWindowKeydown);
+  if (updateStateTimer !== null) clearInterval(updateStateTimer);
+});
 
 function onWindowKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape") emit("close");
+}
+
+async function loadUpdateState(): Promise<void> {
+  if (!isAboutPanelActive || isUpdateStateReading || isUpdateStarting.value) return;
+  isUpdateStateReading = true;
+  const requestVersion = updateStateRequestVersion;
+  try {
+    const rpcObject = await updateServerRpcObject;
+    const nextState = await rpcObject.getState();
+    if (!isAboutPanelActive || requestVersion !== updateStateRequestVersion) return;
+    updateState.value = nextState;
+    updateStateError.value = "";
+  } catch (reason: unknown) {
+    if (!isAboutPanelActive || requestVersion !== updateStateRequestVersion) return;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    console.error(`Update status load failed: ${message}`);
+    updateStateError.value = "Update status unavailable.";
+  } finally {
+    isUpdateStateReading = false;
+  }
+}
+
+async function onUpdate(): Promise<void> {
+  if (isUpdateButtonDisabled.value) return;
+  isUpdateStarting.value = true;
+  updateStateRequestVersion += 1;
+  try {
+    const rpcObject = await updateServerRpcObject;
+    await rpcObject.startUpdate();
+    const nextState = await rpcObject.getState();
+    if (!isAboutPanelActive) return;
+    updateState.value = nextState;
+    updateStateError.value = "";
+  } catch (reason: unknown) {
+    if (!isAboutPanelActive) return;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    console.error(`Update start failed: ${message}`);
+    updateStateError.value = "Update status unavailable.";
+    gMessageStore.pushMessage("error", "The update could not be started or its status could not be read.");
+  } finally {
+    isUpdateStarting.value = false;
+  }
 }
 
 function shortenPath(value: string): string {
@@ -303,6 +377,28 @@ async function onCheckDelayChange(): Promise<void> {
                 </dd>
               </div>
             </dl>
+            <div class="about-update-row">
+              <div class="about-update-actions" role="group" aria-label="Application update">
+                <button
+                  type="button"
+                  class="about-update-button"
+                  :disabled="isUpdateButtonDisabled"
+                  :aria-busy="isUpdateBusy"
+                  :aria-describedby="updateStateError.length > 0 ? 'update-state-error' : 'update-state-status'"
+                  @click="onUpdate"
+                >
+                  <LoaderCircle v-if="isUpdateBusy" :size="14" class="about-update-spin" aria-hidden="true" />
+                  <RotateCw v-else-if="updateState === UpdateState.NEED_RESTART" :size="14" aria-hidden="true" />
+                  <Download v-else :size="14" aria-hidden="true" />
+                  <span>{{ updateButtonText }}</span>
+                </button>
+                <span v-if="updateStateError.length > 0" id="update-state-error" class="about-update-status about-update-error" role="alert">{{ updateStateError }}</span>
+                <span v-else id="update-state-status" class="about-update-status" role="status">
+                  <CircleCheck v-if="updateState === UpdateState.CHECKED" :size="13" aria-hidden="true" />
+                  <span>{{ updateStatusText }}</span>
+                </span>
+              </div>
+            </div>
           </section>
 
           <section class="about-section">
@@ -538,6 +634,94 @@ async function onCheckDelayChange(): Promise<void> {
 .about-auto-update-row label {
   line-height: 18px;
   cursor: pointer;
+}
+
+.about-update-row {
+  margin-block-start: var(--space-3);
+}
+
+.about-update-actions {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.about-update-button {
+  flex: 0 0 auto;
+  width: 128px;
+  max-width: 100%;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 36%, var(--color-border));
+  border-radius: var(--radius-small);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.about-update-button svg {
+  flex-shrink: 0;
+}
+
+.about-update-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
+  border-color: var(--color-primary);
+}
+
+.about-update-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface));
+}
+
+.about-update-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.about-update-button:disabled {
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  cursor: default;
+}
+
+.about-update-status {
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.about-update-status > svg {
+  flex-shrink: 0;
+}
+
+.about-update-error {
+  color: var(--color-danger);
+}
+
+.about-update-spin {
+  animation: about-update-spin 1s linear infinite;
+}
+
+@keyframes about-update-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-update-spin { animation: none; }
 }
 
 .about-auto-update-actions {

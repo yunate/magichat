@@ -13,6 +13,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "dompurify": "^3.4.12",
+    "friendly-snippets": "https://codeload.github.com/rafamadriz/friendly-snippets/tar.gz/b4d01b0fdf3c9a549961c2f9ffe8dc09be166219",
     "js-yaml": "^4.1.0",
     "markdown-it": "^14.3.0",
     "monaco-editor": "^0.56.0",

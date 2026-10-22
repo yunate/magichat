@@ -1,6 +1,7 @@
 import type { ConfigServerRpcApi } from "../../../../common/config/configRpcApi";
 import type { TasksServerRpcApi } from "../../../../common/tasks/tasksRpcApi";
 import type { ThemeServerRpcApi } from "../../../../common/theme/themeRpcApi";
+import type { UpdateServerRpcApi } from "../../../../common/update/updateRpcApi";
 import type { WindowServerRpcApi } from "../../../../common/window/windowRpcApi";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
@@ -27,4 +28,10 @@ export function createWindowServerRpcObject(
   peer: BridgePeer,
 ): Promise<RemoteObject<WindowServerRpcApi>> {
   return BridgeRouter.createRemoteObj<WindowServerRpcApi>(peer, "WindowServerRpcApi");
+}
+
+export function createUpdateServerRpcObject(
+  peer: BridgePeer,
+): Promise<RemoteObject<UpdateServerRpcApi>> {
+  return BridgeRouter.createRemoteObj<UpdateServerRpcApi>(peer, "UpdateServerRpcApi");
 }

@@ -9,7 +9,6 @@ import { gCliBridge } from "./services/cli/cliBridge";
 import { gTaskManager } from "./services/tasks/taskManager";
 import { gTerminalRuntimeManager } from "./services/terminal/terminalRuntimeManager";
 import { gUacBrokerService } from "./services/uacBroker/uacBrokerService";
-import { gUpdateService } from "./services/update/updateService";
 import { WindowFactory } from "./window/windowFactory";
 import { WindowManager } from "./window/windowManager";
 
@@ -40,7 +39,6 @@ function bringPrimaryWindowToFront(): void {
 
 async function shutdown(): Promise<void> {
   console.log("[main] Shutdown started.");
-  gUpdateService.dispose();
   gTray?.destroy();
   gTray = null;
   await gCliBridge.stop();
@@ -97,7 +95,6 @@ if (!hasSingleInstanceLock) {
     gTaskManager.startQueuedTasks();
     await WindowFactory.createWindow();
     createTray();
-    gUpdateService.start();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void WindowFactory.createWindow();
     });

@@ -7,6 +7,7 @@ import type { CSSProperties } from "vue";
 import { FunnelTask } from "../../../../common/funnelTask";
 import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import type { TerminalRunRequest, TerminalServerRpcApi, TerminalType } from "../../../../common/terminal";
+import { confirmActionDialog } from "../confirmDialog";
 import FindBar from "../FindBar.vue";
 import {
   createTerminalRuntime,
@@ -259,6 +260,9 @@ function initializeXterm(): void {
     fontFamily: 'Consolas, "Courier New", monospace',
     fontSize: 13,
     lineHeight: 15 / 13,
+    linkHandler: {
+      activate: onLinkActivate,
+    },
     overviewRuler: {
       width: 10,
     },
@@ -276,6 +280,24 @@ function initializeXterm(): void {
   updateScrollbarVisibility();
   resizeObserver = new ResizeObserver(scheduleResize);
   resizeObserver.observe(terminalContainer);
+}
+
+function onLinkActivate(event: MouseEvent, url: string): void {
+  event.preventDefault();
+  void openExternalLink(url).catch(onOperationError);
+}
+
+async function openExternalLink(url: string): Promise<void> {
+  const action = await confirmActionDialog({
+    title: "Open external link",
+    descriptions: ["Open this link in your default browser?", "Only continue if you trust this link."],
+    details: [{ id: "url", label: url }],
+    actionId: "open",
+    actionLabel: "Open",
+  });
+  if (action !== "open" || isUnmounting) return;
+  const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
+  await windowRpcObject.openExternalUrl(url);
 }
 
 function disposeXterm(): void {

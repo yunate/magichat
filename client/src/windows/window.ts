@@ -8,12 +8,14 @@ import type { ConfigServerRpcApi } from "../../../common/config/configRpcApi";
 import type { CommandStorageServerRpcApi } from "../../../common/command";
 import type { TasksServerRpcApi } from "../../../common/tasks/tasksRpcApi";
 import type { ThemeServerRpcApi } from "../../../common/theme/themeRpcApi";
+import type { UpdateServerRpcApi } from "../../../common/update/updateRpcApi";
 import type { WindowServerRpcApi } from "../../../common/window/windowRpcApi";
 import { BridgeRouter, type RemoteObject } from "../../../common/ipc_bridge/rpc";
 import {
   createConfigServerRpcObject,
   createTasksServerRpcObject,
   createThemeServerRpcObject,
+  createUpdateServerRpcObject,
   createWindowServerRpcObject,
 } from "../bridge/remote_rpc_objects/remoteServerRpcObjects";
 import { createCommandStorageServerRpcObject } from "../bridge/remote_rpc_objects/commandStorage";
@@ -33,6 +35,7 @@ export class Window {
     this._commandStorageServerRpcObject = createCommandStorageServerRpcObject(instance);
     this._tasksServerRpcObject = createTasksServerRpcObject(instance);
     this._themeServerRpcObject = createThemeServerRpcObject(instance);
+    this._updateServerRpcObject = createUpdateServerRpcObject(instance);
     this._windowServerRpcObject = createWindowServerRpcObject(instance);
     await (await this._windowServerRpcObject).rendererReady();
     return instance;
@@ -73,6 +76,13 @@ export class Window {
     return this._windowServerRpcObject;
   }
 
+  public getUpdateServerRpcObject(): Promise<RemoteObject<UpdateServerRpcApi>> {
+    if (!this._updateServerRpcObject) {
+      throw new Error("Window bridge is not initialized");
+    }
+    return this._updateServerRpcObject;
+  }
+
   public getPeer(): BridgePeer {
     if (this._peer === null) throw new Error("Window bridge is not initialized");
     return this._peer;
@@ -102,6 +112,7 @@ export class Window {
   private _commandStorageServerRpcObject: Promise<RemoteObject<CommandStorageServerRpcApi>> | null = null;
   private _tasksServerRpcObject: Promise<RemoteObject<TasksServerRpcApi>> | null = null;
   private _themeServerRpcObject: Promise<RemoteObject<ThemeServerRpcApi>> | null = null;
+  private _updateServerRpcObject: Promise<RemoteObject<UpdateServerRpcApi>> | null = null;
   private _windowServerRpcObject: Promise<RemoteObject<WindowServerRpcApi>> | null = null;
   private _peer: BridgePeer | null = null;
 }

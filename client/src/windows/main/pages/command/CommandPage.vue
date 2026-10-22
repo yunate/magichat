@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shallowRef, useTemplateRef, watch } from "vue";
 import { dirname, join, relative } from "pathe";
 import {
   commandFolderDataSerializer,
@@ -91,7 +91,7 @@ const workspaceData = shallowRef<CommandWorkspaceData>(commandWorkspaceDataSeria
 const commandPage = useTemplateRef<HTMLElement>("commandPage");
 const envPanel = useTemplateRef<{ requestClose: () => Promise<boolean> }>("envPanel");
 const workspaceName = computed(() => treeView.value?.selectedWorkspaceRef.value?.workspaceName ?? null);
-const tabPages = new Map<string, CommandTabPageApi>();
+const tabPages = shallowReactive(new Map<string, CommandTabPageApi>());
 let commandStorage: RemoteObject<CommandStorageServerRpcApi> | null = null;
 let commandTreeView: TreeView | null = null;
 let unregisterBeforeAppQuitHandler: (() => void) | null = null;
@@ -455,7 +455,7 @@ async function persistTargetParams(
     target,
     commandItemDataSerializer.toEntityData(next, entityData.extends),
   );
-  const tab = model.workspace.value?.tabs.find((candidate) => (
+  const tab = model.tabsModel.tabs.value.find((candidate) => (
     candidate.kind === "item" && candidate.path === target.path
   ));
   if (tab !== undefined) tabPages.get(tab.id)?.applyPersistedParams(next, updates);
@@ -469,8 +469,12 @@ async function notifyPersistedFolderParams(
 ): Promise<void> {
   const folder = await model.resolveFolderByPath(folderPath);
   tabPages.get(folder.properties.id)?.applyPersistedParams(data, updates);
+  onFolderDataSaved(folder.properties.id, data);
+}
+
+function onFolderDataSaved(folderId: string, data: CommandFolderData): void {
   for (const page of tabPages.values()) {
-    page.applyAncestorFolderData(folder.properties.id, data);
+    page.applyAncestorFolderData(folderId, data);
   }
 }
 
@@ -961,6 +965,7 @@ function errorMessage(reason: unknown): string {
           :request-draft-save="requestDraftSave"
           @register="registerTabPage"
           @unregister="unregisterTabPage"
+          @folder-data-saved="onFolderDataSaved"
           @state-change="updateTabState"
         />
       </template>

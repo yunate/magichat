@@ -23,7 +23,7 @@ Electron main process and TypeScript local backend. Renderer files are loaded di
 
 ## Boundaries
 
-- Renderer and main communicate through domain-owned RPC interfaces under `common/config/`, `common/theme/`, `common/tasks/`, and `common/terminal/`.
+- Renderer and main communicate through domain-owned RPC interfaces under `common/config/`, `common/theme/`, `common/tasks/`, `common/terminal/`, and `common/update/`.
 - Window controls use the `common/window/` RPC contract and target the Window bound to the caller's bridge peer. The same owner exposes and opens only its authoritative application and log directories plus fixed GitHub release, issue, discussion, and Ko-fi pages. Task presentation links may additionally request an external URL; Main accepts only bounded HTTPS URLs without embedded credentials before delegating to the system browser.
 - CLI Helper communication uses a local named pipe scoped by the same `userData` identity that separates development and packaged single instances. Main injects the resolved pipe path directly into spawned Terminal and Task environments through `MAGICHAT_CLI_PIPE`.
 - Main injects `MAGICHAT_CLI_PAGE=command` into Command Terminals and `MAGICHAT_CLI_PAGE=task-center` plus the current `MAGICHAT_CLI_TASK_ID` into Task scripts. Page and Task values are routing context, not a security token.

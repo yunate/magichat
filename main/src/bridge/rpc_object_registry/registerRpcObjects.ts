@@ -4,6 +4,7 @@ import type { FileOccupancyServerRpcApi } from "../../../../common/fileOccupancy
 import type { TasksServerRpcApi } from "../../../../common/tasks/tasksRpcApi";
 import type { TerminalServerRpcApi } from "../../../../common/terminal";
 import type { ThemeServerRpcApi } from "../../../../common/theme/themeRpcApi";
+import type { UpdateServerRpcApi } from "../../../../common/update/updateRpcApi";
 import type { WindowServerRpcApi } from "../../../../common/window/windowRpcApi";
 import type { BridgeRouter } from "../../../../common/ipc_bridge/rpc";
 import type { TreeViewDataProvider } from "../../../../common/treeView";
@@ -13,6 +14,7 @@ import { FileOccupancyRpcObject } from "../../services/fileOccupancy/fileOccupan
 import { gTaskManager } from "../../services/tasks/taskManager";
 import { TerminalRuntimeService } from "../../services/terminal/terminalRuntimeService";
 import { gThemeManager } from "../../services/theme/themeManager";
+import { gUpdateService } from "../../services/update/updateService";
 import { LocalTreeViewDataProvider } from "../../services/treeView/localTreeViewDataProvider";
 import { getWindow } from "../../window/windowManager";
 
@@ -41,6 +43,10 @@ export class RpcObjectRegistry {
     router.registerRemoteObj(
       "ThemeServerRpcApi",
       (): ThemeServerRpcApi => gThemeManager,
+    );
+    router.registerRemoteObj(
+      "UpdateServerRpcApi",
+      (): UpdateServerRpcApi => gUpdateService,
     );
     router.registerRemoteObj(
       "TerminalServerRpcApi",

@@ -17,6 +17,7 @@ Process-level business services. [`tasks/`](tasks/AI_CONTEXT.md) owns the Task C
 ## Boundaries
 
 - RPC handlers remain thin and delegate domain behavior to services.
+- `UpdateService` directly implements `UpdateServerRpcApi` and uses `UpdateState` from `common/update/updateRpcApi.ts`. Its constructor schedules one automatic call to `start()` when automatic updates are enabled, without retaining or cancelling the timer. `startUpdate()` triggers the existing flow and returns without waiting for completion; `getState()` reads its authoritative state. Manual requests ignore the automatic-update switch; `start()` accepts `NOT_START` or `CHECKED` and does nothing during `UPDATING` or `NEED_RESTART`. Startup delay remains `NOT_START`; execution stays `UPDATING` through temporary cleanup. Successful promotion ends in `NEED_RESTART`; a completed check with no available update ends in `CHECKED`. Logged failures return to `NOT_START` without scheduling retries. The service does not provide cancellation or shutdown disposal.
 - Services obtain paths and persistence primitives from `infra/`.
 - The elevated runtime, native helper invocation, process inspection, termination, and RPC object registration remain under `main/src/uacBroker/`; services own Main-side launch, identity verification, pending-operation orchestration, and renderer notifications.
 - Task broadcasts target bridges held by `WindowManager`, with failures isolated per window.

@@ -34,6 +34,7 @@ Vue 3, Vite, and TypeScript Electron renderer. Electron loads the production bui
 - RPC interfaces and task models come from their owning domains under `common/`.
 - User-controlled content is rendered as text or sanitized before HTML rendering.
 - Global listeners are removed during close or unmount.
+- About's Update row sits below Check delay, starts manual updates through the cached Update RPC proxy, and reads status immediately on mount and every second without overlapping polls. A persistent status line below the button replaces its native title tooltip. `CHECKED` shows that no updates are available and allows another check; `UPDATING` and `NEED_RESTART` disable the action with matching text. Unknown or unreadable state also disables it. Manual submission invalidates older poll responses, and unmount clears polling and ignores pending responses.
 - Router history uses hashes because renderer navigation runs under the `file:` protocol.
 
 ## Validation

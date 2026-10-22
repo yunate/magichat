@@ -114,7 +114,7 @@ async function notifyReady(currentRequestId = requestId): Promise<void> {
 .tree-view-tab-state {
   width: 100%;
   height: 100%;
-  border-top: 1px solid var(--color-border);
+  border: 1px solid var(--color-border);
   display: grid;
   place-items: center;
   padding: var(--space-6);

@@ -98,6 +98,7 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
   register: [api: CommandTabPageApi];
   unregister: [api: CommandTabPageApi];
+  folderDataSaved: [folderId: string, data: CommandFolderData];
   stateChange: [state: CommandTabPageState];
 }>();
 
@@ -144,6 +145,16 @@ const SCRIPT_HELPERS: readonly Readonly<{
       cmd: 'call mhsetenv "${1:KEY}" "${2:value}"',
       node: 'mhsetenv({ "${1:KEY}": "${2:value}" });',
       python: 'mhsetenv({"${1:KEY}": "${2:value}"})',
+    },
+  },
+  {
+    name: "mhgetenv",
+    description: "Read the latest saved Macro value from the selected Workspace Environment group or an optional target path.",
+    insertText: {
+      powershell: 'mhgetenv "${1:KEY}"',
+      cmd: 'call mhgetenv "${1:KEY}"',
+      node: 'mhgetenv("${1:KEY}");',
+      python: 'mhgetenv("${1:KEY}")',
     },
   },
   {
@@ -463,6 +474,7 @@ async function save(): Promise<boolean> {
           extends: current.extends,
         },
       );
+      emit("folderDataSaved", current.id, cloneFolderData(current.data));
     } else {
       await props.treeView.controller.updateEntityData(
         { kind: "item", path: props.tab.path },

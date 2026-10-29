@@ -1,12 +1,13 @@
 # Main Infrastructure
 
-Local filesystem, configuration, JSON, and log primitives. This module contains no business-domain decisions.
+Local filesystem, configuration, JSON, log, and scheduling primitives. This module contains no business-domain decisions.
 
 ## Components
 
 - `applicationPaths.ts` derives immutable application-wide roots and renderer, preload, native-tool, external UAC Broker bundle, and log paths. `appPath` is Electron's source path, which is the repository during development and `resources/app.asar` when packaged; `appRoot` is `%LOCALAPPDATA%\MagicHat`. Logs use `appPath/log` during development and `appRoot/log` when packaged.
-- `configManager.ts` directly implements `ConfigServerRpcApi`, derives and creates its config directory, maps Command, Task Center, and global config keys to filenames, and keeps shared serializers authoritative for domain conversion.
+- `configManager.ts` directly implements `ConfigServerRpcApi`, derives and creates its config directory, maps Command, Task Center, and global config keys to filenames, and keeps shared serializers authoritative for domain conversion. Its local `onChange()` listeners receive the saved config key only after a successful atomic write; the returned callback unregisters the listener. Domain-specific reactions stay in the application composition layer.
 - `jsonFile.ts` provides guarded JSON reads and atomic writes.
+- `taskQueue.ts` runs asynchronous callbacks serially through `setImmediate()`, tracking the current turn with a completion promise. Pending counts exclude the running task. Async `cancel()` immediately clears pending callbacks and waits only for the current scheduled or running turn, without interrupting its task or capturing task errors. Later enqueued work is outside that cancellation's wait. A queued task must not await cancellation of its own queue.
 - `mhFile.ts` owns TreeView's `.mh` container format. It stores one strict JSON document followed by standalone `---MH:<key>---` extension sections, applies last-value-wins semantics to duplicate keys, and writes through a unique sibling temporary file before rename.
 - `logFile.ts` provides failure-tolerant task log append and read operations.
 - `logger.ts` owns the process-wide `gLogger`, mirrors `console` output, serializes file writes, and creates one `mh-YYYY-MM-DD-HH-mm-ss.log` file per process start. It removes matching log files older than seven days in the background. Error objects are normalized to their name and message before file output, without the stack. `ScopeLogger` implements `Disposable` for paired start/end logging through `using`; `TimerLogger` uses the same pattern to emit elapsed milliseconds when its scope ends.

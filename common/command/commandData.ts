@@ -6,6 +6,8 @@ import { ValidateUtils } from "../validator";
 
 export const COMMAND_SCRIPT_EXTENSION_KEY = "script";
 
+export type CodeViewPlacement = "left" | "right" | "top" | "bottom" | "hide";
+
 export type CommandParam = Readonly<{
   key: string;
   value: string;
@@ -26,6 +28,7 @@ export type CommandFolderData = Readonly<{
 export type CommandItemData = Readonly<{
   scriptType: ScriptType;
   content: string;
+  codeViewPlacement?: CodeViewPlacement;
   selectedParamGroupId: string;
   paramGroups: readonly CommandParamGroup[];
 }>;
@@ -90,6 +93,7 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
     this.validate(value);
     const meta: CommandItemMeta = {
       scriptType: value.scriptType,
+      codeViewPlacement: value.codeViewPlacement,
       selectedParamGroupId: value.selectedParamGroupId,
       paramGroups: value.paramGroups,
     };
@@ -107,8 +111,11 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
 
   public validate(value: unknown): asserts value is CommandItemData {
     migrateCommandParamEnabled(value);
-    ensureExactRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data");
+    ensureExactRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data", ["codeViewPlacement"]);
     if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
+    if (value.codeViewPlacement !== undefined && !CommandItemDataSerializer._isCodeViewPlacement(value.codeViewPlacement)) {
+      throw new Error("Command code view placement is invalid");
+    }
     ValidateUtils.ensureString(value.content, "Command content must be a string");
     validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
   }
@@ -125,8 +132,12 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
       value,
       Object.keys(CommandItemDataSerializer._META_DEFAULT),
       "Command item data",
+      ["codeViewPlacement"],
     );
     if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
+    if (value.codeViewPlacement !== undefined && !CommandItemDataSerializer._isCodeViewPlacement(value.codeViewPlacement)) {
+      throw new Error("Command code view placement is invalid");
+    }
     ValidateUtils.ensureString(
       value.selectedParamGroupId,
       "Selected Command param group ID must be a string",
@@ -134,20 +145,28 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
     validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
     return {
       scriptType: value.scriptType,
+      codeViewPlacement: value.codeViewPlacement,
       selectedParamGroupId: value.selectedParamGroupId,
       paramGroups: value.paramGroups,
     };
   }
 
+  private static _isCodeViewPlacement(value: unknown): value is CodeViewPlacement {
+    return value === "left" || value === "right" || value === "top"
+      || value === "bottom" || value === "hide";
+  }
+
   private static readonly _DEFAULT: CommandItemData = {
     scriptType: "powershell",
     content: "",
+    codeViewPlacement: "left",
     selectedParamGroupId: "command",
     paramGroups: [{ id: "command", name: "default params", params: [] }],
   };
 
   private static readonly _META_DEFAULT: CommandItemMeta = {
     scriptType: "powershell",
+    codeViewPlacement: "left",
     selectedParamGroupId: "command",
     paramGroups: [{ id: "command", name: "default params", params: [] }],
   };
@@ -238,10 +257,12 @@ function ensureExactRecord(
   value: unknown,
   keys: readonly string[],
   description: string,
+  optionalKeys: readonly string[] = [],
 ): asserts value is Record<string, unknown> {
   ValidateUtils.ensureRecord(value);
   const actualKeys = Object.keys(value);
-  if (actualKeys.length !== keys.length || !keys.every((key) => actualKeys.includes(key))) {
+  if (actualKeys.some((key) => !keys.includes(key))
+    || !keys.every((key) => actualKeys.includes(key) || optionalKeys.includes(key))) {
     throw new Error(`${description} has an invalid schema`);
   }
 }

@@ -13,6 +13,7 @@ import {
 import {
   commandFolderDataSerializer,
   commandItemDataSerializer,
+  type CodeViewPlacement,
   type CommandEnvUpdate,
   type CommandFolderData,
   type CommandItemData,
@@ -51,6 +52,7 @@ import type {
 } from "../../../../components/textEdit";
 import { TerminalComponent, type TerminalExposed } from "../../../../components/terminal";
 import type { TreeView } from "../../../../components/treeView";
+import CommandTerminalMenu from "./CommandTerminalMenu.vue";
 import type {
   CommandTabPageApi,
   CommandTabPageState,
@@ -81,6 +83,13 @@ type TerminalStatus = Readonly<{
   message: string;
 }>;
 
+const OPPOSITE_PLACEMENTS: Readonly<Record<TerminalPlacement, TerminalPlacement>> = {
+  left: "right",
+  right: "left",
+  top: "bottom",
+  bottom: "top",
+};
+
 type Props = {
   tab: TreeViewTab;
   entity: TreeViewFolder | TreeViewItem;
@@ -102,6 +111,14 @@ const emit = defineEmits<{
   stateChange: [state: CommandTabPageState];
 }>();
 
+const codeViewPlacement = computed<CodeViewPlacement>({
+  get: () => getItemDraft().data.codeViewPlacement ?? "left",
+  set: (placement) => {
+    const current = getItemDraft();
+    if ((current.data.codeViewPlacement ?? "left") === placement) return;
+    replaceDraft({ ...current, data: { ...current.data, codeViewPlacement: placement } });
+  },
+});
 const draft = shallowRef<CommandEditorDraft | null>(null);
 const isLoading = ref(false);
 const loadError = shallowRef("");
@@ -176,6 +193,15 @@ const scriptType = computed(() => {
 });
 const isItemDraft = ref(isTreeViewItem(props.entity) && props.entity.properties.isDraft);
 const isSaveDisabled = computed(() => (!isDirty.value && !isItemDraft.value) || isSaving.value);
+const isRunDisabled = computed(() => isCommandRunning.value
+  || isAncestorDataLoading.value || ancestorDataError.value.length > 0);
+const runButtonTitle = computed(() => isCommandRunning.value
+  ? "Command is running"
+  : isAncestorDataLoading.value
+    ? "Folder parameters are loading"
+    : ancestorDataError.value.length > 0
+      ? "Folder parameters are unavailable"
+      : "Run command");
 const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
   const current = draft.value;
   if (current === null) return [];
@@ -187,9 +213,13 @@ const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
     params: group.params,
   }));
 });
-const isSideBySide = computed(() => ["left", "right"].includes(props.terminalPlacement));
+const isCodeViewHidden = computed(() => codeViewPlacement.value === "hide");
+const terminalPlacement = computed(() => codeViewPlacement.value === "hide"
+  ? props.terminalPlacement
+  : OPPOSITE_PLACEMENTS[codeViewPlacement.value]);
+const isSideBySide = computed(() => ["left", "right"].includes(terminalPlacement.value));
 const isScriptBeforeTerminal = computed(() => ["right", "bottom"].includes(
-  props.terminalPlacement,
+  terminalPlacement.value,
 ));
 const api: CommandTabPageApi = {
   id: props.entity.properties.id,
@@ -360,7 +390,10 @@ function createDraft(
   entityData: TreeViewEntityData,
 ): CommandEditorDraft {
   if (isTreeViewItem(entity)) {
-    const data = cloneItemData(commandItemDataSerializer.fromEntityData(entityData));
+    const loadedData = commandItemDataSerializer.fromEntityData(entityData);
+    const data = cloneItemData(entityData.dataJson === null
+      ? { ...loadedData, codeViewPlacement: OPPOSITE_PLACEMENTS[props.terminalPlacement] }
+      : loadedData);
     return {
       kind: "item",
       id: entity.properties.id,
@@ -882,6 +915,7 @@ function areFolderDataEqual(left: CommandFolderData, right: CommandFolderData): 
 function areItemDataEqual(left: CommandItemData, right: CommandItemData): boolean {
   return left.scriptType === right.scriptType
     && left.content === right.content
+    && (left.codeViewPlacement ?? "left") === (right.codeViewPlacement ?? "left")
     && left.selectedParamGroupId === right.selectedParamGroupId
     && areParamGroupsEqual(left.paramGroups, right.paramGroups);
 }
@@ -917,6 +951,7 @@ function cloneItemData(data: CommandItemData): CommandItemData {
   return {
     scriptType: data.scriptType,
     content: data.content,
+    codeViewPlacement: data.codeViewPlacement,
     selectedParamGroupId: data.selectedParamGroupId,
     paramGroups: cloneParamGroups(data.paramGroups),
   };
@@ -1009,13 +1044,15 @@ function reportTerminalLastLine(): void {
   <SplitContainer
     v-else-if="draft?.kind === 'item'"
     class="command-workbench"
-    :class="`command-workbench--terminal-${terminalPlacement}`"
+    :class="[`command-workbench--terminal-${terminalPlacement}`, { 'command-workbench--code-hidden': isCodeViewHidden }]"
     :orientation="isSideBySide ? 'vertical' : 'horizontal'"
     :is-reversed="!isScriptBeforeTerminal"
+    :is-disabled="isCodeViewHidden"
     :has-item-borders="false"
     :separator-labels="['Resize script editor and terminal']"
+    :separator-visible="[!isCodeViewHidden]"
   >
-    <section class="command-script-editor">
+    <section v-show="!isCodeViewHidden" class="command-script-editor">
       <header class="command-editor-toolbar">
         <label class="command-editor-title">
           <span class="sr-only">Command title</span>
@@ -1045,16 +1082,10 @@ function reportTerminalLastLine(): void {
         <button
           type="button"
           class="command-editor-run is-primary"
-          :disabled="isCommandRunning || isAncestorDataLoading || ancestorDataError.length > 0"
-          :aria-disabled="isCommandRunning || isAncestorDataLoading || ancestorDataError.length > 0"
+          :disabled="isRunDisabled"
+          :aria-disabled="isRunDisabled"
           :aria-busy="isCommandRunning"
-          :title="isCommandRunning
-            ? 'Command is running'
-            : isAncestorDataLoading
-              ? 'Folder parameters are loading'
-              : ancestorDataError.length > 0
-                ? 'Folder parameters are unavailable'
-                : 'Run command'"
+          :title="runButtonTitle"
           @click="runHandler"
         >Run</button>
       </header>
@@ -1091,6 +1122,23 @@ function reportTerminalLastLine(): void {
           :title="terminalStatus.message"
           aria-live="polite"
         >{{ terminalStatus.message }}</output>
+        <template v-if="isCodeViewHidden">
+          <button
+            type="button"
+            :disabled="isSaveDisabled"
+            title="Save (Ctrl+S)"
+            @click="saveClickHandler"
+          >{{ isSaving ? "Saving..." : "Save" }}</button>
+          <button
+            type="button"
+            class="command-editor-run is-primary"
+            :disabled="isRunDisabled"
+            :aria-disabled="isRunDisabled"
+            :aria-busy="isCommandRunning"
+            :title="runButtonTitle"
+            @click="runHandler"
+          >Run</button>
+        </template>
         <button
           v-if="IS_DEBUG"
           type="button"
@@ -1117,6 +1165,10 @@ function reportTerminalLastLine(): void {
           title="Open Terminal"
           @click="openHandler"
         >Open</button>
+        <CommandTerminalMenu
+          v-model:code-view-placement="codeViewPlacement"
+          :is-active="isActive"
+        />
       </header>
       <TerminalComponent
         ref="terminal"
@@ -1200,6 +1252,11 @@ function reportTerminalLastLine(): void {
   min-height: 220px;
 }
 
+.command-workbench--code-hidden .command-terminal {
+  min-width: 0;
+  min-height: 0;
+}
+
 .command-editor-toolbar,
 .command-terminal__toolbar {
   min-height: 42px;
@@ -1210,6 +1267,10 @@ function reportTerminalLastLine(): void {
   color: var(--color-text-muted);
   background: var(--color-surface);
   border-block-end: 1px solid var(--color-border);
+}
+
+.command-terminal__toolbar {
+  flex-wrap: wrap;
 }
 
 .command-editor-toolbar strong,
@@ -1290,7 +1351,8 @@ function reportTerminalLastLine(): void {
   width: 130px;
 }
 
-.command-editor-toolbar button.is-primary {
+.command-editor-toolbar button.is-primary,
+.command-terminal__toolbar .command-editor-run {
   color: var(--color-bg);
   background: var(--color-primary);
   border-color: var(--color-primary);
@@ -1302,7 +1364,8 @@ function reportTerminalLastLine(): void {
   border-color: color-mix(in srgb, var(--color-border) 62%, var(--color-text-muted));
 }
 
-.command-editor-toolbar button.is-primary:not(:disabled):hover {
+.command-editor-toolbar button.is-primary:not(:disabled):hover,
+.command-terminal__toolbar .command-editor-run:not(:disabled):hover {
   background: var(--color-primary-emphasis);
   border-color: var(--color-primary-emphasis);
 }

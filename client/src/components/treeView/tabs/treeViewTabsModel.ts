@@ -26,6 +26,7 @@ export type TreeViewTabsDataProvider = Pick<
   | "getFolder"
   | "getItem"
   | "checkEntitiesIntegrity"
+  | "getAvailableItemPath"
   | "createItem"
   | "updateItem"
   | "deleteItem"
@@ -323,7 +324,8 @@ export class TreeViewTabsModel {
 
   public async createDraft(itemPath: string): Promise<TreeViewDraftCreated> {
     const identity = this._captureOperationIdentity();
-    const item = await this._getDataProvider().createItem(itemPath, { isDraft: true });
+    const availablePath = await this._getDataProvider().getAvailableItemPath(itemPath);
+    const item = await this._getDataProvider().createItem(availablePath, { isDraft: true });
     this._ensureOperationIdentity(identity);
     this.activate({ kind: "item", id: item.properties.id, openMode: "normal" }, item.path);
     this.switchTab({ tabId: item.properties.id });

@@ -228,7 +228,7 @@ function createItem(): void {
   if (parent === null) return;
   report((async (): Promise<void> => {
     const loadedParent = await prepareCreationParent(parent);
-    const name = availableName(loadedParent, `Untitled ${props.itemLabel.toLowerCase()}`);
+    const name = availableName(loadedParent, "Untitled");
     const item = await props.model.createItem(
       join(loadedParent.path, `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}`),
       { isDraft: false },

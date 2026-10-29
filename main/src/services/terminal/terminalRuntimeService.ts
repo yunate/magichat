@@ -1,14 +1,6 @@
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import * as inspector from "node:inspector";
-import os from "node:os";
 import path from "node:path";
 import type { IDisposable, IPty } from "node-pty";
-import { spawn } from "node-pty";
-import {
-  CLI_PAGE_COMMAND,
-  CLI_TERMINAL_ID_ENVIRONMENT_KEY,
-} from "../../../../common/cli";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import { isScriptType, type ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
@@ -22,10 +14,10 @@ import {
 } from "../../../../common/terminal";
 import { TreeViewPath } from "../../../../common/treeView";
 import { ValidateUtils } from "../../../../common/validator";
-import { gApplicationPaths } from "../../infra/applicationPaths";
 import { PathUtil } from "../../utils/pathUtil";
-import { createCliEnvironment } from "../cli/cliEnvironment";
 import { createScriptExecution } from "../scriptExecution";
+import type { Pty } from "./pty";
+import { gPtyFactory } from "./ptyFactory";
 import { resolveTerminalInitialPath } from "./terminalInitialPath";
 import { gTerminalRuntimeManager } from "./terminalRuntimeManager";
 
@@ -43,7 +35,7 @@ type PreparedRun = Readonly<{
 export class TerminalRuntimeService implements TerminalServerRpcApi {
   public constructor(peer: BridgePeer) {
     this._peer = peer;
-    gTerminalRuntimeManager.add(this._id, this);
+    gTerminalRuntimeManager.add(this);
     peer.onDisconnect(() => {
       void this.dispose().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -66,6 +58,10 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
 
   public isOwnedBy(peer: BridgePeer): boolean {
     return this._peer === peer;
+  }
+
+  public getTerminalId(): string | null {
+    return this._pty?.terminalId ?? null;
   }
 
   public createPty(
@@ -168,7 +164,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
         await BridgeRouter.destroyRemoteObj(notifier);
       }
       await this._deleteTemporaryFiles();
-      gTerminalRuntimeManager.remove(this._id, this);
+      gTerminalRuntimeManager.remove(this);
     });
   }
 
@@ -183,106 +179,17 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     rows: number,
     initialPath: string,
   ): Promise<TerminalPtyInfo> {
-    if (process.platform !== "win32") throw new Error("Terminal is only supported on Windows");
     const terminalType = this._terminalType;
     if (terminalType === null) throw new Error("Terminal type is not configured");
-
-    // ConPTY can deadlock during its native spawn handshake while the inspector is attached.
-    const backend = inspector.url() === undefined ? "conpty" : "winpty";
-    const buildNumber = this._getWindowsBuildNumber();
-    const pty = terminalType === "cmd"
-      ? this._createCmdPty(columns, rows, initialPath, backend === "conpty")
-      : this._createPowerShellPty(columns, rows, initialPath, backend === "conpty");
+    const { pty, info } = gPtyFactory.create(terminalType, {
+      columns,
+      rows,
+      initialPath,
+    });
     this._pty = pty;
     this._dataSubscription = pty.onData((data) => this._onPtyData(data));
     this._exitSubscription = pty.onExit(() => this._onPtyExit(pty));
-    return {
-      backend,
-      buildNumber,
-    };
-  }
-
-  private _createPowerShellPty(
-    columns: number,
-    rows: number,
-    initialPath: string,
-    useConpty: boolean,
-  ): IPty {
-    const modulePath = this._quotePowerShellArgument(gApplicationPaths.cliPowerShellModulePath);
-    const args = [
-      "-NoLogo",
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-NoExit",
-      "-Command",
-      `Set-PSReadLineOption -HistorySaveStyle SaveAtExit; Import-Module -Name ${modulePath}`,
-    ];
-    const environment = createCliEnvironment({
-      ...process.env,
-      TERM: "xterm-256color",
-      [CLI_TERMINAL_ID_ENVIRONMENT_KEY]: this._id,
-    }, { page: CLI_PAGE_COMMAND });
-    return this._spawnPty(
-      "powershell.exe",
-      args,
-      environment,
-      columns,
-      rows,
-      initialPath,
-      useConpty,
-    );
-  }
-
-  private _createCmdPty(
-    columns: number,
-    rows: number,
-    initialPath: string,
-    useConpty: boolean,
-  ): IPty {
-    const environment = createCliEnvironment({
-      ...process.env,
-      TERM: "xterm-256color",
-      [CLI_TERMINAL_ID_ENVIRONMENT_KEY]: this._id,
-      PROMPT: "CMD $P$G",
-    }, { page: CLI_PAGE_COMMAND });
-    return this._spawnPty(
-      "cmd.exe",
-      ["/Q", "/K"],
-      environment,
-      columns,
-      rows,
-      initialPath,
-      useConpty,
-    );
-  }
-
-  private _spawnPty(
-    executable: string,
-    args: readonly string[],
-    environment: NodeJS.ProcessEnv,
-    columns: number,
-    rows: number,
-    initialPath: string,
-    useConpty: boolean,
-  ): IPty {
-    const ptyOptions = {
-      cols: columns,
-      rows,
-      cwd: initialPath,
-      env: environment,
-      useConpty,
-      useConptyDll: false,
-    };
-    return spawn(executable, [...args], ptyOptions);
-  }
-
-  private _getWindowsBuildNumber(): number {
-    const buildNumber = Number.parseInt(os.release().split(".")[2] ?? "", 10);
-    if (!Number.isInteger(buildNumber) || buildNumber <= 0) {
-      throw new Error("Windows build number is unavailable");
-    }
-    return buildNumber;
+    return info;
   }
 
   private _disposePty(): void {
@@ -421,12 +328,11 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     await Promise.all([...this._temporaryFiles].map((filePath) => this._deleteTemporaryFile(filePath)));
   }
 
-  private readonly _id = randomUUID();
   private readonly _peer: BridgePeer;
   private readonly _temporaryFiles = new Set<string>();
   private _queue: Promise<void> = Promise.resolve();
   private _notifier: RemoteObject<TerminalClientRpcApi> | null = null;
-  private _pty: IPty | null = null;
+  private _pty: Pty | null = null;
   private _dataSubscription: IDisposable | null = null;
   private _exitSubscription: IDisposable | null = null;
   private _terminalType: TerminalType | null = null;

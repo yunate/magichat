@@ -1,12 +1,15 @@
 import { app, BrowserWindow, Menu, Tray } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { COMMAND_CONFIG_KEY } from "../../common/config/command";
 import { BridgeRouter } from "../../common/ipc_bridge/rpc";
 import { RpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
 import { gApplicationPaths } from "./infra/applicationPaths";
+import { gConfigManager } from "./infra/configManager";
 import { gLogger } from "./infra/logger";
 import { gCliBridge } from "./services/cli/cliBridge";
 import { gTaskManager } from "./services/tasks/taskManager";
+import { gPtyFactory } from "./services/terminal/ptyFactory";
 import { gTerminalRuntimeManager } from "./services/terminal/terminalRuntimeManager";
 import { gUacBrokerService } from "./services/uacBroker/uacBrokerService";
 import { WindowFactory } from "./window/windowFactory";
@@ -15,6 +18,7 @@ import { WindowManager } from "./window/windowManager";
 let gIsShutdownStarted = false;
 let gIsShutdownComplete = false;
 let gTray: Tray | null = null;
+let gUnsubscribeConfigChanges: (() => void) | null = null;
 
 function configureChromiumScheduling(): void {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -39,8 +43,11 @@ function bringPrimaryWindowToFront(): void {
 
 async function shutdown(): Promise<void> {
   console.log("[main] Shutdown started.");
+  gUnsubscribeConfigChanges?.();
+  gUnsubscribeConfigChanges = null;
   gTray?.destroy();
   gTray = null;
+  await gPtyFactory.dispose();
   await gCliBridge.stop();
   await WindowManager.getInstance().forEachWindow((window) => window.browserWindow.hide());
   await gTerminalRuntimeManager.disposeAll();
@@ -77,6 +84,16 @@ function createTray(): void {
   gTray = tray;
 }
 
+function updateTerminalInitialPath(): void {
+  try {
+    const config = gConfigManager.get(COMMAND_CONFIG_KEY);
+    gPtyFactory.setInitialPath(config.terminalInitialPath);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[terminal] prewarming configuration failed: ${message}`);
+  }
+}
+
 configureChromiumScheduling();
 configureInstanceScope();
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -92,6 +109,10 @@ if (!hasSingleInstanceLock) {
     console.log(`[main] Application started. Version: ${buildVersion}.`);
     RpcObjectRegistry.register(BridgeRouter.getRouter());
     await gCliBridge.start(app.getPath("userData"));
+    updateTerminalInitialPath();
+    gUnsubscribeConfigChanges = gConfigManager.onChange((configKey) => {
+      if (configKey === COMMAND_CONFIG_KEY) updateTerminalInitialPath();
+    });
     gTaskManager.startQueuedTasks();
     await WindowFactory.createWindow();
     createTray();

@@ -63,6 +63,11 @@ export class ConfigManager implements ConfigServerRpcApi {
     this._writeConfig(configKey, jsonString);
   }
 
+  public onChange(listener: (configKey: string) => void): () => void {
+    this._changeListeners.add(listener);
+    return () => { this._changeListeners.delete(listener); };
+  }
+
   private _readConfig<Value>(configKey: string, valueSerializer: ISerializer<Value>): Value {
     const file = this._configFile(configKey);
     let json: string;
@@ -106,6 +111,7 @@ export class ConfigManager implements ConfigServerRpcApi {
       }
       throw new Error(`Failed to write ${configKey} config`);
     }
+    for (const listener of this._changeListeners) listener(configKey);
   }
 
   private _getDefaultValue<Value>(valueSerializer: ISerializer<Value>): Value {
@@ -120,6 +126,7 @@ export class ConfigManager implements ConfigServerRpcApi {
   }
 
   private static _instance: ConfigManager | null = null;
+  private readonly _changeListeners = new Set<(configKey: string) => void>();
   private readonly _configDirectory: string;
 }
 

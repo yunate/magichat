@@ -9,17 +9,20 @@ export class TerminalRuntimeManager {
     return TerminalRuntimeManager._instance;
   }
 
-  public add(id: string, service: TerminalRuntimeService): void {
-    if (this._services.has(id)) throw new Error("Terminal runtime ID already exists");
-    this._services.set(id, service);
+  public add(service: TerminalRuntimeService): void {
+    if (this._services.has(service)) throw new Error("Terminal runtime is already registered");
+    this._services.add(service);
   }
 
-  public remove(id: string, service: TerminalRuntimeService): void {
-    if (this._services.get(id) === service) this._services.delete(id);
+  public remove(service: TerminalRuntimeService): void {
+    this._services.delete(service);
   }
 
-  public get(id: string): TerminalRuntimeService | null {
-    return this._services.get(id) ?? null;
+  public get(terminalId: string): TerminalRuntimeService | null {
+    for (const service of this._services) {
+      if (service.getTerminalId() === terminalId) return service;
+    }
+    return null;
   }
 
   public async disposeAll(): Promise<void> {
@@ -39,7 +42,7 @@ export class TerminalRuntimeManager {
   public readonly temporaryDirectory = path.join(gApplicationPaths.dataDir, "tmp", "terminal");
 
   private static _instance: TerminalRuntimeManager | null = null;
-  private readonly _services = new Map<string, TerminalRuntimeService>();
+  private readonly _services = new Set<TerminalRuntimeService>();
 }
 
 export const gTerminalRuntimeManager = TerminalRuntimeManager.getInstance();

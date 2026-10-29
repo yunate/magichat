@@ -5,6 +5,7 @@ Electron main process and TypeScript local backend. Renderer files are loaded di
 ## Structure
 
 - `src/index.ts` registers process-global RPC objects, creates windows, and coordinates shutdown.
+- `src/index.ts` starts Terminal factory prewarming after the CLI Bridge is ready, forwards successful Command configuration changes to its initial-directory setting, and disposes prewarming before the remaining shutdown steps. Pool ownership and acquisition stay inside the Terminal factory.
 - `src/index.ts` starts the process-wide logger before business services, records the complete authoritative `VERSION` in the first application-started entry, and drains its write queue after shutdown cleanup. Existing `console` output is mirrored into the application log through the logger bridge.
 - `src/index.ts` owns the process-wide system tray. Its Open command restores the primary Window, while its Close command asks the renderer to run the standard Page close flow.
 - `src/index.ts` disables Chromium renderer backgrounding, timer throttling, and Windows occluded-window backgrounding before Electron becomes ready, keeping an idle or covered MagicHat responsive without preventing normal system sleep.
@@ -19,7 +20,7 @@ Electron main process and TypeScript local backend. Renderer files are loaded di
 - `src/uacBroker/` owns the pure Node broker entry and separately registered lifecycle and File Occupancy RPC objects bundled outside ASAR. It adapts the single named-pipe connection through `PipeBridgeSocket`, directly invokes the fixed `native-tools/ddwhouses/bin/ddwhouses.exe` with the inspected path, and parses its complete process records. Before terminating a process tree with the fixed Windows `taskkill.exe /T /F` command, it queries the original occupied target again and validates PID, start time, and executable path. The broker exits after remote shutdown, disconnect, or Main process exit.
 - [`src/services/`](src/services/AI_CONTEXT.md) owns process-level business behavior, including task execution and the per-instance [`Terminal runtime`](src/services/terminal/AI_CONTEXT.md).
 - `src/services/cli/` separates the external named-pipe bridge from CLI command handling. The native Windows CLI executable under `native-tools/cli-helper/bin/` forwards UTF-8 arguments without interpreting commands and is compiled with MSVC before packaging. MagicHat environments prepend `cmd/` to `PATH`, import the module under `powershell/`, preload the CommonJS helper under `node/`, and prepend `python/` to `PYTHONPATH`. These helpers synchronously invoke prepared Command runs, update Command environment, or report a running Task's display state.
-- Shutdown closes the CLI named pipe, hides windows, disposes Terminal and Task processes, removes the Terminal helper directory, closes window bridge connections, and then drains the application log queue.
+- Shutdown stops Terminal prewarming, closes the CLI named pipe, hides windows, disposes Terminal and Task processes, removes the Terminal helper directory, closes window bridge connections, and then drains the application log queue.
 
 ## Boundaries
 

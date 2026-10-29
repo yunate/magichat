@@ -7,6 +7,7 @@ import PopupWindow from "./PopupWindow.vue";
 type Props = {
   position: ContextMenuPosition;
   area: ContextMenuArea;
+  width?: number;
 };
 
 type PopupWindowHandle = {
@@ -18,7 +19,7 @@ const menu = useTemplateRef<PopupWindowHandle>("menu");
 const VIEWPORT_MARGIN = 8;
 const style = ref<CSSProperties>(createInitialStyle());
 
-watch([() => props.position, () => props.area], () => {
+watch([() => props.position, () => props.area, () => props.width], () => {
   style.value = createInitialStyle();
   void nextTick(positionInArea);
 });
@@ -51,6 +52,7 @@ function createInitialStyle(): CSSProperties {
   return {
     left: `${props.position.x}px`,
     top: `${props.position.y}px`,
+    width: props.width === undefined ? undefined : `${props.width}px`,
     maxWidth: `${Math.max(0, props.area.right - props.area.left - 2 * VIEWPORT_MARGIN)}px`,
     maxHeight: `${Math.max(0, props.area.bottom - props.area.top - 2 * VIEWPORT_MARGIN)}px`,
   };

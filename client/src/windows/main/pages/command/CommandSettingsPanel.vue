@@ -119,7 +119,7 @@ async function save(): Promise<void> {
 <template>
   <div class="command-settings-layout">
     <fieldset class="command-settings">
-      <legend>Terminal placement</legend>
+      <legend>Terminal placement for new Commands</legend>
       <div class="command-settings__options">
         <label
           v-for="option in terminalPlacementOptions"

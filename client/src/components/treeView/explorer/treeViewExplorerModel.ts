@@ -25,6 +25,7 @@ export type TreeViewExplorerDataProvider = Pick<
   | "updateFolderProperties"
   | "deleteFolder"
   | "getItem"
+  | "getAvailableItemPath"
   | "createItem"
   | "updateItem"
   | "repairEntityId"
@@ -186,7 +187,8 @@ export class TreeViewExplorerModel {
     properties: TreeViewCreateItemProperties,
   ): Promise<TreeViewItem> {
     const identity = this._captureOperationIdentity();
-    const item = await this._getDataProvider().createItem(itemPath, properties);
+    const availablePath = await this._getDataProvider().getAvailableItemPath(itemPath);
+    const item = await this._getDataProvider().createItem(availablePath, properties);
     const parentPath = dirname(itemPath);
     const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
     this._ensureOperationIdentity(identity);

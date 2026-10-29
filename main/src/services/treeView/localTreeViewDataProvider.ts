@@ -269,6 +269,23 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     return this._createItemView(itemFile, this._readItemProperties(itemFile));
   }
 
+  public getAvailableItemPath(itemPath: string): Promise<string> {
+    return this._enqueueMutation(() => {
+      let target = this._resolveItemFile(itemPath);
+      const parent = path.dirname(target);
+      const baseName = path.basename(target, TREE_VIEW_ITEM_FILE_EXTENSION);
+      TreeViewPath.ensureName(baseName, "TreeView item name");
+      const occupiedNames = new Set(
+        fs.readdirSync(parent).map((name) => name.toLocaleLowerCase("en-US")),
+      );
+      let sequence = 2;
+      while (occupiedNames.has(path.basename(target).toLocaleLowerCase("en-US"))) {
+        target = path.join(parent, `${baseName} ${sequence++}${TREE_VIEW_ITEM_FILE_EXTENSION}`);
+      }
+      return TreeViewPath.normalize(target, "TreeView item path");
+    });
+  }
+
   public createItem(
     itemPath: string,
     properties: TreeViewCreateItemProperties,

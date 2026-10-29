@@ -37,6 +37,7 @@ export interface TreeViewDataProvider {
   deleteFolder(operationId: string, folderPath: string): void;
   checkEntitiesIntegrity(entities: TreeViewEntityDataParams[]): Promise<boolean[]>;
   getItem(itemPath: string): Promise<TreeViewItem>;
+  getAvailableItemPath(itemPath: string): Promise<string>;
   createItem(
     itemPath: string,
     properties: TreeViewCreateItemProperties,

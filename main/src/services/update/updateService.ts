@@ -71,6 +71,22 @@ export class UpdateService implements UpdateServerRpcApi {
     void this.start();
   }
 
+  public async getRestartExecutablePath(): Promise<string> {
+    if (this._state !== UpdateState.NEED_RESTART) {
+      throw new Error("No prepared update is available for restart.");
+    }
+    try {
+      const version = await this._readVersionFile(this._activeVersionPath);
+      const executablePath = path.join(this._versionsDirectoryPath, version.toString(), APPLICATION_EXECUTABLE_NAME);
+      if (!PathUtil.isFile(executablePath)) throw new Error("Updated executable is missing.");
+      return executablePath;
+    } catch (reason: unknown) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      console.error(`[update] Restart preparation failed: ${message}`);
+      throw new Error("The updated application could not be prepared for restart.");
+    }
+  }
+
   public async start(): Promise<void> {
     if (
       this._state !== UpdateState.NOT_START && this._state !== UpdateState.CHECKED

@@ -17,6 +17,22 @@ import MainApp from "./MainApp.vue";
 import { applyConfiguredTheme } from "./themes/theme";
 
 class MainApplication {
+  public async quit(action: "close" | "restart" = "close"): Promise<void> {
+    if (this._isQuitting) return;
+    this._isQuitting = true;
+    try {
+      for (const page of gPageRegistry.getPages()) {
+        if (page.beforeAppQuitCallback !== undefined
+          && !await page.beforeAppQuitCallback()) return;
+      }
+      const windowRpcObject = await this.window.getWindowServerRpcObject();
+      if (action === "restart") await windowRpcObject.restart();
+      else await windowRpcObject.close();
+    } finally {
+      this._isQuitting = false;
+    }
+  }
+
   public start(): void {
     void (async (): Promise<void> => {
       await this.window.init();
@@ -76,6 +92,8 @@ class MainApplication {
   }
 
   public readonly window = new Window();
+
+  private _isQuitting = false;
 }
 
 export const gMainApplication = new MainApplication();

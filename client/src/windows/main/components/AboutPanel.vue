@@ -23,17 +23,23 @@ const updateServerRpcObject = gMainApplication.window.getUpdateServerRpcObject()
 const updateState = ref<UpdateState | null>(null);
 const updateStateError = ref("");
 const isUpdateStarting = ref(false);
+const isRestarting = ref(false);
 const isUpdateBusy = computed(() => isUpdateStarting.value || updateState.value === UpdateState.UPDATING);
 const isUpdateButtonDisabled = computed(() =>
   isUpdateStarting.value
-    || (updateState.value !== UpdateState.NOT_START && updateState.value !== UpdateState.CHECKED)
+    || isRestarting.value
+    || (updateState.value !== UpdateState.NOT_START
+      && updateState.value !== UpdateState.CHECKED
+      && updateState.value !== UpdateState.NEED_RESTART)
     || updateStateError.value.length > 0,
 );
 const updateButtonText = computed(() => {
+  if (isRestarting.value) return "Restarting...";
   if (isUpdateBusy.value) return "Updating...";
-  return updateState.value === UpdateState.NEED_RESTART ? "Restart required" : "Update";
+  return updateState.value === UpdateState.NEED_RESTART ? "Restart" : "Update";
 });
 const updateStatusText = computed(() => {
+  if (isRestarting.value) return "Restarting MagicHat...";
   if (isUpdateBusy.value) return "Updating MagicHat...";
   if (updateState.value === UpdateState.CHECKED) return "No new version found.";
   if (updateState.value === UpdateState.NEED_RESTART) return "Update ready. Restart MagicHat to apply it.";
@@ -77,7 +83,7 @@ function onWindowKeydown(event: KeyboardEvent): void {
 }
 
 async function loadUpdateState(): Promise<void> {
-  if (!isAboutPanelActive || isUpdateStateReading || isUpdateStarting.value) return;
+  if (!isAboutPanelActive || isUpdateStateReading || isUpdateStarting.value || isRestarting.value) return;
   isUpdateStateReading = true;
   const requestVersion = updateStateRequestVersion;
   try {
@@ -98,6 +104,10 @@ async function loadUpdateState(): Promise<void> {
 
 async function onUpdate(): Promise<void> {
   if (isUpdateButtonDisabled.value) return;
+  if (updateState.value === UpdateState.NEED_RESTART) {
+    await onRestart();
+    return;
+  }
   isUpdateStarting.value = true;
   updateStateRequestVersion += 1;
   try {
@@ -115,6 +125,21 @@ async function onUpdate(): Promise<void> {
     gMessageStore.pushMessage("error", "The update could not be started or its status could not be read.");
   } finally {
     isUpdateStarting.value = false;
+  }
+}
+
+async function onRestart(): Promise<void> {
+  isRestarting.value = true;
+  updateStateRequestVersion += 1;
+  try {
+    await gMainApplication.quit("restart");
+  } catch (reason: unknown) {
+    if (!isAboutPanelActive) return;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    console.error(`Application restart failed: ${message}`);
+    gMessageStore.pushMessage("error", "MagicHat could not be restarted.");
+  } finally {
+    isRestarting.value = false;
   }
 }
 
@@ -383,11 +408,11 @@ async function onCheckDelayChange(): Promise<void> {
                   type="button"
                   class="about-update-button"
                   :disabled="isUpdateButtonDisabled"
-                  :aria-busy="isUpdateBusy"
+                  :aria-busy="isUpdateBusy || isRestarting"
                   :aria-describedby="updateStateError.length > 0 ? 'update-state-error' : 'update-state-status'"
                   @click="onUpdate"
                 >
-                  <LoaderCircle v-if="isUpdateBusy" :size="14" class="about-update-spin" aria-hidden="true" />
+                  <LoaderCircle v-if="isUpdateBusy || isRestarting" :size="14" class="about-update-spin" aria-hidden="true" />
                   <RotateCw v-else-if="updateState === UpdateState.NEED_RESTART" :size="14" aria-hidden="true" />
                   <Download v-else :size="14" aria-hidden="true" />
                   <span>{{ updateButtonText }}</span>

@@ -14,6 +14,7 @@ export interface WindowServerRpcApi {
   show(): void;
   toggleMaximize(): void;
   close(): void;
+  restart(): Promise<void>;
 }
 
 export interface WindowClientRpcApi {

@@ -20,7 +20,6 @@ const pages = gPageRegistry.getPages();
 const route = useRoute();
 const router = useRouter();
 const activePagePath = computed(() => pages.some((page) => page.path === route.path) ? route.path : null);
-let isClosing = false;
 
 async function onWindowCloseRequest(): Promise<void> {
   const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
@@ -60,20 +59,11 @@ async function navigateTo(path: string): Promise<void> {
 }
 
 async function closeApp(): Promise<void> {
-  if (isClosing) return;
-  isClosing = true;
   try {
-    for (const page of gPageRegistry.getPages()) {
-      if (page.beforeAppQuitCallback !== undefined
-        && !await page.beforeAppQuitCallback()) return;
-    }
-    const windowRpcObject = await gMainApplication.window.getWindowServerRpcObject();
-    await windowRpcObject.close();
+    await gMainApplication.quit();
   } catch (reason: unknown) {
     const message = reason instanceof Error ? reason.message : String(reason);
     console.error(`Application close failed: ${message}`);
-  } finally {
-    isClosing = false;
   }
 }
 </script>

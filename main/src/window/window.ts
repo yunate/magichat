@@ -12,6 +12,7 @@ import {
   createWindowClientRpcObject,
 } from "../bridge/remote_rpc_objects/remoteClientRpcObjects";
 import { gApplicationPaths } from "../infra/applicationPaths";
+import { gUpdateService } from "../services/update/updateService";
 
 const LATEST_RELEASE_URL = "https://github.com/ddmagichat/magichat-release/releases/tag/latest";
 const ISSUES_URL = "https://github.com/ddmagichat/magichat-release/issues";
@@ -118,6 +119,12 @@ export abstract class Window implements WindowServerRpcApi {
   public close(): void {
     this.browserWindow.removeListener("close", this._handleClose);
     setImmediate(() => app.quit());
+  }
+
+  public async restart(): Promise<void> {
+    const execPath = await gUpdateService.getRestartExecutablePath();
+    app.relaunch({ execPath, args: [] });
+    this.close();
   }
 
   public async requestClose(): Promise<void> {

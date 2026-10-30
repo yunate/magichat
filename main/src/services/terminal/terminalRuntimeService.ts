@@ -181,7 +181,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
   ): Promise<TerminalPtyInfo> {
     const terminalType = this._terminalType;
     if (terminalType === null) throw new Error("Terminal type is not configured");
-    const { pty, info } = gPtyFactory.create(terminalType, {
+    const { pty, info } = await gPtyFactory.create(terminalType, {
       columns,
       rows,
       initialPath,

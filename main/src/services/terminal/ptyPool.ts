@@ -10,7 +10,7 @@ type PtyCreation = Readonly<{ pty: Pty; info: TerminalPtyInfo }>;
 type PoolEntry = PtyCreation & { exitSubscription: IDisposable | null };
 
 export class PtyPool {
-  public constructor(terminalType: TerminalType, createPty: (initialPath: string) => PtyCreation, maxCount = 1) {
+  public constructor(terminalType: TerminalType, createPty: (initialPath: string) => Promise<PtyCreation>, maxCount = 1) {
     this._terminalType = terminalType;
     this._createPty = createPty;
     this._maxCount = maxCount;
@@ -70,9 +70,9 @@ export class PtyPool {
       }
 
       const startedAt = Date.now();
-      const creation = this._createPty(initialPath);
+      const creation = await this._createPty(initialPath);
       const entry: PoolEntry = { ...creation, exitSubscription: null };
-      if (initialPath !== this._initialPath) {
+      if (this._isDisposed || initialPath !== this._initialPath) {
         entry.pty.kill();
         console.log(`[pty-pool] initial path changed. Type: ${this._terminalType}. Terminal ID: ${entry.pty.terminalId}. Initial path: ${JSON.stringify(initialPath)}. Remaining: ${this._entries.length}/${this._maxCount}.`);
         return;
@@ -105,7 +105,7 @@ export class PtyPool {
 
   private readonly _terminalType: TerminalType;
   private readonly _maxCount: number;
-  private readonly _createPty: (initialPath: string) => PtyCreation;
+  private readonly _createPty: (initialPath: string) => Promise<PtyCreation>;
   private readonly _entries: PoolEntry[] = [];
   private readonly _refillQueue = new TaskQueue();
   private _initialPath = "";

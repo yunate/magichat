@@ -37,7 +37,7 @@
                          "buildScript":  "launcher/src/build-native.bat",
                          "targetExecutable":  "launcher/bin/launcher.exe",
                          "sourceHash":  "a004ae5e998f2fea160dc61e889dc5e718015a45ba8e4bbe800317e885ed7074",
-                         "targetHash":  "71d3b2fb7979c282e2a9629df2cd85575ba43d1ea00ef7694cb52e9cc10b4e95"
+                         "targetHash":  "a7e35add6047b4d5a9d560bf78dc4454939bac8fafca68ae026145702e05ce28"
                      }
                  ]
 }

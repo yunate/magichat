@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IDisposable, IPty } from "node-pty";
-import { spawn } from "node-pty";
+import type { PtyInitializationToken } from "./ptyFactory";
 
 export type PtyOptions = Readonly<{
   columns: number;
@@ -11,17 +11,14 @@ export type PtyOptions = Readonly<{
 }>;
 
 export abstract class Pty implements IPty {
-  protected constructor(executable: string, args: readonly string[], options: PtyOptions) {
-    this.initialPath = options.initialPath;
-    this._pty = spawn(executable, [...args], {
-      cols: options.columns,
-      rows: options.rows,
-      cwd: options.initialPath,
-      env: options.createEnvironment(this.terminalId),
-      useConpty: options.useConpty,
-      useConptyDll: false,
-    });
+  public async init(_token: PtyInitializationToken, options: PtyOptions): Promise<void> {
+    this._initialPath = options.initialPath;
+    this._pty = await this._create(options);
     this._pty.onData((data) => this._handleData(data));
+  }
+
+  public get initialPath(): string {
+    return this._initialPath;
   }
 
   public get pid(): number {
@@ -86,6 +83,8 @@ export abstract class Pty implements IPty {
     this._pty.resume();
   }
 
+  protected abstract _create(options: PtyOptions): Promise<IPty>;
+
   private _handleData(data: string): void {
     this._bufferedData += data;
 
@@ -97,9 +96,9 @@ export abstract class Pty implements IPty {
   }
 
   public readonly terminalId = randomUUID();
-  public readonly initialPath: string;
 
-  private readonly _pty: IPty;
+  private _pty!: IPty;
+  private _initialPath!: string;
   private _bufferedData = "";
   private _dataHandler: ((data: string) => void) | null = null;
 }

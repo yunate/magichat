@@ -12,6 +12,9 @@ import type { Pty, PtyOptions } from "./pty";
 import { PtyPool } from "./ptyPool";
 import { resolveTerminalInitialPath } from "./terminalInitialPath";
 
+const PTY_INITIALIZATION_TOKEN = Symbol("pty initialization");
+export type PtyInitializationToken = typeof PTY_INITIALIZATION_TOKEN;
+
 type PtyCreateOptions = Readonly<{
   columns: number;
   rows: number;
@@ -32,10 +35,10 @@ class PtyFactory {
     for (const pool of this._pools.values()) pool.setInitialPath(resolvedPath);
   }
 
-  public create(
+  public async create(
     terminalType: TerminalType,
     options: PtyCreateOptions,
-  ): Readonly<{ pty: Pty; info: TerminalPtyInfo }> {
+  ): Promise<Readonly<{ pty: Pty; info: TerminalPtyInfo }>> {
     if (this._isDisposed) throw new Error("PTY factory is disposed");
     const pool = this._pools.get(terminalType);
     const creation = pool?.take(resolveTerminalInitialPath(options.initialPath)) ?? 0;
@@ -54,10 +57,10 @@ class PtyFactory {
     await Promise.all([...this._pools.values()].map((pool) => pool.dispose()));
   }
 
-  private _create(
+  private async _create(
     terminalType: TerminalType,
     options: PtyCreateOptions,
-  ): Readonly<{ pty: Pty; info: TerminalPtyInfo }> {
+  ): Promise<Readonly<{ pty: Pty; info: TerminalPtyInfo }>> {
     if (process.platform !== "win32") throw new Error("Terminal is only supported on Windows");
 
     // ConPTY can deadlock during its native spawn handshake while the inspector is attached.
@@ -78,12 +81,13 @@ class PtyFactory {
 
     let pty: Pty;
     if (terminalType === "cmd") {
-      pty = new CmdPty(ptyOptions);
+      pty = new CmdPty();
     } else if (terminalType === "powershell") {
-      pty = new PowerShellPty(ptyOptions);
+      pty = new PowerShellPty();
     } else {
       throw new Error("Terminal type is invalid");
     }
+    await pty.init(PTY_INITIALIZATION_TOKEN, ptyOptions);
     return { pty, info: { backend, buildNumber } };
   }
 

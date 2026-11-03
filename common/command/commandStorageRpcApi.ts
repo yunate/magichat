@@ -19,7 +19,7 @@ export interface CommandClientRpcApi {
 }
 
 export interface CommandStorageServerRpcApi {
-  init(notifierRegisterName: string): Promise<void>;
+  init(client: CommandClientRpcApi): Promise<void>;
   dispose(): Promise<void>;
   resolveRoots(roots: readonly CommandRootConfig[]): TreeViewStorageRoot[];
   resolveTerminalInitialPath(initialPath: string): string;

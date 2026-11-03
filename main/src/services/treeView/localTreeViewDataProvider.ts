@@ -26,7 +26,6 @@ import {
   type TreeViewMoveParams,
   type TreeViewWorkspace,
 } from "../../../../common/treeView";
-import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import { TimerLogger } from "../../infra/logger";
 import { MFFileSerializer, type MHFile } from "../../infra/mhFile";
@@ -40,8 +39,7 @@ const STAGED_RENAME_RETRY_COUNT = 5;
 const STAGED_RENAME_RETRY_DELAY_MS = 50;
 
 export class LocalTreeViewDataProvider implements TreeViewDataProvider {
-  public constructor(peer: BridgePeer) {
-    this._peer = peer;
+  public constructor() {
     this._folderPropertiesSerializer = new TreeViewFolderPropertiesSerializer();
     this._itemPropertiesSerializer = new TreeViewItemPropertiesSerializer();
     this._itemSerializer = new TreeViewItemSerializer(this._itemPropertiesSerializer);
@@ -51,13 +49,10 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     );
   }
 
-  public async init(notifierRegisterName: string): Promise<void> {
-    return this._enqueueMutation(async () => {
+  public async init(notifier: RemoteObject<TreeViewDataNotifierClientRpcApi>): Promise<void> {
+    return this._enqueueMutation(() => {
       if (this._notifier !== null) throw new Error("TreeView DataProvider is already initialized");
-      this._notifier = await BridgeRouter.createRemoteObj<TreeViewDataNotifierClientRpcApi>(
-        this._peer,
-        notifierRegisterName,
-      );
+      this._notifier = notifier;
     });
   }
 
@@ -1155,7 +1150,6 @@ export class LocalTreeViewDataProvider implements TreeViewDataProvider {
     return result;
   }
 
-  private readonly _peer: BridgePeer;
   private readonly _folderPropertiesSerializer: TreeViewFolderPropertiesSerializer;
   private readonly _itemPropertiesSerializer: TreeViewItemPropertiesSerializer;
   private readonly _itemSerializer: TreeViewItemSerializer;

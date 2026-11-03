@@ -13,7 +13,6 @@ import {
 import { TreeViewPath, type TreeViewStorageRoot } from "../../../../common/treeView";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
-import { createCommandClientRpcObject } from "../../bridge/remote_rpc_objects/remoteClientRpcObjects";
 import { gApplicationPaths } from "../../infra/applicationPaths";
 import { gConfigManager } from "../../infra/configManager";
 import { resolveTerminalInitialPath } from "../terminal/terminalInitialPath";
@@ -23,9 +22,9 @@ export class CommandStorageRpcObject implements CommandStorageServerRpcApi {
     this._peer = peer;
   }
 
-  public async init(notifierRegisterName: string): Promise<void> {
+  public async init(client: RemoteObject<CommandClientRpcApi>): Promise<void> {
     if (this._client !== null) throw new Error("Command Client is already initialized");
-    this._client = await createCommandClientRpcObject(this._peer, notifierRegisterName);
+    this._client = client;
   }
 
   public async dispose(): Promise<void> {

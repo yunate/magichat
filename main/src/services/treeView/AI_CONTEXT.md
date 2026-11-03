@@ -4,8 +4,8 @@
 
 ## Boundaries
 
-- The RPC registry constructs it with a `BridgePeer`. The service stores no business root; callers pass an absolute path for each operation.
-- `init()` creates and retains the renderer's DataNotifier remote proxy through the same peer.
+- The RPC registry creates one provider per remote-object request. The service stores no business root; callers pass an absolute path for each operation.
+- `init(notifier)` retains the renderer's directly passed DataNotifier reference. The bridge binds the reverse proxy to the same peer; no notifier factory or register name is used. `dispose()` explicitly destroys the notifier reference.
 - The DataNotifier connection remains owned by the provider, while current mutations do not emit `storageChanged()`.
 - Mutating DataProvider operations and Workspace discovery run through one instance-local FIFO Promise queue. Pure metadata/entity reads and `getFolder()` execute independently, so active Tab reads do not wait behind background Explorer layer restoration. Workspace discovery remains queued because it removes orphan Drafts; init/dispose remain queued lifecycle mutations. `getFolder()` may synchronously persist reconciled order metadata as part of its atomic filesystem section, but it does not enter the background mutation queue. A rejected queued mutation does not block later mutations.
 - Workspaces are directories. `__workspace__.mh` stores tabs, the temporary preview Tab ID, layout, and opaque consumer-owned `data`; every TreeView folder owns `__folder__.mh`, and items use `<name>.mh`. Tab paths are Workspace-relative in both persisted records and Workspace property RPC payloads. The provider validates and reads/writes them unchanged; absolute-path conversion belongs to the renderer. `.mh` content remains strict JSON. Workspace structural reads exclude `data`, and property updates preserve it.

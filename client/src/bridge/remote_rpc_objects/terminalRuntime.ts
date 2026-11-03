@@ -13,17 +13,7 @@ export async function createTerminalRuntime(
     peer,
     "TerminalServerRpcApi",
   );
-  const notifierRegisterName = crypto.randomUUID();
-  const router = BridgeRouter.getRouter();
-  router.registerRemoteObj(
-    notifierRegisterName,
-    (): TerminalClientRpcApi => notifier,
-  );
-  try {
-    await runtime.init(notifierRegisterName);
-  } finally {
-    router.unregisterRemoteObj(notifierRegisterName);
-  }
+  await runtime.init(BridgeRouter.returnRemoteObj(notifier));
   return runtime;
 }
 

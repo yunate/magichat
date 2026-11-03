@@ -5,24 +5,13 @@ import type {
   TreeViewDataProvider,
 } from "../../../../common/treeView";
 
-export function createTreeViewDataProvider(
+export async function createTreeViewDataProvider(
   peer: BridgePeer,
-): Promise<RemoteObject<TreeViewDataProvider>> {
-  return BridgeRouter.createRemoteObj<TreeViewDataProvider>(peer, "TreeViewDataProvider");
-}
-
-export async function initializeTreeViewDataNotifier(
-  provider: RemoteObject<TreeViewDataProvider>,
   notifier: TreeViewDataNotifierClientRpcApi,
-): Promise<void> {
-  const registerName = crypto.randomUUID();
-  const router = BridgeRouter.getRouter();
-  router.registerRemoteObj(registerName, (): TreeViewDataNotifierClientRpcApi => notifier);
-  try {
-    await provider.init(registerName);
-  } finally {
-    router.unregisterRemoteObj(registerName);
-  }
+): Promise<RemoteObject<TreeViewDataProvider>> {
+  const provider = await BridgeRouter.createRemoteObj<TreeViewDataProvider>(peer, "TreeViewDataProvider");
+  await provider.init(BridgeRouter.returnRemoteObj(notifier));
+  return provider;
 }
 
 export async function destroyTreeViewDataProvider(

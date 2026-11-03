@@ -5,28 +5,21 @@ import type {
   TerminateProcessTreeResult,
 } from "../../../../common/fileOccupancy";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
-import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import { gUacBrokerService } from "../uacBroker/uacBrokerService";
 import type { FileOccupancyOperation } from "./fileOccupancyService";
 
 export class FileOccupancyRpcObject implements FileOccupancyServerRpcApi {
   public constructor(peer: BridgePeer) {
-    this._peer = peer;
     peer.onDisconnect(() => {
       void this._activeOperation?.cancel().catch((): void => undefined);
       this._activeOperation = null;
     });
   }
 
-  public async init(notifierRegisterName: string): Promise<void> {
+  public async init(notifier: RemoteObject<FileOccupancyClientRpcApi>): Promise<void> {
     if (this._notifier !== null) throw new Error("File occupancy API is already initialized");
-    if (typeof notifierRegisterName !== "string" || notifierRegisterName.trim().length === 0) {
-      throw new Error("File occupancy notifier name is invalid");
-    }
-    this._notifier = await BridgeRouter.createRemoteObj<FileOccupancyClientRpcApi>(
-      this._peer,
-      notifierRegisterName,
-    );
+    this._notifier = notifier;
   }
 
   public async startQuery(target: string): Promise<void> {
@@ -86,7 +79,6 @@ export class FileOccupancyRpcObject implements FileOccupancyServerRpcApi {
     return this._notifier;
   }
 
-  private readonly _peer: BridgePeer;
   private _notifier: RemoteObject<FileOccupancyClientRpcApi> | null = null;
   private _activeOperation: FileOccupancyOperation | null = null;
   private _isStartingQuery = false;

@@ -9,7 +9,7 @@ import type {
   TerminateProcessTreeResult,
 } from "../../../../common/fileOccupancy";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
-import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
 
 type QueryOperation = {
   child: ChildProcess | null;
@@ -23,18 +23,13 @@ type ProcessRecord = Partial<Record<
 
 export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
   public constructor(peer: BridgePeer, nativeToolsPath: string) {
-    this._peer = peer;
     this._executablePath = path.join(nativeToolsPath, "ddwhouses", "bin", "ddwhouses.exe");
     peer.onDisconnect(() => this._cancelAll());
   }
 
-  public async init(notifierRegisterName: string): Promise<void> {
+  public async init(notifier: RemoteObject<FileOccupancyUacClientRpcApi>): Promise<void> {
     if (this._notifier !== null) throw new Error("File occupancy UAC API is already initialized");
-    FileOccupancyUacRpcObject._ensureNonBlankString(notifierRegisterName, "Notifier name is invalid");
-    this._notifier = await BridgeRouter.createRemoteObj<FileOccupancyUacClientRpcApi>(
-      this._peer,
-      notifierRegisterName,
-    );
+    this._notifier = notifier;
   }
 
   public startQuery(operationId: string, target: string): void {
@@ -343,7 +338,6 @@ export class FileOccupancyUacRpcObject implements FileOccupancyUacServerRpcApi {
   private static readonly _MAX_OUTPUT_LENGTH = 4 * 1024 * 1024;
   private static readonly _MAX_ERROR_LENGTH = 64 * 1024;
   private static readonly _MAX_PROCESS_CHECK_COUNT = 4096;
-  private readonly _peer: BridgePeer;
   private readonly _executablePath: string;
   private readonly _operations = new Map<string, QueryOperation>();
   private _notifier: RemoteObject<FileOccupancyUacClientRpcApi> | null = null;

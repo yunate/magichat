@@ -22,7 +22,7 @@ export class RpcObjectRegistry {
   public static register(router: BridgeRouter): void {
     router.registerRemoteObj(
       "TreeViewDataProvider",
-      (peer): TreeViewDataProvider => new LocalTreeViewDataProvider(peer),
+      (): TreeViewDataProvider => new LocalTreeViewDataProvider(),
     );
     router.registerRemoteObj(
       "CommandStorageServerRpcApi",

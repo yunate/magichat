@@ -16,7 +16,7 @@ export type TerminalRunRequest = Readonly<{
 }>;
 
 export interface TerminalServerRpcApi {
-  init(notifierRegisterName: string): Promise<void>;
+  init(notifier: TerminalClientRpcApi): Promise<void>;
   createPty(
     terminalType: TerminalType,
     columns: number,

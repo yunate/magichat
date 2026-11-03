@@ -44,14 +44,10 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     });
   }
 
-  public init(notifierRegisterName: string): Promise<void> {
-    return this._enqueue(async () => {
+  public init(notifier: RemoteObject<TerminalClientRpcApi>): Promise<void> {
+    return this._enqueue(() => {
       if (this._isInitialized) return;
-      ValidateUtils.ensureNonBlankString(notifierRegisterName);
-      this._notifier = await BridgeRouter.createRemoteObj<TerminalClientRpcApi>(
-        this._peer,
-        notifierRegisterName,
-      );
+      this._notifier = notifier;
       this._isInitialized = true;
     });
   }

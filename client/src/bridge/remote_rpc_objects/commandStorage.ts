@@ -1,5 +1,4 @@
 import type {
-  CommandClientRpcApi,
   CommandStorageServerRpcApi,
 } from "../../../../common/command";
 import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
@@ -12,20 +11,6 @@ export function createCommandStorageServerRpcObject(
     peer,
     "CommandStorageServerRpcApi",
   );
-}
-
-export async function initializeCommandClient(
-  commandStorage: RemoteObject<CommandStorageServerRpcApi>,
-  client: CommandClientRpcApi,
-): Promise<void> {
-  const registerName = crypto.randomUUID();
-  const router = BridgeRouter.getRouter();
-  router.registerRemoteObj(registerName, (): CommandClientRpcApi => client);
-  try {
-    await commandStorage.init(registerName);
-  } finally {
-    router.unregisterRemoteObj(registerName);
-  }
 }
 
 export function disposeCommandClient(

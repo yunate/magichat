@@ -28,11 +28,8 @@ import type {
   TreeViewFolder,
   TreeViewItem,
 } from "../../../../../../common/treeView";
-import type { RemoteObject } from "../../../../../../common/ipc_bridge/rpc";
-import {
-  disposeCommandClient,
-  initializeCommandClient,
-} from "../../../../bridge/remote_rpc_objects/commandStorage";
+import { BridgeRouter, type RemoteObject } from "../../../../../../common/ipc_bridge/rpc";
+import { disposeCommandClient } from "../../../../bridge/remote_rpc_objects/commandStorage";
 import {
   confirmActionDialog,
   confirmDialog,
@@ -158,9 +155,8 @@ onUnmounted(() => {
 async function initialize(): Promise<void> {
   currentConfig.value = await gCommandSettings.getConfig();
   commandStorage = await gMainApplication.window.getCommandStorageServerRpcObject();
-  await initializeCommandClient(
-    commandStorage,
-    new CommandClientRpcObject(setEnv, call, getEnv),
+  await commandStorage.init(
+    BridgeRouter.returnRemoteObj(new CommandClientRpcObject(setEnv, call, getEnv)),
   );
   const activeRoot = currentConfig.value.roots.find(
     (root) => root.key === currentConfig.value.activeRootKey,

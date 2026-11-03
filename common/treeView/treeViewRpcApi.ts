@@ -18,7 +18,7 @@ export interface TreeViewDataNotifierClientRpcApi {
 }
 
 export interface TreeViewDataProvider {
-  init(notifierRegisterName: string): Promise<void>;
+  init(notifier: TreeViewDataNotifierClientRpcApi): Promise<void>;
   dispose(): Promise<void>;
   getWorkspaces(rootPath: string): Promise<string[]>;
   getWorkspaceProperties(workspacePath: string): Promise<TreeViewWorkspace>;

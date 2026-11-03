@@ -58,17 +58,7 @@ export class FileOccupancyService implements FileOccupancyUacClientRpcApi {
       this._peer,
       "FileOccupancyUacServerRpcApi",
     );
-    const notifierRegisterName = randomUUID();
-    const router = BridgeRouter.getRouter();
-    router.registerRemoteObj(
-      notifierRegisterName,
-      (): FileOccupancyUacClientRpcApi => this,
-    );
-    try {
-      await remoteObject.init(notifierRegisterName);
-    } finally {
-      router.unregisterRemoteObj(notifierRegisterName);
-    }
+    await remoteObject.init(BridgeRouter.returnRemoteObj(this));
     this._remoteObject = remoteObject;
   }
 

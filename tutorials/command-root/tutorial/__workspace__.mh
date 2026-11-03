@@ -5,81 +5,8 @@
       "sidebarWidth": 342
     }
   },
-  "tabs": [
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000011",
-      "path": "set-env/ps1-mhsetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000012",
-      "path": "set-env/cmd-mhsetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "folder",
-      "id": "10000000-0000-4000-8000-000000000003",
-      "path": "targets",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000014",
-      "path": "set-env/py-mhsetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000016",
-      "path": "call/test-ps-call.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "521a4edb-c0dc-43a6-a45b-d84ddddefcbf",
-      "path": "get-env/ps1-mhgetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "0ec7cf16-87fc-48d0-b59e-a1104774593b",
-      "path": "get-env/cmd-mhgetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "6defa06e-5707-4b35-93b0-b86f0390678b",
-      "path": "get-env/node-mhgetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "35e031f0-a92f-4871-aa83-6d5612f06a7d",
-      "path": "get-env/py-mhgetenv.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000017",
-      "path": "call/test-cmd-call.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000018",
-      "path": "call/test-node-call.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000019",
-      "path": "call/test-py-call.mh",
-      "isPinned": false
-    }
-  ],
-  "activeTabId": "10000000-0000-4000-8000-000000000019",
+  "tabs": [],
+  "activeTabId": null,
   "previewTabId": null,
   "data": {
     "selectedEnvGroupId": "de4f2968-ebec-4456-898b-bad45ad19f8d",

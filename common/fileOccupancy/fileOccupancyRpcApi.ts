@@ -5,7 +5,7 @@ import type {
 } from "./fileOccupancyTypes";
 
 export interface FileOccupancyServerRpcApi {
-  init(notifierRegisterName: string): Promise<void>;
+  init(notifier: FileOccupancyClientRpcApi): Promise<void>;
   startQuery(target: string): Promise<void>;
   cancelQuery(): Promise<void>;
   getExistingProcessIds(processIds: readonly number[]): Promise<readonly number[]>;
@@ -18,7 +18,7 @@ export interface FileOccupancyClientRpcApi {
 }
 
 export interface FileOccupancyUacServerRpcApi {
-  init(notifierRegisterName: string): Promise<void>;
+  init(notifier: FileOccupancyUacClientRpcApi): Promise<void>;
   startQuery(operationId: string, target: string): void;
   cancelQuery(operationId: string): void;
   getExistingProcessIds(processIds: readonly number[]): readonly number[];

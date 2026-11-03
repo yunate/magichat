@@ -13,17 +13,7 @@ export async function createFileOccupancyServerRpcObject(
     peer,
     "FileOccupancyServerRpcApi",
   );
-  const notifierRegisterName = globalThis.crypto.randomUUID();
-  const router = BridgeRouter.getRouter();
-  router.registerRemoteObj(
-    notifierRegisterName,
-    (): FileOccupancyClientRpcApi => notifier,
-  );
-  try {
-    await remoteObject.init(notifierRegisterName);
-  } finally {
-    router.unregisterRemoteObj(notifierRegisterName);
-  }
+  await remoteObject.init(BridgeRouter.returnRemoteObj(notifier));
   return remoteObject;
 }
 

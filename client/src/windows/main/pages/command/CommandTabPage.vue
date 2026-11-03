@@ -659,7 +659,7 @@ async function prepareTerminalForRun(
   terminalApi: TerminalExposed,
   scriptType: ScriptType,
 ): Promise<boolean> {
-  if (!await terminalApi.isActive()) {
+  if (!terminalApi.hasConnectedPty) {
     const isCreated = await runWithOperationProgress("Preparing Terminal...", async () => {
       await terminalApi.initialize();
       if (!await createTerminalPty(terminalApi, toTerminalType(scriptType))) return false;
@@ -699,7 +699,7 @@ async function openHandler(): Promise<void> {
     const terminalApi = terminal.value;
     if (terminalApi === null) throw new Error("Terminal is unavailable");
     await runWithOperationProgress("Opening Terminal...", async () => {
-      if (await terminalApi.isActive()) return;
+      if (terminalApi.hasConnectedPty) return;
       await terminalApi.initialize();
       if (!await createTerminalPty(terminalApi, toTerminalType(getItemDraft().data.scriptType))) return;
       isTerminalActive.value = true;
@@ -723,18 +723,14 @@ async function closeHandler(): Promise<void> {
   }
 }
 
-async function terminalErrorHandler(message: string): Promise<void> {
+function terminalErrorHandler(message: string): void {
   reportTerminalError(message);
   const terminalApi = terminal.value;
   if (terminalApi === null) {
     isTerminalActive.value = false;
     return;
   }
-  try {
-    isTerminalActive.value = await terminalApi.isActive();
-  } catch (reason: unknown) {
-    reportTerminalError(errorMessage(reason));
-  }
+  isTerminalActive.value = terminalApi.hasConnectedPty;
 }
 
 async function clearHandler(): Promise<void> {
@@ -791,7 +787,7 @@ async function scriptTypeChangeHandler(value: string): Promise<void> {
     return;
   }
   try {
-    if (await terminalApi.isActive()) {
+    if (terminalApi.hasConnectedPty) {
       const action = await confirmActionDialog({
         title: "Close active Terminal?",
         descriptions: ["The active Terminal must close before changing its type."],

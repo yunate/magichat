@@ -25,7 +25,7 @@ Vue 3, Vite, and TypeScript Electron renderer. Electron loads the production bui
 - [`src/messages/`](src/messages/AI_CONTEXT.md) owns browser-local notifications.
 - [`src/components/treeView/`](src/components/treeView/AI_CONTEXT.md) owns the reusable TreeView state model, controller, operations, overlay slots, Explorer, tabs, and layout.
 - [`src/components/textEdit/`](src/components/textEdit/AI_CONTEXT.md) owns the reusable Macro parameter and optional multiline text editor.
-- [`src/components/terminal/`](src/components/terminal/AI_CONTEXT.md) owns the lazy xterm.js surface and its per-instance Terminal runtime proxy.
+- [`src/components/terminal/`](src/components/terminal/AI_CONTEXT.md) owns the lazy xterm.js surface and its per-PTY proxy, created through the Window's cached Terminal Service proxy.
 - [`src/bridge/`](src/bridge/AI_CONTEXT.md) owns the renderer connection and semantic RPC boundaries.
 
 ## Boundaries

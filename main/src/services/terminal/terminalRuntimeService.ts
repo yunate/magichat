@@ -1,30 +1,27 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { IDisposable, IPty } from "node-pty";
-import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
-import { isScriptType, type ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
+import type { ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
 import {
-  isTerminalType,
+  terminalPtyOptionsSerializer,
+  terminalRunRequestSerializer,
   type TerminalClientRpcApi,
-  type TerminalPtyInfo,
+  type TerminalPtyOptions,
   type TerminalRunRequest,
-  type TerminalServerRpcApi,
+  type TerminalRuntimeServiceApi,
   type TerminalType,
 } from "../../../../common/terminal";
-import { TreeViewPath } from "../../../../common/treeView";
 import { ValidateUtils } from "../../../../common/validator";
-import { PathUtil } from "../../utils/pathUtil";
 import { createScriptExecution } from "../scriptExecution";
-import type { Pty } from "./pty";
-import { gPtyFactory } from "./ptyFactory";
-import { resolveTerminalInitialPath } from "./terminalInitialPath";
-import { gTerminalRuntimeManager } from "./terminalRuntimeManager";
+import { gPtyFactory, TERMINAL_TEMPORARY_DIRECTORY } from "./ptyFactory";
+import type { RpcPty } from "./rpcPty";
 
-const MAX_COLUMNS = 1000;
-const MAX_ROWS = 500;
-const MAX_INPUT_LENGTH = 1024 * 1024;
-const SCRIPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+type TerminalRuntime = Readonly<{
+  rpcPty: RpcPty;
+  callback: RemoteObject<TerminalClientRpcApi>;
+  terminalType: TerminalType;
+  temporaryFiles: Set<string>;
+}>;
 
 type PreparedRun = Readonly<{
   scriptType: ScriptType;
@@ -32,251 +29,78 @@ type PreparedRun = Readonly<{
   commandPath: string;
 }>;
 
-export class TerminalRuntimeService implements TerminalServerRpcApi {
-  public constructor(peer: BridgePeer) {
-    this._peer = peer;
-    gTerminalRuntimeManager.add(this);
-    peer.onDisconnect(() => {
-      void this.dispose().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[terminal] disconnect cleanup failed: ${message}`);
-      });
-    });
+export class TerminalRuntimeService implements TerminalRuntimeServiceApi {
+  public async disposeAll(): Promise<void> {
+    for (const terminalId of [...this._runtimes.keys()]) await this.destroy(terminalId);
   }
 
-  public init(notifier: RemoteObject<TerminalClientRpcApi>): Promise<void> {
-    return this._enqueue(() => {
-      if (this._isInitialized) return;
-      this._notifier = notifier;
-      this._isInitialized = true;
-    });
+  public async destroy(terminalId: string): Promise<void> {
+    ValidateUtils.ensureNonBlankString(terminalId);
+    const runtime = this._runtimes.get(terminalId);
+    if (runtime === undefined) return;
+    await runtime.rpcPty.kill();
+    await BridgeRouter.destroyRemoteObj(runtime.callback);
+    await Promise.all([...runtime.temporaryFiles].map(
+      (filePath) => this._deleteTemporaryFile(runtime.temporaryFiles, filePath),
+    ));
+    this._runtimes.delete(terminalId);
   }
 
-  public isOwnedBy(peer: BridgePeer): boolean {
-    return this._peer === peer;
-  }
-
-  public getTerminalId(): string | null {
-    return this._pty?.terminalId ?? null;
-  }
-
-  public createPty(
-    terminalType: TerminalType,
-    columns: number,
-    rows: number,
-    initialPath: string,
-  ): Promise<TerminalPtyInfo> {
-    return this._enqueue(async () => {
-      this._ensureInitialized();
-      this._ensureTerminalType(terminalType);
-      this._ensureDimensions(columns, rows);
-      const resolvedInitialPath = resolveTerminalInitialPath(initialPath);
-      try {
-        await fs.mkdir(resolvedInitialPath, { recursive: true });
-        PathUtil.ensureFolderExist(resolvedInitialPath);
-      } catch (reason: unknown) {
-        const message = reason instanceof Error ? reason.message : String(reason);
-        throw new Error(
-          `Terminal initial folder could not be created. Path: ${JSON.stringify(resolvedInitialPath)}. Reason: ${message}`,
-        );
-      }
-      if (this._isActive()) throw new Error("Terminal is already active");
-      this._terminalType = terminalType;
-      return this._createPty(columns, rows, resolvedInitialPath);
-    });
-  }
-
-  public run(request: TerminalRunRequest): Promise<void> {
-    return this._enqueue(async () => {
-      this._ensureInitialized();
-      this._validateRunRequest(request);
-      if (!this._isActive()) throw new Error("Terminal is not active");
-      const preparedRun = await this._prepareRun(request);
-      const invocation = `${this._createRunInvocation(preparedRun)}\r`;
-      const pty = this._requirePty();
-      pty.write(invocation);
-    });
-  }
-
-  public prepareRun(request: TerminalRunRequest): Promise<string> {
-    return this._enqueue(async () => {
-      this._ensureInitialized();
-      this._validateRunRequest(request);
-      if (!this._isActive()) throw new Error("Terminal is not active");
-      const preparedRun = await this._prepareRun(request);
-      return `${preparedRun.scriptType}|${preparedRun.scriptPath}|${preparedRun.commandPath}`;
-    });
-  }
-
-  public stop(): Promise<void> {
-    return this._enqueue(() => {
-      if (!this._isActive()) return;
-      this._requirePty().write("\x03");
-    });
-  }
-
-  public destroyPty(): Promise<void> {
-    return this._enqueue(() => {
-      this._disposePty();
-    });
-  }
-
-  public isActive(): Promise<boolean> {
-    return this._enqueue(() => this._isActive());
-  }
-
-  public clear(): Promise<void> {
-    return this._enqueue(() => {
-      if (!this._isActive()) return;
-      this._requirePty().clear();
-    });
-  }
-
-  public write(data: string): Promise<void> {
-    return this._enqueue(() => {
-      this._ensureInitialized();
-      ValidateUtils.ensureString(data);
-      if (data.length > MAX_INPUT_LENGTH) throw new Error("Terminal input is too large");
-      this._requirePty().write(data);
-    });
-  }
-
-  public resize(columns: number, rows: number): Promise<void> {
-    return this._enqueue(() => {
-      this._ensureDimensions(columns, rows);
-      if (!this._isActive()) return;
-      this._requirePty().resize(columns, rows);
-    });
-  }
-
-  public dispose(): Promise<void> {
-    return this._enqueue(async () => {
-      if (this._isDisposed) return;
-      this._isDisposed = true;
-      this._disposePty();
-      const notifier = this._notifier;
-      this._notifier = null;
-      if (notifier !== null && this._peer.isConnected()) {
-        await BridgeRouter.destroyRemoteObj(notifier);
-      }
-      await this._deleteTemporaryFiles();
-      gTerminalRuntimeManager.remove(this);
-    });
-  }
-
-  private _enqueue<TResult>(operation: () => Promise<TResult> | TResult): Promise<TResult> {
-    const result = this._queue.then(operation, operation);
-    this._queue = result.then(() => undefined, () => undefined);
-    return result;
-  }
-
-  private async _createPty(
-    columns: number,
-    rows: number,
-    initialPath: string,
-  ): Promise<TerminalPtyInfo> {
-    const terminalType = this._terminalType;
-    if (terminalType === null) throw new Error("Terminal type is not configured");
-    const { pty, info } = await gPtyFactory.create(terminalType, {
-      columns,
-      rows,
-      initialPath,
-    });
-    this._pty = pty;
-    this._dataSubscription = pty.onData((data) => this._onPtyData(data));
-    this._exitSubscription = pty.onExit(() => this._onPtyExit(pty));
-    return info;
-  }
-
-  private _disposePty(): void {
-    const pty = this._pty;
-    this._pty = null;
-    this._dataSubscription?.dispose();
-    this._exitSubscription?.dispose();
-    this._dataSubscription = null;
-    this._exitSubscription = null;
-    if (pty !== null) pty.kill();
-  }
-
-  private _onPtyData(data: string): void {
-    this._notifyOutput(data);
-  }
-
-  private _onPtyExit(pty: IPty): void {
-    if (this._pty !== pty) return;
-    this._pty = null;
-    this._dataSubscription?.dispose();
-    this._exitSubscription?.dispose();
-    this._dataSubscription = null;
-    this._exitSubscription = null;
-    this._notifyRuntimeError("Terminal process exited unexpectedly");
-  }
-
-  private _notifyOutput(data: string): void {
-    const notifier = this._notifier;
-    if (notifier === null || !this._isNotifierEnabled) return;
-    void notifier.output(data).catch((error: unknown) => this._disableNotifier(error));
-  }
-
-  private _notifyRuntimeError(message: string): void {
-    const notifier = this._notifier;
-    if (notifier === null || !this._isNotifierEnabled) return;
-    void notifier.runtimeError(message).catch((error: unknown) => this._disableNotifier(error));
-  }
-
-  private _disableNotifier(error: unknown): void {
-    if (!this._isNotifierEnabled) return;
-    this._isNotifierEnabled = false;
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[terminal] renderer notification failed: ${message}`);
-  }
-
-  private _isActive(): boolean {
-    return this._pty !== null;
-  }
-
-  private _requirePty(): IPty {
-    const pty = this._pty;
-    if (pty === null) throw new Error("Terminal is not active");
-    return pty;
-  }
-
-  private _ensureInitialized(): void {
-    if (!this._isInitialized || this._isDisposed) {
-      throw new Error("Terminal is not initialized");
+  public async clearTemporaryDirectory(): Promise<void> {
+    try {
+      await fs.rm(TERMINAL_TEMPORARY_DIRECTORY, { recursive: true, force: true });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[terminal] failed to remove temporary directory: ${message}`);
     }
   }
 
-  private _ensureTerminalType(value: unknown): asserts value is TerminalType {
-    if (!isTerminalType(value)) throw new Error("Terminal type is invalid");
+  public async run(terminalId: string, request: TerminalRunRequest): Promise<void> {
+    const runtime = this._requireRuntime(terminalId);
+    terminalRunRequestSerializer.validate(request);
+    const preparedRun = await this._prepareRun(runtime, request);
+    await runtime.rpcPty.write(`${this._createRunInvocation(runtime.terminalType, preparedRun)}\r`);
   }
 
-  private _ensureDimensions(columns: unknown, rows: unknown): void {
-    if (!Number.isSafeInteger(columns) || typeof columns !== "number" || columns < 1 || columns > MAX_COLUMNS) {
-      throw new Error("Terminal columns are invalid");
+  public async prepareRun(terminalId: string, request: TerminalRunRequest): Promise<string> {
+    const runtime = this._requireRuntime(terminalId);
+    terminalRunRequestSerializer.validate(request);
+    const preparedRun = await this._prepareRun(runtime, request);
+    return `${preparedRun.scriptType}|${preparedRun.scriptPath}|${preparedRun.commandPath}`;
+  }
+
+  public async create(
+    options: TerminalPtyOptions,
+    callback: RemoteObject<TerminalClientRpcApi>,
+  ): Promise<RpcPty> {
+    terminalPtyOptionsSerializer.validate(options);
+    const rpcPty = await gPtyFactory.create(options.terminalType, options, callback);
+    const terminalId = await rpcPty.getTerminalId();
+    const temporaryFiles = new Set<string>();
+    this._runtimes.set(terminalId, {
+      rpcPty,
+      callback,
+      terminalType: options.terminalType,
+      temporaryFiles,
+    });
+    return BridgeRouter.returnRemoteObj(rpcPty);
+  }
+
+  private _requireRuntime(terminalId: string): TerminalRuntime {
+    ValidateUtils.ensureNonBlankString(terminalId);
+    const runtime = this._runtimes.get(terminalId);
+    if (runtime === undefined) {
+      throw new Error("Terminal runtime does not exist");
     }
-    if (!Number.isSafeInteger(rows) || typeof rows !== "number" || rows < 1 || rows > MAX_ROWS) {
-      throw new Error("Terminal rows are invalid");
-    }
+    return runtime;
   }
 
-  private _validateRunRequest(value: unknown): asserts value is TerminalRunRequest {
-    ValidateUtils.ensureRecord(value);
-    ValidateUtils.ensureNonBlankString(value.scriptId);
-    if (!SCRIPT_ID_PATTERN.test(value.scriptId)) throw new Error("Terminal script ID must be a UUID v4");
-    ValidateUtils.ensureNonBlankString(value.commandPath);
-    TreeViewPath.normalize(value.commandPath, "Terminal Command path");
-    if (!isScriptType(value.scriptType)) throw new Error("Script type is invalid");
-    ValidateUtils.ensureString(value.scriptContent);
-    if (value.scriptContent.length > MAX_INPUT_LENGTH) throw new Error("Script content is too large");
-  }
-
-  private async _prepareRun(request: TerminalRunRequest): Promise<PreparedRun> {
-    await fs.mkdir(gTerminalRuntimeManager.temporaryDirectory, { recursive: true });
-    const basePath = path.join(gTerminalRuntimeManager.temporaryDirectory, request.scriptId);
+  private async _prepareRun(runtime: TerminalRuntime, request: TerminalRunRequest): Promise<PreparedRun> {
+    await fs.mkdir(TERMINAL_TEMPORARY_DIRECTORY, { recursive: true });
+    const basePath = path.join(TERMINAL_TEMPORARY_DIRECTORY, request.scriptId);
     const execution = createScriptExecution(request.scriptType, request.scriptContent, basePath);
     const scriptPath = `${basePath}${execution.extension}`;
-    await this._writeTemporaryFile(scriptPath, execution.content);
+    await this._writeTemporaryFile(runtime.temporaryFiles, scriptPath, execution.content);
     return {
       scriptType: request.scriptType,
       scriptPath,
@@ -284,8 +108,8 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     };
   }
 
-  private _createRunInvocation(preparedRun: PreparedRun): string {
-    if (this._terminalType === "cmd") {
+  private _createRunInvocation(terminalType: TerminalType, preparedRun: PreparedRun): string {
+    if (terminalType === "cmd") {
       return `call mhrun ${preparedRun.scriptType} ${this._quoteCmdArgument(preparedRun.scriptPath)} ${this._quoteCmdArgument(preparedRun.commandPath)}`;
     }
     return `mhrun ${preparedRun.scriptType} ${this._quotePowerShellArgument(preparedRun.scriptPath)} ${this._quotePowerShellArgument(preparedRun.commandPath)}`;
@@ -299,7 +123,7 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
     return `'${value.replace(/'/g, "''")}'`;
   }
 
-  private async _writeTemporaryFile(filePath: string, content: string): Promise<void> {
+  private async _writeTemporaryFile(temporaryFiles: Set<string>, filePath: string, content: string): Promise<void> {
     let existingContent: string | null = null;
     try {
       existingContent = await fs.readFile(filePath, "utf8");
@@ -307,32 +131,20 @@ export class TerminalRuntimeService implements TerminalServerRpcApi {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
     if (existingContent !== content) await fs.writeFile(filePath, content, "utf8");
-    this._temporaryFiles.add(filePath);
+    temporaryFiles.add(filePath);
   }
 
-  private async _deleteTemporaryFile(filePath: string): Promise<void> {
+  private async _deleteTemporaryFile(temporaryFiles: Set<string>, filePath: string): Promise<void> {
     try {
       await fs.rm(filePath, { force: true });
-      this._temporaryFiles.delete(filePath);
+      temporaryFiles.delete(filePath);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[terminal] failed to remove temporary file: ${message}`);
     }
   }
 
-  private async _deleteTemporaryFiles(): Promise<void> {
-    await Promise.all([...this._temporaryFiles].map((filePath) => this._deleteTemporaryFile(filePath)));
-  }
-
-  private readonly _peer: BridgePeer;
-  private readonly _temporaryFiles = new Set<string>();
-  private _queue: Promise<void> = Promise.resolve();
-  private _notifier: RemoteObject<TerminalClientRpcApi> | null = null;
-  private _pty: Pty | null = null;
-  private _dataSubscription: IDisposable | null = null;
-  private _exitSubscription: IDisposable | null = null;
-  private _terminalType: TerminalType | null = null;
-  private _isNotifierEnabled = true;
-  private _isInitialized = false;
-  private _isDisposed = false;
+  private readonly _runtimes = new Map<string, TerminalRuntime>();
 }
+
+export const gTerminalRuntimeService = new TerminalRuntimeService();

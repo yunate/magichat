@@ -7,6 +7,7 @@ import {
 import type { ConfigServerRpcApi } from "../../../common/config/configRpcApi";
 import type { CommandStorageServerRpcApi } from "../../../common/command";
 import type { TasksServerRpcApi } from "../../../common/tasks/tasksRpcApi";
+import type { TerminalRuntimeServiceApi } from "../../../common/terminal";
 import type { ThemeServerRpcApi } from "../../../common/theme/themeRpcApi";
 import type { UpdateServerRpcApi } from "../../../common/update/updateRpcApi";
 import type { WindowServerRpcApi } from "../../../common/window/windowRpcApi";
@@ -14,6 +15,7 @@ import { BridgeRouter, type RemoteObject } from "../../../common/ipc_bridge/rpc"
 import {
   createConfigServerRpcObject,
   createTasksServerRpcObject,
+  getTerminalRuntimeService,
   createThemeServerRpcObject,
   createUpdateServerRpcObject,
   createWindowServerRpcObject,
@@ -60,6 +62,11 @@ export class Window {
       throw new Error("Window bridge is not initialized");
     }
     return this._tasksServerRpcObject;
+  }
+
+  public getTerminalRuntimeService(): Promise<RemoteObject<TerminalRuntimeServiceApi>> {
+    this._terminalRuntimeService ??= getTerminalRuntimeService(this.getPeer());
+    return this._terminalRuntimeService;
   }
 
   public getThemeServerRpcObject(): Promise<RemoteObject<ThemeServerRpcApi>> {
@@ -111,6 +118,7 @@ export class Window {
   private _configServerRpcObject: Promise<RemoteObject<ConfigServerRpcApi>> | null = null;
   private _commandStorageServerRpcObject: Promise<RemoteObject<CommandStorageServerRpcApi>> | null = null;
   private _tasksServerRpcObject: Promise<RemoteObject<TasksServerRpcApi>> | null = null;
+  private _terminalRuntimeService: Promise<RemoteObject<TerminalRuntimeServiceApi>> | null = null;
   private _themeServerRpcObject: Promise<RemoteObject<ThemeServerRpcApi>> | null = null;
   private _updateServerRpcObject: Promise<RemoteObject<UpdateServerRpcApi>> | null = null;
   private _windowServerRpcObject: Promise<RemoteObject<WindowServerRpcApi>> | null = null;

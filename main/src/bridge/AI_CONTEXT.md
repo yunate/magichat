@@ -5,6 +5,7 @@ Registers main RPC objects and creates connection-scoped renderer event proxies.
 ## Structure
 
 - `rpc_object_registry/` registers `gConfigManager`, `gThemeManager`, `gTaskManager`, `gUpdateService`, and the Window owned by the caller's bridge peer.
+- Terminal registration uses `TerminalRuntimeServiceApi` and directly returns `gTerminalRuntimeService`, which implements that interface. Its `create()` returns `RpcPty` references; individual PTYs have no registered factory, and the Service has no peer binding or connection lifecycle state.
 - `remote_rpc_objects/` contains TaskEvents and Window client proxy factories. Each Window holds its proxy Promises; Task broadcasts retain per-window error isolation, while Window close requests return control to the renderer's standard close flow.
 - Task service behavior is documented in [`../services/tasks/AI_CONTEXT.md`](../services/tasks/AI_CONTEXT.md).
 

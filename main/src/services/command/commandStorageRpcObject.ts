@@ -15,7 +15,7 @@ import type { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import { gApplicationPaths } from "../../infra/applicationPaths";
 import { gConfigManager } from "../../infra/configManager";
-import { resolveTerminalInitialPath } from "../terminal/terminalInitialPath";
+import { gPtyFactory } from "../terminal/ptyFactory";
 
 export class CommandStorageRpcObject implements CommandStorageServerRpcApi {
   public constructor(peer: BridgePeer) {
@@ -54,7 +54,7 @@ export class CommandStorageRpcObject implements CommandStorageServerRpcApi {
   }
 
   public resolveTerminalInitialPath(initialPath: string): string {
-    return resolveTerminalInitialPath(initialPath);
+    return gPtyFactory.resolveInitialPath(initialPath);
   }
 
   public revealStorage(rootPath: string): void {

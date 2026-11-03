@@ -5,14 +5,10 @@ import { Terminal as XtermTerminal, type IDisposable, type ITheme } from "@xterm
 import { nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import type { CSSProperties } from "vue";
 import { FunnelTask } from "../../../../common/funnelTask";
-import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
-import type { TerminalRunRequest, TerminalServerRpcApi, TerminalType } from "../../../../common/terminal";
+import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import { terminalDimensionsSerializer, type PtyApi, type TerminalRunRequest, type TerminalRuntimeServiceApi, type TerminalType } from "../../../../common/terminal";
 import { confirmActionDialog } from "../confirmDialog";
 import FindBar from "../FindBar.vue";
-import {
-  createTerminalRuntime,
-  destroyTerminalRuntime,
-} from "../../bridge/remote_rpc_objects/terminalRuntime";
 import { gMainApplication } from "../../windows/main/main";
 import { registerThemeChangeHandler } from "../../windows/main/themes/theme";
 import type { PopupToastHandle } from "../popupToast";
@@ -36,6 +32,7 @@ const container = useTemplateRef<HTMLDivElement>("container");
 const scrollbarTrack = useTemplateRef<HTMLDivElement>("scrollbarTrack");
 const findBar = useTemplateRef<{ focus: () => void }>("findBar");
 const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
+const hasConnectedPty = ref(false);
 const hasScrollableContent = ref(false);
 const scrollbarThumbStyle = ref<CSSProperties>({});
 const scrollbarValueNow = ref(0);
@@ -57,7 +54,7 @@ const runningCheckFunnelTask = new FunnelTask(() => {
 function initialize(): Promise<void> {
   return enqueue(async () => {
     initializeXterm();
-    await initializeRuntime();
+    await initializeRuntimeService();
   });
 }
 
@@ -68,24 +65,36 @@ function createPty(
   requestedRunningStatusChangeCallback?: ((isRunning: boolean) => void) | null,
 ): Promise<void> {
   return enqueue(async () => {
-    if (activeTerminalType !== null) return;
+    if (hasConnectedPty.value) return;
     const terminal = requireXterm();
+    if (pty !== null) {
+      await requireRuntimeService().destroy(await pty.getTerminalId());
+      await BridgeRouter.destroyRemoteObj(pty);
+    }
+    pty = null;
+    terminalId = null;
     const dimensions = getDimensions();
-    const ptyInfo = await requireRuntime().createPty(
+    let hasExited = false;
+    const notifier = createNotifier(() => { hasExited = true; });
+    terminalNotifier = notifier;
+    pty = await requireRuntimeService().create({
       terminalType,
-      dimensions.columns,
-      dimensions.rows,
+      columns: dimensions.columns,
+      rows: dimensions.rows,
       initialPath,
-    );
+    }, BridgeRouter.returnRemoteObj(notifier));
+    const ptyInfo = await pty.getInfo();
+    if (hasExited) throw new Error("Terminal process exited unexpectedly");
+    terminalId = ptyInfo.terminalId;
     terminal.options.windowsPty = ptyInfo;
     terminal.options.disableStdin = false;
 
     heartbeatIntervalMs = requestedHeartbeatIntervalMs ?? 0;
-    activeTerminalType = terminalType;
+    hasConnectedPty.value = true;
     runningStatusChangeCallback = requestedRunningStatusChangeCallback ?? null;
 
     onDataSubscription = terminal.onData((data) => {
-      if (runtime === null) return;
+      if (pty === null) return;
       void write(data).catch(onOperationError);
       funnelCheckRunning();
     });
@@ -105,7 +114,13 @@ function createPty(
 function destroyPty(): Promise<void> {
   return enqueue(async () => {
     disposePtyClientState();
-    await requireRuntime().destroyPty();
+    if (pty !== null) {
+      await requireRuntimeService().destroy(await pty.getTerminalId());
+      await BridgeRouter.destroyRemoteObj(pty);
+    }
+    pty = null;
+    terminalId = null;
+    terminalNotifier = null;
     disposeXterm();
     if (!isUnmounting) emit("message", "Terminal closed.");
   });
@@ -126,7 +141,7 @@ function disposePtyClientState(): void {
   onDataSubscription = null;
   onWriteParsedSubscription?.dispose();
   onWriteParsedSubscription = null;
-  activeTerminalType = null;
+  hasConnectedPty.value = false;
   if (xterm !== null) xterm.options.disableStdin = true;
   if (!shouldReportStopped || statusChangeCallback === null) return;
   try {
@@ -138,9 +153,8 @@ function disposePtyClientState(): void {
 
 function run(request: TerminalRunRequest): Promise<void> {
   return enqueue(async () => {
-    const activeRuntime = requireRuntime();
-    if (!await activeRuntime.isActive()) throw new Error("Terminal is not active");
-    await activeRuntime.run(request);
+    if (terminalId === null) throw new Error("Terminal is not active");
+    await requireRuntimeService().run(terminalId, request);
     emit("message", "Command sent to Terminal.");
   });
 }
@@ -177,18 +191,14 @@ function funnelCheckRunning(): void {
 
 function stop(): Promise<void> {
   return enqueue(async () => {
-    await requireRuntime().stop();
+    if (hasConnectedPty.value) await requirePty().write("\x03");
     emit("message", "Stop signal sent to Terminal.");
   });
 }
 
-function isActive(): Promise<boolean> {
-  return enqueue(() => runtime === null ? false : runtime.isActive());
-}
-
 function clear(): Promise<void> {
   return enqueue(async () => {
-    if (runtime !== null) await runtime.clear();
+    if (pty !== null) await pty.clear();
     xterm?.clear();
     clearSearchResults();
     updateScrollbarVisibility();
@@ -198,7 +208,7 @@ function clear(): Promise<void> {
 }
 
 function write(data: string): Promise<void> {
-  return enqueue(() => requireRuntime().write(data));
+  return enqueue(() => requirePty().write(data));
 }
 
 function getCurrentLine(): string {
@@ -231,22 +241,24 @@ function enqueue<TResult>(operation: () => Promise<TResult> | TResult): Promise<
   return result;
 }
 
-async function initializeRuntime(): Promise<void> {
-  if (runtime !== null) return;
+async function initializeRuntimeService(): Promise<void> {
+  if (runtimeService !== null) return;
+  runtimeService = await gMainApplication.window.getTerminalRuntimeService();
+}
 
+function createNotifier(onExit: () => void): TerminalClientRpcObject {
   const notifier = new TerminalClientRpcObject(
     (data) => {
-      if (isUnmounting || xterm === null) return;
+      if (isUnmounting || xterm === null || terminalNotifier !== notifier) return;
       xterm.write(data);
     },
     (message) => {
+      if (terminalNotifier !== notifier) return;
+      onExit();
       onRuntimeError(message);
     },
   );
-  runtime = await createTerminalRuntime(
-    gMainApplication.window.getPeer(),
-    notifier,
-  );
+  return notifier;
 }
 
 function initializeXterm(): void {
@@ -650,9 +662,14 @@ function getThemeColor(token: string): string {
   return value;
 }
 
-function requireRuntime(): RemoteObject<TerminalServerRpcApi> {
-  if (runtime === null) throw new Error("Terminal is not initialized");
-  return runtime;
+function requireRuntimeService(): RemoteObject<TerminalRuntimeServiceApi> {
+  if (runtimeService === null) throw new Error("Terminal is not initialized");
+  return runtimeService;
+}
+
+function requirePty(): RemoteObject<PtyApi> {
+  if (pty === null) throw new Error("Terminal is not active");
+  return pty;
 }
 
 function requireXterm(): XtermTerminal {
@@ -662,10 +679,12 @@ function requireXterm(): XtermTerminal {
 
 function getDimensions(): { columns: number; rows: number } {
   fitAddon?.fit();
-  return {
+  const dimensions = {
     columns: Math.max(1, xterm?.cols ?? 80),
     rows: Math.max(1, xterm?.rows ?? 24),
   };
+  terminalDimensionsSerializer.validate(dimensions);
+  return dimensions;
 }
 
 function scheduleResize(): void {
@@ -675,12 +694,12 @@ function scheduleResize(): void {
   resizeScheduled = true;
   void enqueue(async () => {
     resizeScheduled = false;
-    if (runtime === null || xterm === null) return;
+    if (pty === null || xterm === null) return;
     const dimensions = getDimensions();
     if (dimensions.columns === lastColumns && dimensions.rows === lastRows) return;
     lastColumns = dimensions.columns;
     lastRows = dimensions.rows;
-    await runtime.resize(dimensions.columns, dimensions.rows);
+    await pty.resize(dimensions.columns, dimensions.rows);
   }).catch(onOperationError);
 }
 
@@ -737,7 +756,7 @@ function onTerminalDragOver(event: DragEvent): void {
   if (!hasDraggedFiles(event)) return;
   event.preventDefault();
   if (event.dataTransfer !== null) {
-    event.dataTransfer.dropEffect = activeTerminalType === null ? "none" : "copy";
+    event.dataTransfer.dropEffect = hasConnectedPty.value ? "copy" : "none";
   }
 }
 
@@ -746,7 +765,7 @@ function onTerminalDrop(event: DragEvent): void {
   event.preventDefault();
   const files = Array.from(event.dataTransfer?.files ?? []);
   if (files.length === 0) return;
-  if (activeTerminalType === null) return;
+  if (!hasConnectedPty.value) return;
   let writeData: string;
   try {
     writeData = files
@@ -758,9 +777,8 @@ function onTerminalDrop(event: DragEvent): void {
   }
   if (writeData.length === 0) return;
   void enqueue(async () => {
-    const activeRuntime = requireRuntime();
-    if (!await activeRuntime.isActive() || isTerminalRunning()) return;
-    await activeRuntime.write(writeData);
+    if (!hasConnectedPty.value || isTerminalRunning()) return;
+    await requirePty().write(writeData);
     xterm?.focus();
   }).catch(onOperationError);
 }
@@ -773,29 +791,24 @@ function isTerminalRunning(): boolean {
   return !IDLE_PROMPT_PATTERN.test(getCurrentLine());
 }
 
-async function disposeRuntime(): Promise<void> {
-  const activeRuntime = runtime;
-  if (activeRuntime === null) return;
+async function disposeTerminal(): Promise<void> {
+  if (runtimeService === null) return;
   try {
     await destroyPty();
   } finally {
-    try {
-      await destroyTerminalRuntime(activeRuntime);
-    } finally {
-      runtime = null;
-    }
+    runtimeService = null;
   }
 }
 
 onBeforeUnmount(() => {
   unregisterThemeChangeHandler();
-  void disposeRuntime().catch((error: unknown) => {
+  void disposeTerminal().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[terminal] dispose failed: ${message}`);
   });
   isUnmounting = true;
   disposeXterm();
-  activeTerminalType = null;
+  hasConnectedPty.value = false;
 });
 
 defineExpose({
@@ -804,7 +817,7 @@ defineExpose({
   run,
   stop,
   destroyPty,
-  isActive,
+  hasConnectedPty,
   clear,
   write,
   getCurrentLine,
@@ -816,8 +829,10 @@ let heartbeatCheckRunningTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatIntervalMs = 0;
 let runningStatusChangeCallback: ((isRunning: boolean) => void) | null = null;
 let lastReportedRunning: boolean | null = null;
-let activeTerminalType: TerminalType | null = null;
-let runtime: RemoteObject<TerminalServerRpcApi> | null = null;
+let runtimeService: RemoteObject<TerminalRuntimeServiceApi> | null = null;
+let pty: RemoteObject<PtyApi> | null = null;
+let terminalId: string | null = null;
+let terminalNotifier: TerminalClientRpcObject | null = null;
 let xterm: XtermTerminal | null = null;
 let fitAddon: FitAddon | null = null;
 let searchMatches: readonly TerminalSearchMatch[] = [];

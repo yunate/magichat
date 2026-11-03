@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IDisposable, IPty } from "node-pty";
+import type { PtyApi, TerminalPtyInfo, TerminalPtyState } from "../../../../common/terminal";
 import type { PtyInitializationToken } from "./ptyFactory";
 
 export type PtyOptions = Readonly<{
@@ -8,17 +9,23 @@ export type PtyOptions = Readonly<{
   initialPath: string;
   createEnvironment: (terminalId: string) => NodeJS.ProcessEnv;
   useConpty: boolean;
+  info: TerminalPtyInfo;
 }>;
 
-export abstract class Pty implements IPty {
+export abstract class Pty implements PtyApi {
   public async init(_token: PtyInitializationToken, options: PtyOptions): Promise<void> {
     this._initialPath = options.initialPath;
+    this._info = options.info;
     this._pty = await this._create(options);
     this._pty.onData((data) => this._handleData(data));
   }
 
   public get initialPath(): string {
     return this._initialPath;
+  }
+
+  public get info(): TerminalPtyInfo {
+    return this._info;
   }
 
   public get pid(): number {
@@ -43,6 +50,22 @@ export abstract class Pty implements IPty {
 
   public set handleFlowControl(value: boolean) {
     this._pty.handleFlowControl = value;
+  }
+
+  public getTerminalId(): string {
+    return this.terminalId;
+  }
+
+  public getInfo(): TerminalPtyState {
+    return {
+      ...this.info,
+      terminalId: this.terminalId,
+      initialPath: this.initialPath,
+      pid: this.pid,
+      cols: this.cols,
+      rows: this.rows,
+      process: this.process,
+    };
   }
 
   public onData(callback: (data: string) => void): IDisposable {
@@ -99,6 +122,7 @@ export abstract class Pty implements IPty {
 
   private _pty!: IPty;
   private _initialPath!: string;
+  private _info!: TerminalPtyInfo;
   private _bufferedData = "";
   private _dataHandler: ((data: string) => void) | null = null;
 }

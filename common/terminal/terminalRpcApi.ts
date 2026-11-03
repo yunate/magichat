@@ -1,4 +1,5 @@
-import type { ScriptType } from "../tasks/scriptTaskDefinition";
+import type { TerminalPtyOptions } from "./terminalPtyOptions";
+import type { TerminalRunRequest } from "./terminalRunRequest";
 
 export const TERMINAL_TYPES = ["cmd", "powershell"] as const;
 export type TerminalType = (typeof TERMINAL_TYPES)[number];
@@ -8,29 +9,40 @@ export type TerminalPtyInfo = Readonly<{
   buildNumber: number;
 }>;
 
-export type TerminalRunRequest = Readonly<{
-  scriptId: string;
-  commandPath: string;
-  scriptType: ScriptType;
-  scriptContent: string;
+export type TerminalPtyState = TerminalPtyInfo & Readonly<{
+  terminalId: string;
+  initialPath: string;
+  pid: number;
+  cols: number;
+  rows: number;
+  process: string;
 }>;
 
-export interface TerminalServerRpcApi {
-  init(notifier: TerminalClientRpcApi): Promise<void>;
-  createPty(
-    terminalType: TerminalType,
-    columns: number,
-    rows: number,
-    initialPath: string,
-  ): Promise<TerminalPtyInfo>;
-  run(request: TerminalRunRequest): Promise<void>;
-  stop(): Promise<void>;
-  destroyPty(): Promise<void>;
-  isActive(): Promise<boolean>;
-  clear(): Promise<void>;
-  write(data: string): Promise<void>;
-  resize(columns: number, rows: number): Promise<void>;
-  dispose(): Promise<void>;
+export type TerminalPtyExit = Readonly<{
+  exitCode: number;
+  signal?: number;
+}>;
+
+export interface PtyCallbackApi {
+  onData(data: string): void | Promise<void>;
+  onExit(event: TerminalPtyExit): void | Promise<void>;
+}
+
+export interface PtyApi {
+  getTerminalId(): string | Promise<string>;
+  getInfo(): TerminalPtyState | Promise<TerminalPtyState>;
+  resize(columns: number, rows: number): void | Promise<void>;
+  clear(): void | Promise<void>;
+  write(data: string): void | Promise<void>;
+  kill(signal?: string): void | Promise<void>;
+  pause(): void | Promise<void>;
+  resume(): void | Promise<void>;
+}
+
+export interface TerminalRuntimeServiceApi {
+  create(options: TerminalPtyOptions, callback: TerminalClientRpcApi): Promise<PtyApi>;
+  destroy(terminalId: string): Promise<void>;
+  run(terminalId: string, request: TerminalRunRequest): Promise<void>;
 }
 
 export interface TerminalClientRpcApi {

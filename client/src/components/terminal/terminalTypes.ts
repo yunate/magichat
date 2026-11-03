@@ -11,7 +11,7 @@ export type TerminalExposed = {
   run(request: TerminalRunRequest): Promise<void>;
   stop(): Promise<void>;
   destroyPty(): Promise<void>;
-  isActive(): Promise<boolean>;
+  readonly hasConnectedPty: boolean;
   clear(): Promise<void>;
   write(data: string): Promise<void>;
   getCurrentLine(): string;

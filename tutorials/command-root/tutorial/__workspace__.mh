@@ -5,8 +5,21 @@
       "sidebarWidth": 342
     }
   },
-  "tabs": [],
-  "activeTabId": null,
+  "tabs": [
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000011",
+      "path": "set-env/ps1-mhsetenv.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000016",
+      "path": "call/test-ps-call.mh",
+      "isPinned": false
+    }
+  ],
+  "activeTabId": "10000000-0000-4000-8000-000000000016",
   "previewTabId": null,
   "data": {
     "selectedEnvGroupId": "de4f2968-ebec-4456-898b-bad45ad19f8d",
@@ -33,11 +46,6 @@
           {
             "key": "py-mhsetenv",
             "value": "py-mhsetenv",
-            "enabled": true
-          },
-          {
-            "key": "TEST_VALUE",
-            "value": "py-mhgetenv",
             "enabled": true
           }
         ]

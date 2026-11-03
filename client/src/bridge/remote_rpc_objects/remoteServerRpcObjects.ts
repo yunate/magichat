@@ -1,5 +1,6 @@
 import type { ConfigServerRpcApi } from "../../../../common/config/configRpcApi";
 import type { TasksServerRpcApi } from "../../../../common/tasks/tasksRpcApi";
+import type { TerminalRuntimeServiceApi } from "../../../../common/terminal";
 import type { ThemeServerRpcApi } from "../../../../common/theme/themeRpcApi";
 import type { UpdateServerRpcApi } from "../../../../common/update/updateRpcApi";
 import type { WindowServerRpcApi } from "../../../../common/window/windowRpcApi";
@@ -16,6 +17,12 @@ export function createTasksServerRpcObject(
   peer: BridgePeer,
 ): Promise<RemoteObject<TasksServerRpcApi>> {
   return BridgeRouter.createRemoteObj<TasksServerRpcApi>(peer, "TasksServerRpcApi");
+}
+
+export function getTerminalRuntimeService(
+  peer: BridgePeer,
+): Promise<RemoteObject<TerminalRuntimeServiceApi>> {
+  return BridgeRouter.createRemoteObj<TerminalRuntimeServiceApi>(peer, "TerminalRuntimeServiceApi");
 }
 
 export function createThemeServerRpcObject(

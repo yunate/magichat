@@ -3,11 +3,11 @@ import {
   commandConfigSerializer,
   type CommandConfig,
   type CommandRootConfig,
-  type TerminalPlacement,
+  type DefaultCodeViewPlacement,
 } from "../../../../../../common/config/command";
 import { gMainApplication } from "../../main";
 
-export type { TerminalPlacement } from "../../../../../../common/config/command";
+export type { DefaultCodeViewPlacement } from "../../../../../../common/config/command";
 export type { CommandRootConfig } from "../../../../../../common/config/command";
 
 class CommandSettings {

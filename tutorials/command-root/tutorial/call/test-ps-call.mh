@@ -3,12 +3,19 @@
   "id": "10000000-0000-4000-8000-000000000016",
   "data": {
     "scriptType": "powershell",
+    "isUAC": false,
     "selectedParamGroupId": "command",
     "paramGroups": [
       {
         "id": "command",
         "name": "default params",
-        "params": []
+        "params": [
+          {
+            "key": "d",
+            "value": "",
+            "enabled": true
+          }
+        ]
       }
     ]
   }

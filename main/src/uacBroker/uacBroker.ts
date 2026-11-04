@@ -1,4 +1,6 @@
 import type { Socket } from "node:net";
+import { applicationPathsOptionsSerializer, type ApplicationPathsOptions } from "../../../common/applicationPaths";
+import type { TerminalRuntimeServiceApi } from "../../../common/terminal";
 import { BridgePeer } from "../../../common/ipc_bridge/peer";
 import { PipeBridgeSocket } from "../../../common/ipc_bridge/pipeBridgeSocket";
 import { BridgeRouter } from "../../../common/ipc_bridge/rpc";
@@ -8,6 +10,9 @@ import type {
 } from "../../../common/uac/uacBrokerRpcApi";
 import { UacBrokerRpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
 import { FileOccupancyUacRpcObject } from "./fileOccupancy/fileOccupancyUacRpcObject";
+import { gApplicationPaths } from "../infra/applicationPaths";
+import { gPtyFactory } from "../services/terminal/ptyFactory";
+import { gTerminalRuntimeService } from "../services/terminal/terminalRuntimeService";
 
 export class UacBroker implements UacBrokerServerRpcApi {
   public constructor(
@@ -35,7 +40,21 @@ export class UacBroker implements UacBrokerServerRpcApi {
     return { processId: process.pid, token: this._token };
   }
 
-  public shutdown(): void {
+  public init(options: ApplicationPathsOptions): void {
+    applicationPathsOptionsSerializer.validate(options);
+    gApplicationPaths.init(options);
+  }
+
+  public setTerminalInitialPath(initialPath: string): void {
+    gPtyFactory.setInitialPath(initialPath);
+  }
+
+  public getUacTerminalRuntimeService(): TerminalRuntimeServiceApi {
+    return BridgeRouter.returnRemoteObj(gTerminalRuntimeService);
+  }
+
+  public async shutdown(): Promise<void> {
+    await gPtyFactory.dispose();
     setImmediate(() => {
       void this._peer.close().catch((error: unknown): void => {
         this._handleConnectionError(error instanceof Error ? error : new Error(String(error)));

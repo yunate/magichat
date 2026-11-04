@@ -2,40 +2,35 @@ import fs from "node:fs/promises";
 import * as inspector from "node:inspector";
 import os from "node:os";
 import path from "node:path";
-import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import { BridgeRouter } from "../../../../common/ipc_bridge/rpc";
 import {
   CLI_PAGE_COMMAND,
   CLI_TERMINAL_ID_ENVIRONMENT_KEY,
 } from "../../../../common/cli";
-import type { TerminalClientRpcApi, TerminalPtyInfo, TerminalType } from "../../../../common/terminal";
+import type { PtyApi, PtyCallbackApi, TerminalPtyOptions, TerminalType } from "../../../../common/terminal";
 import { DEFAULT_COMMAND_TERMINAL_INITIAL_PATH } from "../../../../common/config/command";
 import { ValidateUtils } from "../../../../common/validator";
 import { gApplicationPaths } from "../../infra/applicationPaths";
 import { PathUtil } from "../../utils/pathUtil";
-import { createCliEnvironment } from "../cli/cliEnvironment";
+import { gCliEnvironment } from "../cli/cliEnvironment";
+import { gUacBrokerService } from "../uacBroker/uacBrokerService";
 import { CmdPty } from "./cmdPty";
 import { PowerShellPty } from "./powerShellPty";
 import type { Pty, PtyOptions } from "./pty";
 import { PtyPool } from "./ptyPool";
 import { RpcPty } from "./rpcPty";
 
-export const TERMINAL_TEMPORARY_DIRECTORY = path.join(gApplicationPaths.dataDir, "tmp", "terminal");
-
 const PTY_INITIALIZATION_TOKEN = Symbol("pty initialization");
 export type PtyInitializationToken = typeof PTY_INITIALIZATION_TOKEN;
 
-type PtyCreateOptions = Readonly<{
-  columns: number;
-  rows: number;
-  initialPath: string;
-}>;
-
 class PtyFactory {
   public constructor() {
-    this._pools.set("powershell", new PtyPool("powershell", (initialPath) => this._create("powershell", {
+    this._pools.set("powershell", new PtyPool("powershell", (initialPath) => this._create({
+      terminalType: "powershell",
       columns: 80,
       rows: 24,
       initialPath,
+      isUAC: false,
     })));
   }
 
@@ -44,54 +39,50 @@ class PtyFactory {
     for (const pool of this._pools.values()) pool.setInitialPath(resolvedPath);
   }
 
+  public get temporaryDirectory(): string {
+    return path.join(gApplicationPaths.dataDir, "tmp", "terminal");
+  }
+
   public resolveInitialPath(value: unknown): string {
     ValidateUtils.ensureNonBlankString(value, "Terminal initial path must not be blank");
-    if (value === DEFAULT_COMMAND_TERMINAL_INITIAL_PATH) return TERMINAL_TEMPORARY_DIRECTORY;
+    if (value === DEFAULT_COMMAND_TERMINAL_INITIAL_PATH) return this.temporaryDirectory;
     if (!path.isAbsolute(value)) throw new Error("Terminal initial path must be absolute");
     return path.resolve(value);
   }
 
   public async create(
-    terminalType: TerminalType,
-    options: PtyCreateOptions,
-    callback: RemoteObject<TerminalClientRpcApi>,
-  ): Promise<RpcPty> {
-    const { pty } = await this._createPty(terminalType, options);
-    let isNotifierEnabled = true;
-    const handleNotificationError = (error: unknown): void => {
-      if (!isNotifierEnabled) return;
-      isNotifierEnabled = false;
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[terminal] renderer notification failed: ${message}`);
-    };
-    return new RpcPty(pty, {
-      onData: (data) => {
-        if (!isNotifierEnabled) return;
-        void callback.output(data).catch(handleNotificationError);
-      },
-      onExit: () => {
-        if (!isNotifierEnabled) return;
-        void callback.runtimeError("Terminal process exited unexpectedly").catch(handleNotificationError);
-      },
-    });
-  }
-
-  private async _createPty(
-    terminalType: TerminalType,
-    options: PtyCreateOptions,
-  ): Promise<Readonly<{ pty: Pty; info: TerminalPtyInfo }>> {
+    options: TerminalPtyOptions,
+    callback: PtyCallbackApi,
+  ): Promise<PtyApi> {
     if (this._isDisposed) throw new Error("PTY factory is disposed");
-    const initialPath = this.resolveInitialPath(options.initialPath);
-    const pool = this._pools.get(terminalType);
-    const creation = pool?.take(initialPath) ?? 0;
-    if (creation === 0) return this._create(terminalType, { ...options, initialPath });
+
+    if (options.isUAC) {
+      return this._createUAC(options, callback);
+    }
+
+    let pty: Pty | null = null;
     try {
-      creation.pty.resize(options.columns, options.rows);
+      const initialPath = this.resolveInitialPath(options.initialPath);
+      pty = this._pools.get(options.terminalType)?.take(initialPath) || null;
+      if (pty) {
+        pty.resize(options.columns, options.rows);
+      } else {
+        pty = await this._create({ ...options, initialPath });
+      }
     } catch (error: unknown) {
-      creation.pty.kill();
+      pty?.kill();
       throw error;
     }
-    return creation;
+
+    return new RpcPty(pty, callback);
+  }
+
+  private async _createUAC(
+    options: TerminalPtyOptions,
+    callback: PtyCallbackApi,
+  ): Promise<PtyApi> {
+    const runtime = await gUacBrokerService.getUacTerminalRuntimeService();
+    return runtime.create({ ...options, isUAC: false }, BridgeRouter.returnRemoteObj(callback));
   }
 
   public async dispose(): Promise<void> {
@@ -99,10 +90,7 @@ class PtyFactory {
     await Promise.all([...this._pools.values()].map((pool) => pool.dispose()));
   }
 
-  private async _create(
-    terminalType: TerminalType,
-    options: PtyCreateOptions,
-  ): Promise<Readonly<{ pty: Pty; info: TerminalPtyInfo }>> {
+  private async _create(options: TerminalPtyOptions): Promise<Pty> {
     if (process.platform !== "win32") throw new Error("Terminal is only supported on Windows");
 
     const initialPath = options.initialPath;
@@ -119,13 +107,13 @@ class PtyFactory {
     // ConPTY can deadlock during its native spawn handshake while the inspector is attached.
     const backend = inspector.url() === undefined ? "conpty" : "winpty";
     const buildNumber = this._getWindowsBuildNumber();
-    const info: TerminalPtyInfo = { backend, buildNumber };
+    const info: PtyOptions["info"] = { backend, buildNumber };
 
     const ptyOptions: PtyOptions = {
       columns: options.columns,
       rows: options.rows,
       initialPath,
-      createEnvironment: (terminalId) => createCliEnvironment({
+      createEnvironment: (terminalId) => gCliEnvironment.create({
         ...process.env,
         TERM: "xterm-256color",
         [CLI_TERMINAL_ID_ENVIRONMENT_KEY]: terminalId,
@@ -135,15 +123,15 @@ class PtyFactory {
     };
 
     let pty: Pty;
-    if (terminalType === "cmd") {
+    if (options.terminalType === "cmd") {
       pty = new CmdPty();
-    } else if (terminalType === "powershell") {
+    } else if (options.terminalType === "powershell") {
       pty = new PowerShellPty();
     } else {
       throw new Error("Terminal type is invalid");
     }
     await pty.init(PTY_INITIALIZATION_TOKEN, ptyOptions);
-    return { pty, info };
+    return pty;
   }
 
   private _getWindowsBuildNumber(): number {

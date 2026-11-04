@@ -11,6 +11,7 @@ export type TerminalDimensions = Readonly<{
 export type TerminalPtyOptions = TerminalDimensions & Readonly<{
   terminalType: TerminalType;
   initialPath: string;
+  isUAC: boolean;
 }>;
 
 export class TerminalDimensionsSerializer extends ISerializer<TerminalDimensions> {
@@ -50,12 +51,14 @@ export class TerminalPtyOptionsSerializer extends ISerializer<TerminalPtyOptions
     ValidateUtils.ensureNumber(value.columns, "Terminal columns are invalid");
     ValidateUtils.ensureNumber(value.rows, "Terminal rows are invalid");
     ValidateUtils.ensureNonBlankString(value.initialPath, "Terminal initial path must not be blank");
+    ValidateUtils.ensureBoolean(value.isUAC, "Terminal UAC flag is invalid");
   }
 
   private static readonly _DEFAULT: TerminalPtyOptions = {
     terminalType: "powershell",
     ...terminalDimensionsSerializer.getDefault(),
     initialPath: DEFAULT_COMMAND_TERMINAL_INITIAL_PATH,
+    isUAC: false,
   };
 }
 

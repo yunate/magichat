@@ -13,7 +13,7 @@ import {
 import { MacroParser } from "../../../../common/macroParser";
 import { getErrorMessage } from "../../utils/error";
 import { gApplicationPaths } from "../../infra/applicationPaths";
-import { createCliEnvironment } from "../cli/cliEnvironment";
+import { gCliEnvironment } from "../cli/cliEnvironment";
 import { createScriptExecution, getScriptExtension } from "../scriptExecution";
 import { Task, type TaskCallbacks } from "./task";
 
@@ -68,7 +68,7 @@ export class ScriptTask extends Task {
     let child: ChildProcess;
     try {
       child = spawn(execution.command, execution.args, {
-        env: createCliEnvironment(process.env, {
+        env: gCliEnvironment.create(process.env, {
           page: CLI_PAGE_TASK_CENTER,
           taskId,
         }),

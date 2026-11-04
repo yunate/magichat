@@ -63,16 +63,14 @@ function createPty(
   initialPath: string,
   requestedHeartbeatIntervalMs?: number,
   requestedRunningStatusChangeCallback?: ((isRunning: boolean) => void) | null,
+  isUAC = false,
 ): Promise<void> {
   return enqueue(async () => {
     if (hasConnectedPty.value) return;
     const terminal = requireXterm();
-    if (pty !== null) {
-      await requireRuntimeService().destroy(await pty.getTerminalId());
-      await BridgeRouter.destroyRemoteObj(pty);
-    }
-    pty = null;
-    terminalId = null;
+    terminal.clear();
+    clearSearchResults();
+    updateScrollbarVisibility();
     const dimensions = getDimensions();
     let hasExited = false;
     const notifier = createNotifier(() => { hasExited = true; });
@@ -82,6 +80,7 @@ function createPty(
       columns: dimensions.columns,
       rows: dimensions.rows,
       initialPath,
+      isUAC,
     }, BridgeRouter.returnRemoteObj(notifier));
     const ptyInfo = await pty.getInfo();
     if (hasExited) throw new Error("Terminal process exited unexpectedly");
@@ -113,16 +112,20 @@ function createPty(
 
 function destroyPty(): Promise<void> {
   return enqueue(async () => {
-    disposePtyClientState();
-    if (pty !== null) {
-      await requireRuntimeService().destroy(await pty.getTerminalId());
-      await BridgeRouter.destroyRemoteObj(pty);
+    try {
+      disposePtyClientState();
+      if (pty !== null) {
+        await requireRuntimeService().destroy((await pty.getInfo()).terminalId);
+        await BridgeRouter.destroyRemoteObj(pty);
+      }
+      pty = null;
+      terminalId = null;
+      terminalNotifier = null;
+      disposeXterm();
+      if (!isUnmounting) emit("message", "Terminal closed.");
+    } catch (err) {
+      console.warn("Failed to destroy existing PTY:", err);
     }
-    pty = null;
-    terminalId = null;
-    terminalNotifier = null;
-    disposeXterm();
-    if (!isUnmounting) emit("message", "Terminal closed.");
   });
 }
 
@@ -252,10 +255,10 @@ function createNotifier(onExit: () => void): TerminalClientRpcObject {
       if (isUnmounting || xterm === null || terminalNotifier !== notifier) return;
       xterm.write(data);
     },
-    (message) => {
+    () => {
       if (terminalNotifier !== notifier) return;
       onExit();
-      onRuntimeError(message);
+      onRuntimeError("Terminal process exited unexpectedly");
     },
   );
   return notifier;

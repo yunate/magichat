@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { EllipsisVertical, EyeOff, PanelBottom, PanelLeft, PanelRight, PanelTop } from "@lucide/vue";
+import { EllipsisVertical, EyeOff, PanelBottom, PanelLeft, PanelRight, PanelTop, Settings2 } from "@lucide/vue";
 import { nextTick, onMounted, onUnmounted, shallowRef, useId, useTemplateRef, watch } from "vue";
 import type { Component } from "vue";
 import type { CodeViewPlacement } from "../../../../../../common/command";
@@ -11,18 +11,20 @@ type TerminalMenu = Readonly<{
   area: ContextMenuArea;
 }>;
 
-const props = defineProps<{ isActive: boolean }>();
+const props = defineProps<{ isActive: boolean; isTerminalActive: boolean }>();
 const codeViewPlacement = defineModel<CodeViewPlacement>("codeViewPlacement", { required: true });
+const isUac = defineModel<boolean>("isUac", { required: true });
 const terminalMenu = shallowRef<TerminalMenu | null>(null);
 const terminalMenuId = useId();
 const terminalMenuButton = useTemplateRef<HTMLButtonElement>("terminalMenuButton");
 const terminalMenuContent = useTemplateRef<HTMLElement>("terminalMenuContent");
-const TERMINAL_MENU_WIDTH = 296;
+const TERMINAL_MENU_WIDTH = 332;
 const codeViewPlacementOptions: readonly Readonly<{
   value: CodeViewPlacement;
   label: string;
   icon: Component;
 }>[] = [
+  { value: "follow", label: "Follow global settings", icon: Settings2 },
   { value: "left", label: "Left", icon: PanelLeft },
   { value: "right", label: "Right", icon: PanelRight },
   { value: "top", label: "Top", icon: PanelTop },
@@ -61,7 +63,7 @@ async function onToggleTerminalMenu(): Promise<void> {
     area: { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight },
   };
   await nextTick();
-  terminalMenuContent.value?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+  terminalMenuContent.value?.querySelector<HTMLElement>('input:not(:disabled), button[aria-checked="true"]')?.focus();
 }
 
 function closeTerminalMenu(shouldRestoreFocus = false): void {
@@ -90,22 +92,22 @@ function onCodeViewPlacementChange(placement: CodeViewPlacement): void {
   closeTerminalMenu(true);
 }
 
-function onCodeViewPlacementKeydown(event: KeyboardEvent): void {
-  const buttons = Array.from(terminalMenuContent.value?.querySelectorAll<HTMLButtonElement>("button") ?? []);
-  const currentIndex = buttons.findIndex((button) => button === event.target);
+function onTerminalMenuItemKeydown(event: KeyboardEvent): void {
+  const items = Array.from(terminalMenuContent.value?.querySelectorAll<HTMLElement>("input:not(:disabled), button:not(:disabled)") ?? []);
+  const currentIndex = items.findIndex((item) => item === event.target);
   if (currentIndex < 0) return;
   let nextIndex: number;
   switch (event.key) {
     case "ArrowLeft":
-    case "ArrowUp": nextIndex = (currentIndex + buttons.length - 1) % buttons.length; break;
+    case "ArrowUp": nextIndex = (currentIndex + items.length - 1) % items.length; break;
     case "ArrowRight":
-    case "ArrowDown": nextIndex = (currentIndex + 1) % buttons.length; break;
+    case "ArrowDown": nextIndex = (currentIndex + 1) % items.length; break;
     case "Home": nextIndex = 0; break;
-    case "End": nextIndex = buttons.length - 1; break;
+    case "End": nextIndex = items.length - 1; break;
     default: return;
   }
   event.preventDefault();
-  buttons[nextIndex]?.focus();
+  items[nextIndex]?.focus();
 }
 </script>
 
@@ -132,23 +134,33 @@ function onCodeViewPlacementKeydown(event: KeyboardEvent): void {
     <div
       :id="terminalMenuId"
       ref="terminalMenuContent"
-      class="command-code-view-placement"
-      role="group"
-      aria-label="Code view position"
-      @keydown="onCodeViewPlacementKeydown"
+      @keydown="onTerminalMenuItemKeydown"
     >
-      <span aria-hidden="true">Code view</span>
-      <button
-        v-for="option in codeViewPlacementOptions"
-        :key="option.value"
-        type="button"
-        role="menuitemradio"
-        :aria-label="option.label"
-        :aria-checked="codeViewPlacement === option.value"
-        :tabindex="codeViewPlacement === option.value ? 0 : -1"
-        :title="option.label"
-        @click="onCodeViewPlacementChange(option.value)"
-      ><component :is="option.icon" :size="16" aria-hidden="true" /></button>
+      <label class="command-terminal-admin-option">
+        <input
+          v-model="isUac"
+          type="checkbox"
+          role="menuitemcheckbox"
+          :aria-checked="isUac"
+          :disabled="props.isTerminalActive"
+        >
+        <span>Run as administrator</span>
+      </label>
+      <div role="separator" />
+      <div class="command-code-view-placement" role="group" aria-label="Code view position">
+        <span aria-hidden="true">Code view</span>
+        <button
+          v-for="option in codeViewPlacementOptions"
+          :key="option.value"
+          type="button"
+          role="menuitemradio"
+          :aria-label="option.label"
+          :aria-checked="codeViewPlacement === option.value"
+          :tabindex="codeViewPlacement === option.value ? 0 : -1"
+          :title="option.label"
+          @click="onCodeViewPlacementChange(option.value)"
+        ><component :is="option.icon" :size="16" aria-hidden="true" /></button>
+      </div>
     </div>
   </ContextMenu>
 </template>
@@ -188,6 +200,63 @@ function onCodeViewPlacementKeydown(event: KeyboardEvent): void {
 .command-terminal-menu-button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+
+.command-terminal-admin-option {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.command-terminal-admin-option input {
+  appearance: none;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-text-muted) 72%, transparent);
+  border-radius: var(--radius-small);
+  background: transparent;
+  cursor: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.command-terminal-admin-option input:hover {
+  border-color: var(--color-text);
+}
+
+.command-terminal-admin-option input:checked {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+
+.command-terminal-admin-option input:checked::after {
+  position: absolute;
+  width: 7px;
+  height: 4px;
+  top: 3px;
+  left: 3px;
+  content: "";
+  border-bottom: 2px solid var(--color-text-on-accent);
+  border-left: 2px solid var(--color-text-on-accent);
+  transform: rotate(-45deg);
+}
+
+.command-terminal-admin-option input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.command-terminal-admin-option:has(input:disabled) {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .command-code-view-placement {

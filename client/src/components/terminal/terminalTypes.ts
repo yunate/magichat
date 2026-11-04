@@ -7,6 +7,7 @@ export type TerminalExposed = {
     initialPath: string,
     heartbeatIntervalMs?: number,
     runningStatusChangeCallback?: ((isRunning: boolean) => void) | null,
+    isUAC?: boolean,
   ): Promise<void>;
   run(request: TerminalRunRequest): Promise<void>;
   stop(): Promise<void>;

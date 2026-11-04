@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import type { Server, Socket } from "node:net";
+import { DEFAULT_COMMAND_TERMINAL_INITIAL_PATH } from "../../../../common/config/command";
 import { BridgePeer } from "../../../../common/ipc_bridge/peer";
 import { PipeBridgeSocket } from "../../../../common/ipc_bridge/pipeBridgeSocket";
 import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import type { TerminalRuntimeServiceApi } from "../../../../common/terminal";
 import type {
   UacBrokerReadyInfo,
   UacBrokerServerRpcApi,
@@ -19,6 +21,24 @@ type UacBrokerConnection = Readonly<{
 }>;
 
 export class UacBrokerService {
+  public onDisconnect(handler: () => void): void {
+    this._disconnectHandler = handler;
+  }
+
+  public async getUacTerminalRuntimeService(): Promise<RemoteObject<TerminalRuntimeServiceApi>> {
+    if (this._terminalRuntimeServicePromise !== null) return this._terminalRuntimeServicePromise;
+    await this._ensureInitialized();
+    const connection = this._connection;
+    if (connection === null) throw new Error("UAC Broker connection is not initialized");
+    this._terminalRuntimeServicePromise ??= connection.broker.getUacTerminalRuntimeService();
+    return this._terminalRuntimeServicePromise;
+  }
+
+  public getExistingUacTerminalRuntimeService(): Promise<RemoteObject<TerminalRuntimeServiceApi>> | null {
+    if (!this._peer?.isConnected()) return null;
+    return this._terminalRuntimeServicePromise;
+  }
+
   public async getFileOccupancyService(): Promise<FileOccupancyService> {
     await this._ensureInitialized();
     if (this._fileOccupancyService === null) {
@@ -32,6 +52,12 @@ export class UacBrokerService {
       throw new Error("File occupancy service is not initialized");
     }
     return this._fileOccupancyService;
+  }
+
+  public async setTerminalInitialPath(initialPath: string): Promise<void> {
+    if (this._terminalInitialPath === initialPath) return;
+    this._terminalInitialPath = initialPath;
+    await this._connection?.broker.setTerminalInitialPath(initialPath);
   }
 
   public async dispose(): Promise<void> {
@@ -71,10 +97,14 @@ export class UacBrokerService {
           () => void peer.close(),
           { once: true },
         );
-        peer.onDisconnect(() => this._resetConnection(peer));
+        peer.onDisconnect(() => {
+          this._resetConnection(peer);
+          this._disconnectHandler?.();
+        });
         BridgeRouter.getRouter().startDispatchMessage(peer);
         bridgeSocket.start();
         const broker = await createUacBrokerServerRpcObject(peer);
+        await broker.init(gApplicationPaths.getOptions());
         const readyInfo: unknown = await broker.getReadyInfo();
         UacBrokerService._validateReadyInfo(readyInfo);
         if (readyInfo.processId !== brokerProcessId) {
@@ -87,6 +117,7 @@ export class UacBrokerService {
         this._fileOccupancyService = await FileOccupancyService.create(peer);
         const connection = { broker, peer };
         this._connection = connection;
+        await broker.setTerminalInitialPath(this._terminalInitialPath);
         return connection;
       } catch (error) {
         server.close();
@@ -186,6 +217,7 @@ export class UacBrokerService {
     this._connection = null;
     this._initializationPromise = null;
     this._fileOccupancyService = null;
+    this._terminalRuntimeServicePromise = null;
   }
 
   private static _appendOutput(target: Buffer[], chunk: Buffer): void {
@@ -227,6 +259,9 @@ export class UacBrokerService {
   private _initializationPromise: Promise<UacBrokerConnection> | null = null;
   private _initializationAbortController: AbortController | null = null;
   private _fileOccupancyService: FileOccupancyService | null = null;
+  private _terminalRuntimeServicePromise: Promise<RemoteObject<TerminalRuntimeServiceApi>> | null = null;
+  private _terminalInitialPath = DEFAULT_COMMAND_TERMINAL_INITIAL_PATH;
+  private _disconnectHandler: (() => void) | null = null;
 }
 
 export const gUacBrokerService = new UacBrokerService();

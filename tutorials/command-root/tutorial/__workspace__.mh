@@ -8,8 +8,38 @@
   "tabs": [
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000011",
-      "path": "set-env/ps1-mhsetenv.mh",
+      "id": "35e031f0-a92f-4871-aa83-6d5612f06a7d",
+      "path": "get-env/py-mhgetenv.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "6defa06e-5707-4b35-93b0-b86f0390678b",
+      "path": "get-env/node-mhgetenv.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "e05fa166-cc85-4285-a3f4-a4422583365c",
+      "path": "test-uac.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000015",
+      "path": "get-env/show env.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "9a90cf86-0988-4009-8019-dfac9cb27ae9",
+      "path": "targets/test-set-prompt.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "ddf0d92b-8996-402d-b1f0-4b68cabde5ce",
+      "path": "test-cmd-cd.mh",
       "isPinned": false
     },
     {
@@ -17,10 +47,28 @@
       "id": "10000000-0000-4000-8000-000000000016",
       "path": "call/test-ps-call.mh",
       "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000017",
+      "path": "call/test-cmd-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "10000000-0000-4000-8000-000000000018",
+      "path": "call/test-node-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "id": "525f622c-71f8-45f2-9c54-ccf4a953b923",
+      "path": "Untitled.mh",
+      "isPinned": false
     }
   ],
-  "activeTabId": "10000000-0000-4000-8000-000000000016",
-  "previewTabId": null,
+  "activeTabId": "525f622c-71f8-45f2-9c54-ccf4a953b923",
+  "previewTabId": "10000000-0000-4000-8000-000000000018",
   "data": {
     "selectedEnvGroupId": "de4f2968-ebec-4456-898b-bad45ad19f8d",
     "envGroups": [
@@ -46,6 +94,11 @@
           {
             "key": "py-mhsetenv",
             "value": "py-mhsetenv",
+            "enabled": true
+          },
+          {
+            "key": "TEST_VALUE",
+            "value": "py-mhgetenv",
             "enabled": true
           }
         ]

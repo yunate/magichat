@@ -4,12 +4,12 @@ Electron main process and TypeScript local backend. Renderer files are loaded di
 
 ## Structure
 
-- `src/index.ts` registers process-global RPC objects, creates windows, and coordinates shutdown.
+- `src/index.ts` first imports `src/infra/initializeApplicationPaths.ts` to select the profile and initialize the Electron-independent path singleton before static business imports. The entry retains top-level lifecycle functions, registers process-global RPC objects, creates windows, and coordinates shutdown.
 - `src/index.ts` starts Terminal factory prewarming after the CLI Bridge is ready, forwards successful Command configuration changes to its initial-directory setting, and disposes prewarming before the remaining shutdown steps. Pool ownership and acquisition stay inside the Terminal factory.
 - `src/index.ts` starts the process-wide logger before business services, records the complete authoritative `VERSION` in the first application-started entry, and drains its write queue after shutdown cleanup. Existing `console` output is mirrored into the application log through the logger bridge.
 - `src/index.ts` owns the process-wide system tray. Its Open command restores the primary Window, while its Close command asks the renderer to run the standard Page close flow.
 - `src/index.ts` disables Chromium renderer backgrounding, timer throttling, and Windows occluded-window backgrounding before Electron becomes ready, keeping an idle or covered MagicHat responsive without preventing normal system sleep.
-- `src/index.ts` also owns process-instance coordination. Development launches use a dedicated `magichat-development` Electron profile and packaged launches retain the packaged profile, so each mode is single-instance while one development and one packaged process can coexist. A duplicate launch restores, raises, and focuses the existing window in its own mode.
+- `src/index.ts` also owns process-instance coordination. Its path initializer selects the dedicated `magichat-development` Electron profile for development; packaged launches retain the packaged profile, so each mode is single-instance while one development and one packaged process can coexist. A duplicate launch restores, raises, and focuses the existing window in its own mode.
 - `src/window/` owns BrowserWindow construction, persisted restore bounds and configured-theme startup background read from the shared `global` config, startup maximization, per-window bridge peers, RPC behavior, and active window registration.
 - `WindowFactory.createWindow()` resolves after the renderer acknowledges bridge initialization through `WindowServerRpcApi.rendererReady()`.
 - `src/preload/index.ts` forwards the startup MessagePort from Electron's isolated world to the renderer and exposes Electron's `webUtils.getPathForFile()` as the narrow `electronFileSystem.getPathForFile(File)` adapter used by Terminal file drops. It does not send file paths through IPC.

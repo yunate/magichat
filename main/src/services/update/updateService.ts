@@ -51,6 +51,10 @@ type UpdatePlan = {
 
 export class UpdateService implements UpdateServerRpcApi {
   public constructor() {
+    if (!gApplicationPaths.isPackaged) {
+      console.log("[update] Application is not packaged. Skipping update check.");
+      return;
+    }
     const updateConfig = gConfigManager.get(UPDATE_CONFIG_KEY);
     if (updateConfig.isAutoUpdateEnabled) {
       setTimeout(() => {
@@ -88,6 +92,7 @@ export class UpdateService implements UpdateServerRpcApi {
   }
 
   public async start(): Promise<void> {
+    if (!gApplicationPaths.isPackaged) return;
     if (
       this._state !== UpdateState.NOT_START && this._state !== UpdateState.CHECKED
     ) return;

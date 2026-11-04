@@ -9,21 +9,22 @@ import { gMainApplication } from "../../main";
 import {
   gCommandSettings,
   type CommandRootConfig,
-  type TerminalPlacement,
+  type DefaultCodeViewPlacement,
 } from "./commandSettings";
 
 const config = ref<CommandConfig>(commandConfigSerializer.getDefault());
 const defaultRootPath = ref("");
 const isLoading = ref(true);
 
-const terminalPlacementOptions: readonly Readonly<{
-  value: TerminalPlacement;
+const codeViewPlacementOptions: readonly Readonly<{
+  value: DefaultCodeViewPlacement;
   label: string;
 }>[] = [
   { value: "left", label: "Left" },
   { value: "right", label: "Right" },
   { value: "top", label: "Top" },
   { value: "bottom", label: "Bottom" },
+  { value: "hide", label: "Hide" },
 ];
 
 onMounted(async () => {
@@ -32,11 +33,11 @@ onMounted(async () => {
 
 defineExpose({ getCurrent, save });
 
-function onTerminalPlacementChange(event: Event): void {
+function onCodeViewPlacementChange(event: Event): void {
   const input = event.target;
   if (!(input instanceof HTMLInputElement)) return;
-  const option = terminalPlacementOptions.find(({ value }) => value === input.value);
-  if (option !== undefined) config.value.terminalPlacement = option.value;
+  const option = codeViewPlacementOptions.find(({ value }) => value === input.value);
+  if (option !== undefined) config.value.codeViewPlacement = option.value;
 }
 
 function updateTerminalInitialPath(event: Event): void {
@@ -119,20 +120,20 @@ async function save(): Promise<void> {
 <template>
   <div class="command-settings-layout">
     <fieldset class="command-settings">
-      <legend>Terminal placement for new Commands</legend>
+      <legend>Default code view position</legend>
       <div class="command-settings__options">
         <label
-          v-for="option in terminalPlacementOptions"
+          v-for="option in codeViewPlacementOptions"
           :key="option.value"
           class="command-settings__option"
         >
           <input
             type="radio"
-            name="command-terminal-placement"
+            name="command-code-view-placement"
             :value="option.value"
-            :checked="config.terminalPlacement === option.value"
+            :checked="config.codeViewPlacement === option.value"
             :disabled="isLoading"
-            @change="onTerminalPlacementChange"
+            @change="onCodeViewPlacementChange"
           />
           <span>{{ option.label }}</span>
         </label>

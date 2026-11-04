@@ -1,16 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { IDisposable } from "node-pty";
-import type { TerminalPtyInfo, TerminalType } from "../../../../common/terminal";
+import type { TerminalType } from "../../../../common/terminal";
 import { TaskQueue } from "../../infra/taskQueue";
 import { PathUtil } from "../../utils/pathUtil";
 import type { Pty } from "./pty";
 
-type PtyCreation = Readonly<{ pty: Pty; info: TerminalPtyInfo }>;
-type PoolEntry = PtyCreation & { exitSubscription: IDisposable | null };
+type PoolEntry = { readonly pty: Pty; exitSubscription: IDisposable | null };
 
 export class PtyPool {
-  public constructor(terminalType: TerminalType, createPty: (initialPath: string) => Promise<PtyCreation>, maxCount = 1) {
+  public constructor(terminalType: TerminalType, createPty: (initialPath: string) => Promise<Pty>, maxCount = 1) {
     this._terminalType = terminalType;
     this._createPty = createPty;
     this._maxCount = maxCount;
@@ -31,7 +30,7 @@ export class PtyPool {
     this._scheduleRefill();
   }
 
-  public take(initialPath: string): PtyCreation | 0 {
+  public take(initialPath: string): Pty | 0 {
     if (this._isDisposed) throw new Error("PTY pool is disposed");
     const entry = this._entries.shift();
     entry?.exitSubscription?.dispose();
@@ -41,7 +40,7 @@ export class PtyPool {
       return 0;
     }
     console.log(`[pty-pool] take hit. Type: ${this._terminalType}. Terminal ID: ${entry.pty.terminalId}. Initial path: ${JSON.stringify(entry.pty.initialPath)}. Remaining: ${this._entries.length}/${this._maxCount}.`);
-    return { pty: entry.pty, info: entry.info };
+    return entry.pty;
   }
 
   public async dispose(): Promise<void> {
@@ -70,8 +69,8 @@ export class PtyPool {
       }
 
       const startedAt = Date.now();
-      const creation = await this._createPty(initialPath);
-      const entry: PoolEntry = { ...creation, exitSubscription: null };
+      const pty = await this._createPty(initialPath);
+      const entry: PoolEntry = { pty, exitSubscription: null };
       if (this._isDisposed || initialPath !== this._initialPath) {
         entry.pty.kill();
         console.log(`[pty-pool] initial path changed. Type: ${this._terminalType}. Terminal ID: ${entry.pty.terminalId}. Initial path: ${JSON.stringify(initialPath)}. Remaining: ${this._entries.length}/${this._maxCount}.`);
@@ -105,7 +104,7 @@ export class PtyPool {
 
   private readonly _terminalType: TerminalType;
   private readonly _maxCount: number;
-  private readonly _createPty: (initialPath: string) => Promise<PtyCreation>;
+  private readonly _createPty: (initialPath: string) => Promise<Pty>;
   private readonly _entries: PoolEntry[] = [];
   private readonly _refillQueue = new TaskQueue();
   private _initialPath = "";

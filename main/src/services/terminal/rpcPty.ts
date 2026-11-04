@@ -15,12 +15,16 @@ export class RpcPty implements PtyApi {
     });
   }
 
-  public getTerminalId(): string | Promise<string> {
-    return this._pty.getTerminalId();
-  }
-
   public async getInfo(): Promise<TerminalPtyState> {
-    return this._pty.getInfo();
+    return {
+      ...this._pty.basicInfo,
+      terminalId: this._pty.terminalId,
+      initialPath: this._pty.initialPath,
+      pid: this._pty.pid,
+      cols: this._pty.cols,
+      rows: this._pty.rows,
+      process: this._pty.process,
+    };
   }
 
   public async resize(columns: number, rows: number): Promise<void> {
@@ -58,7 +62,7 @@ export class RpcPty implements PtyApi {
     this._exitSubscription.dispose();
   }
 
-  private readonly _pty: PtyApi;
+  private readonly _pty: Pty;
   private readonly _dataSubscription: IDisposable;
   private readonly _exitSubscription: IDisposable;
   private _isDisposed = false;

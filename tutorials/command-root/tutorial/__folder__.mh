@@ -7,7 +7,10 @@
     "call",
     "get-env"
   ],
-  "itemOrder": [],
+  "itemOrder": [
+    "test-uac",
+    "test-cmd-cd"
+  ],
   "data": {
     "selectedParamGroupId": "folder",
     "paramGroups": [

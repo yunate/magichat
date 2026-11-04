@@ -26,3 +26,6 @@ echo "ps1 call node."
 
 call mhcall("tutorial/set-env/py-mhsetenv.mh")
 echo "ps1 call python."
+
+call mhcall("tutorial/test-uac.mh")
+echo "ps1 call test-uac."

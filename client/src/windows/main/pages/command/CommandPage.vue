@@ -953,7 +953,7 @@ function errorMessage(reason: unknown): string {
           :entity="entity"
           :is-active="isActive"
           :notify-ready="notifyReady"
-          :terminal-placement="currentConfig.terminalPlacement"
+          :default-code-view-placement="currentConfig.codeViewPlacement"
           :terminal-initial-path="currentConfig.terminalInitialPath"
           :tree-view="treeView"
           :get-open-folder-data="getOpenFolderData"

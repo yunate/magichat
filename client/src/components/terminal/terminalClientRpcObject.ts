@@ -1,22 +1,22 @@
-import type { TerminalClientRpcApi } from "../../../../common/terminal";
+import type { PtyCallbackApi, TerminalPtyExit } from "../../../../common/terminal";
 
-export class TerminalClientRpcObject implements TerminalClientRpcApi {
+export class TerminalClientRpcObject implements PtyCallbackApi {
   public constructor(
-    onOutput: (data: string) => void,
-    onRuntimeError: (message: string) => void,
+    onData: (data: string) => void,
+    onExit: (event: TerminalPtyExit) => void,
   ) {
-    this._onOutput = onOutput;
-    this._onRuntimeError = onRuntimeError;
+    this._onData = onData;
+    this._onExit = onExit;
   }
 
-  public output(data: string): void {
-    this._onOutput(data);
+  public onData(data: string): void {
+    this._onData(data);
   }
 
-  public runtimeError(message: string): void {
-    this._onRuntimeError(message);
+  public onExit(event: TerminalPtyExit): void {
+    this._onExit(event);
   }
 
-  private readonly _onOutput: (data: string) => void;
-  private readonly _onRuntimeError: (message: string) => void;
+  private readonly _onData: (data: string) => void;
+  private readonly _onExit: (event: TerminalPtyExit) => void;
 }

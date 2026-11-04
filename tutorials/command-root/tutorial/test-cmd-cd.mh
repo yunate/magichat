@@ -1,0 +1,20 @@
+{
+  "isDraft": false,
+  "id": "ddf0d92b-8996-402d-b1f0-4b68cabde5ce",
+  "data": {
+    "scriptType": "cmd",
+    "codeViewPlacement": "left",
+    "isUAC": false,
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+cd /d c:\

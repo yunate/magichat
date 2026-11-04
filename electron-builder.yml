@@ -21,6 +21,8 @@ files:
 extraResources:
   - from: dist-electron/uac-broker/index.js
     to: uac-broker/index.js
+  - from: node_modules/node-pty
+    to: uac-broker/node_modules/node-pty
 extraFiles:
   - from: native-tools/ddwhouses/bin/ddwhouses.exe
     to: native-tools/ddwhouses/bin/ddwhouses.exe

@@ -6,7 +6,7 @@ import { ValidateUtils } from "../validator";
 
 export const COMMAND_SCRIPT_EXTENSION_KEY = "script";
 
-export type CodeViewPlacement = "left" | "right" | "top" | "bottom" | "hide";
+export type CodeViewPlacement = "follow" | "left" | "right" | "top" | "bottom" | "hide";
 
 export type CommandParam = Readonly<{
   key: string;
@@ -29,6 +29,7 @@ export type CommandItemData = Readonly<{
   scriptType: ScriptType;
   content: string;
   codeViewPlacement?: CodeViewPlacement;
+  isUAC?: boolean;
   selectedParamGroupId: string;
   paramGroups: readonly CommandParamGroup[];
 }>;
@@ -94,6 +95,7 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
     const meta: CommandItemMeta = {
       scriptType: value.scriptType,
       codeViewPlacement: value.codeViewPlacement,
+      isUAC: value.isUAC,
       selectedParamGroupId: value.selectedParamGroupId,
       paramGroups: value.paramGroups,
     };
@@ -111,11 +113,12 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
 
   public validate(value: unknown): asserts value is CommandItemData {
     migrateCommandParamEnabled(value);
-    ensureExactRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data", ["codeViewPlacement"]);
+    ensureExactRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data", ["codeViewPlacement", "isUAC"]);
     if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
     if (value.codeViewPlacement !== undefined && !CommandItemDataSerializer._isCodeViewPlacement(value.codeViewPlacement)) {
       throw new Error("Command code view placement is invalid");
     }
+    if (value.isUAC !== undefined) ValidateUtils.ensureBoolean(value.isUAC, "Command isUAC must be a boolean");
     ValidateUtils.ensureString(value.content, "Command content must be a string");
     validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
   }
@@ -132,12 +135,13 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
       value,
       Object.keys(CommandItemDataSerializer._META_DEFAULT),
       "Command item data",
-      ["codeViewPlacement"],
+      ["codeViewPlacement", "isUAC"],
     );
     if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
     if (value.codeViewPlacement !== undefined && !CommandItemDataSerializer._isCodeViewPlacement(value.codeViewPlacement)) {
       throw new Error("Command code view placement is invalid");
     }
+    if (value.isUAC !== undefined) ValidateUtils.ensureBoolean(value.isUAC, "Command isUAC must be a boolean");
     ValidateUtils.ensureString(
       value.selectedParamGroupId,
       "Selected Command param group ID must be a string",
@@ -146,27 +150,30 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
     return {
       scriptType: value.scriptType,
       codeViewPlacement: value.codeViewPlacement,
+      isUAC: value.isUAC,
       selectedParamGroupId: value.selectedParamGroupId,
       paramGroups: value.paramGroups,
     };
   }
 
   private static _isCodeViewPlacement(value: unknown): value is CodeViewPlacement {
-    return value === "left" || value === "right" || value === "top"
+    return value === "follow" || value === "left" || value === "right" || value === "top"
       || value === "bottom" || value === "hide";
   }
 
   private static readonly _DEFAULT: CommandItemData = {
     scriptType: "powershell",
     content: "",
-    codeViewPlacement: "left",
+    codeViewPlacement: "follow",
+    isUAC: false,
     selectedParamGroupId: "command",
     paramGroups: [{ id: "command", name: "default params", params: [] }],
   };
 
   private static readonly _META_DEFAULT: CommandItemMeta = {
     scriptType: "powershell",
-    codeViewPlacement: "left",
+    codeViewPlacement: "follow",
+    isUAC: false,
     selectedParamGroupId: "command",
     paramGroups: [{ id: "command", name: "default params", params: [] }],
   };

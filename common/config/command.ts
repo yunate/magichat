@@ -4,9 +4,9 @@ import { ValidateUtils } from "../validator";
 export const COMMAND_CONFIG_KEY = "command";
 export const DEFAULT_COMMAND_ROOT_PATH = "${MAGICHAT_DATA}/command";
 export const DEFAULT_COMMAND_TERMINAL_INITIAL_PATH = "${MAGICHAT_DATA}/tmp/terminal";
-export const TERMINAL_PLACEMENTS = ["left", "right", "top", "bottom"] as const;
+export const DEFAULT_CODE_VIEW_PLACEMENTS = ["left", "right", "top", "bottom", "hide"] as const;
 
-export type TerminalPlacement = typeof TERMINAL_PLACEMENTS[number];
+export type DefaultCodeViewPlacement = typeof DEFAULT_CODE_VIEW_PLACEMENTS[number];
 
 export type CommandRootConfig = {
   key: string;
@@ -14,7 +14,7 @@ export type CommandRootConfig = {
 };
 
 export type CommandConfig = {
-  terminalPlacement: TerminalPlacement;
+  codeViewPlacement: DefaultCodeViewPlacement;
   terminalInitialPath: string;
   roots: CommandRootConfig[];
   activeRootKey: string;
@@ -41,8 +41,8 @@ export class CommandConfigSerializer extends ISerializer<CommandConfig> {
       || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
       throw new Error("Command config contains unexpected properties");
     }
-    if (!isTerminalPlacement(value.terminalPlacement)) {
-      throw new Error("Command terminalPlacement is invalid");
+    if (!isDefaultCodeViewPlacement(value.codeViewPlacement)) {
+      throw new Error("Command codeViewPlacement is invalid");
     }
     ValidateUtils.ensureNonBlankString(
       value.terminalInitialPath,
@@ -108,16 +108,16 @@ export class CommandConfigSerializer extends ISerializer<CommandConfig> {
   };
 
   private static readonly _DEFAULT: CommandConfig = {
-    terminalPlacement: "right",
+    codeViewPlacement: "left",
     terminalInitialPath: DEFAULT_COMMAND_TERMINAL_INITIAL_PATH,
     roots: [CommandConfigSerializer._DEFAULT_ROOT],
     activeRootKey: "default",
   };
 }
 
-export function isTerminalPlacement(value: unknown): value is TerminalPlacement {
+export function isDefaultCodeViewPlacement(value: unknown): value is DefaultCodeViewPlacement {
   return typeof value === "string"
-    && TERMINAL_PLACEMENTS.some((placement) => placement === value);
+    && DEFAULT_CODE_VIEW_PLACEMENTS.some((placement) => placement === value);
 }
 
 export const commandConfigSerializer: CommandConfigSerializer = new CommandConfigSerializer();

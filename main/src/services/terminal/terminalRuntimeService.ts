@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { BridgeRouter, type RemoteObject } from "../../../../common/ipc_bridge/rpc";
+import { BridgeRouter } from "../../../../common/ipc_bridge/rpc";
 import type { ScriptType } from "../../../../common/tasks/scriptTaskDefinition";
 import {
   terminalPtyOptionsSerializer,
   terminalRunRequestSerializer,
-  type TerminalClientRpcApi,
+  type PtyApi,
+  type PtyCallbackApi,
   type TerminalPtyOptions,
   type TerminalRunRequest,
   type TerminalRuntimeServiceApi,
@@ -13,13 +14,18 @@ import {
 } from "../../../../common/terminal";
 import { ValidateUtils } from "../../../../common/validator";
 import { createScriptExecution } from "../scriptExecution";
-import { gPtyFactory, TERMINAL_TEMPORARY_DIRECTORY } from "./ptyFactory";
-import type { RpcPty } from "./rpcPty";
+import { gUacBrokerService } from "../uacBroker/uacBrokerService";
+import { gPtyFactory } from "./ptyFactory";
+
+type TerminalCallback = PtyCallbackApi & {
+  dispose(): Promise<void>;
+};
 
 type TerminalRuntime = Readonly<{
-  rpcPty: RpcPty;
-  callback: RemoteObject<TerminalClientRpcApi>;
+  rpcPty: PtyApi;
+  callback: TerminalCallback;
   terminalType: TerminalType;
+  isUAC: boolean;
   temporaryFiles: Set<string>;
 }>;
 
@@ -30,25 +36,48 @@ type PreparedRun = Readonly<{
 }>;
 
 export class TerminalRuntimeService implements TerminalRuntimeServiceApi {
+  public onUacBrokerDisconnect(): void {
+    for (const runtime of this._runtimes.values()) {
+      if (!runtime.isUAC) continue;
+      void runtime.callback.onExit({ exitCode: -1 });
+    }
+  }
+
   public async disposeAll(): Promise<void> {
     for (const terminalId of [...this._runtimes.keys()]) await this.destroy(terminalId);
   }
 
   public async destroy(terminalId: string): Promise<void> {
-    ValidateUtils.ensureNonBlankString(terminalId);
-    const runtime = this._runtimes.get(terminalId);
-    if (runtime === undefined) return;
-    await runtime.rpcPty.kill();
-    await BridgeRouter.destroyRemoteObj(runtime.callback);
-    await Promise.all([...runtime.temporaryFiles].map(
-      (filePath) => this._deleteTemporaryFile(runtime.temporaryFiles, filePath),
-    ));
-    this._runtimes.delete(terminalId);
+    try {
+      ValidateUtils.ensureNonBlankString(terminalId);
+      const runtime = this._runtimes.get(terminalId);
+      if (runtime === undefined) return;
+      this._runtimes.delete(terminalId);
+      if (runtime.isUAC) {
+        const uacRuntimePromise = gUacBrokerService.getExistingUacTerminalRuntimeService();
+        if (uacRuntimePromise !== null) {
+          const uacRuntime = await uacRuntimePromise;
+          await uacRuntime.destroy(terminalId);
+        }
+        await BridgeRouter.destroyRemoteObj(runtime.rpcPty);
+      } else {
+        await runtime.rpcPty.kill();
+      }
+      await runtime.callback.dispose();
+      await Promise.all([...runtime.temporaryFiles].map(
+        (filePath) => this._deleteTemporaryFile(runtime.temporaryFiles, filePath),
+      ));
+      console.log(`[terminal] destroyed terminal ${terminalId}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[terminal] failed to destroy terminal ${terminalId}: ${message}`);
+    }
   }
 
   public async clearTemporaryDirectory(): Promise<void> {
+    const temporaryDirectory = gPtyFactory.temporaryDirectory;
     try {
-      await fs.rm(TERMINAL_TEMPORARY_DIRECTORY, { recursive: true, force: true });
+      await fs.rm(temporaryDirectory, { recursive: true, force: true });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[terminal] failed to remove temporary directory: ${message}`);
@@ -71,19 +100,49 @@ export class TerminalRuntimeService implements TerminalRuntimeServiceApi {
 
   public async create(
     options: TerminalPtyOptions,
-    callback: RemoteObject<TerminalClientRpcApi>,
-  ): Promise<RpcPty> {
+    callback: PtyCallbackApi,
+  ): Promise<PtyApi> {
     terminalPtyOptionsSerializer.validate(options);
-    const rpcPty = await gPtyFactory.create(options.terminalType, options, callback);
-    const terminalId = await rpcPty.getTerminalId();
+    const ptyCallback = this._createPtyCallback(callback);
+    const rpcPty = await gPtyFactory.create(options, ptyCallback);
+    const { terminalId } = await rpcPty.getInfo();
     const temporaryFiles = new Set<string>();
     this._runtimes.set(terminalId, {
       rpcPty,
-      callback,
+      callback: ptyCallback,
       terminalType: options.terminalType,
+      isUAC: options.isUAC,
       temporaryFiles,
     });
     return BridgeRouter.returnRemoteObj(rpcPty);
+  }
+
+  private _createPtyCallback(callback: PtyCallbackApi): TerminalCallback {
+    let hasExited = false;
+    const handleNotificationError = (error: unknown): void => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[terminal] renderer notification failed: ${message}`);
+    };
+    const ptyCallback: TerminalCallback = {
+      onData: (data) => {
+        if (hasExited) return;
+        void Promise.resolve(callback.onData(data)).catch(handleNotificationError);
+      },
+      onExit: (event) => {
+        if (hasExited) return;
+        hasExited = true;
+        void Promise.resolve(callback.onExit(event)).catch(handleNotificationError);
+        for (const [terminalId, runtime] of this._runtimes) {
+          if (runtime.callback !== ptyCallback) continue;
+          void this.destroy(terminalId);
+          break;
+        }
+      },
+      dispose: async () => {
+        await BridgeRouter.destroyRemoteObj(callback);
+      },
+    };
+    return ptyCallback;
   }
 
   private _requireRuntime(terminalId: string): TerminalRuntime {
@@ -96,8 +155,9 @@ export class TerminalRuntimeService implements TerminalRuntimeServiceApi {
   }
 
   private async _prepareRun(runtime: TerminalRuntime, request: TerminalRunRequest): Promise<PreparedRun> {
-    await fs.mkdir(TERMINAL_TEMPORARY_DIRECTORY, { recursive: true });
-    const basePath = path.join(TERMINAL_TEMPORARY_DIRECTORY, request.scriptId);
+    const temporaryDirectory = gPtyFactory.temporaryDirectory;
+    await fs.mkdir(temporaryDirectory, { recursive: true });
+    const basePath = path.join(temporaryDirectory, request.scriptId);
     const execution = createScriptExecution(request.scriptType, request.scriptContent, basePath);
     const scriptPath = `${basePath}${execution.extension}`;
     await this._writeTemporaryFile(runtime.temporaryFiles, scriptPath, execution.content);

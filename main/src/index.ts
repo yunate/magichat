@@ -1,6 +1,6 @@
+import "./infra/initializeApplicationPaths";
 import { app, BrowserWindow, Menu, Tray } from "electron";
 import fs from "node:fs";
-import path from "node:path";
 import { COMMAND_CONFIG_KEY } from "../../common/config/command";
 import { BridgeRouter } from "../../common/ipc_bridge/rpc";
 import { RpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
@@ -26,17 +26,21 @@ function configureChromiumScheduling(): void {
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 }
 
-function configureInstanceScope(): void {
-  if (app.isPackaged) return;
-  app.setPath("userData", path.join(app.getPath("appData"), "magichat-development"));
-}
-
 function bringPrimaryWindowToFront(): void {
   if (gIsShutdownStarted) return;
   const browserWindow = BrowserWindow.getAllWindows()[0];
   if (browserWindow === undefined) return;
   if (browserWindow.isMinimized()) browserWindow.restore();
   if (!browserWindow.isVisible()) browserWindow.show();
+  browserWindow.moveTop();
+  browserWindow.focus();
+}
+
+function showPrimaryWindow(): void {
+  const browserWindow = BrowserWindow.getAllWindows()[0];
+  if (browserWindow === undefined) return;
+  if (browserWindow.isMinimized()) browserWindow.restore();
+  browserWindow.show();
   browserWindow.moveTop();
   browserWindow.focus();
 }
@@ -59,15 +63,6 @@ async function shutdown(): Promise<void> {
   await gLogger.dispose();
 }
 
-function showPrimaryWindow(): void {
-  const browserWindow = BrowserWindow.getAllWindows()[0];
-  if (browserWindow === undefined) return;
-  if (browserWindow.isMinimized()) browserWindow.restore();
-  browserWindow.show();
-  browserWindow.moveTop();
-  browserWindow.focus();
-}
-
 function createTray(): void {
   const tray = new Tray(gApplicationPaths.appIconPath);
   tray.setToolTip("MagicHat");
@@ -84,10 +79,11 @@ function createTray(): void {
   gTray = tray;
 }
 
-function updateTerminalInitialPath(): void {
+async function updateTerminalInitialPath(): Promise<void> {
   try {
     const config = gConfigManager.get(COMMAND_CONFIG_KEY);
     gPtyFactory.setInitialPath(config.terminalInitialPath);
+    await gUacBrokerService.setTerminalInitialPath(config.terminalInitialPath);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[terminal] prewarming configuration failed: ${message}`);
@@ -95,7 +91,6 @@ function updateTerminalInitialPath(): void {
 }
 
 configureChromiumScheduling();
-configureInstanceScope();
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -108,10 +103,11 @@ if (!hasSingleInstanceLock) {
     const buildVersion = fs.readFileSync(gApplicationPaths.buildVersionPath, "utf8").trim();
     console.log(`[main] Application started. Version: ${buildVersion}.`);
     RpcObjectRegistry.register(BridgeRouter.getRouter());
+    gUacBrokerService.onDisconnect(() => gTerminalRuntimeService.onUacBrokerDisconnect());
     await gCliBridge.start(app.getPath("userData"));
-    updateTerminalInitialPath();
+    await updateTerminalInitialPath();
     gUnsubscribeConfigChanges = gConfigManager.onChange((configKey) => {
-      if (configKey === COMMAND_CONFIG_KEY) updateTerminalInitialPath();
+      if (configKey === COMMAND_CONFIG_KEY) void updateTerminalInitialPath();
     });
     gTaskManager.startQueuedTasks();
     await WindowFactory.createWindow();

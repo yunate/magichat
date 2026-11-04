@@ -31,7 +31,7 @@ import type {
   TreeViewItem,
   TreeViewTab,
 } from "../../../../../../common/treeView";
-import type { TerminalPlacement } from "../../../../../../common/config/command";
+import type { DefaultCodeViewPlacement } from "../../../../../../common/config/command";
 import {
   TREE_VIEW_ITEM_FILE_EXTENSION,
   TreeViewPath,
@@ -83,11 +83,12 @@ type TerminalStatus = Readonly<{
   message: string;
 }>;
 
-const OPPOSITE_PLACEMENTS: Readonly<Record<TerminalPlacement, TerminalPlacement>> = {
+const OPPOSITE_PLACEMENTS: Readonly<Record<DefaultCodeViewPlacement, DefaultCodeViewPlacement>> = {
   left: "right",
   right: "left",
   top: "bottom",
   bottom: "top",
+  hide: "hide",
 };
 
 type Props = {
@@ -95,7 +96,7 @@ type Props = {
   entity: TreeViewFolder | TreeViewItem;
   isActive: boolean;
   notifyReady: () => void;
-  terminalPlacement: TerminalPlacement;
+  defaultCodeViewPlacement: DefaultCodeViewPlacement;
   terminalInitialPath: string;
   treeView: TreeView;
   getOpenFolderData: (id: string) => CommandFolderData | null;
@@ -112,11 +113,19 @@ const emit = defineEmits<{
 }>();
 
 const codeViewPlacement = computed<CodeViewPlacement>({
-  get: () => getItemDraft().data.codeViewPlacement ?? "left",
+  get: () => getItemDraft().data.codeViewPlacement ?? "follow",
   set: (placement) => {
     const current = getItemDraft();
-    if ((current.data.codeViewPlacement ?? "left") === placement) return;
+    if ((current.data.codeViewPlacement ?? "follow") === placement) return;
     replaceDraft({ ...current, data: { ...current.data, codeViewPlacement: placement } });
+  },
+});
+const isTerminalUAC = computed({
+  get: () => getItemDraft().data.isUAC ?? false,
+  set: (isUAC: boolean) => {
+    const current = getItemDraft();
+    if ((current.data.isUAC ?? false) === isUAC) return;
+    replaceDraft({ ...current, data: { ...current.data, isUAC } });
   },
 });
 const draft = shallowRef<CommandEditorDraft | null>(null);
@@ -213,10 +222,11 @@ const paramGroups = computed<readonly TextEditParamGroup[]>(() => {
     params: group.params,
   }));
 });
-const isCodeViewHidden = computed(() => codeViewPlacement.value === "hide");
-const terminalPlacement = computed(() => codeViewPlacement.value === "hide"
-  ? props.terminalPlacement
-  : OPPOSITE_PLACEMENTS[codeViewPlacement.value]);
+const resolvedCodeViewPlacement = computed(() => codeViewPlacement.value === "follow"
+  ? props.defaultCodeViewPlacement
+  : codeViewPlacement.value);
+const isCodeViewHidden = computed(() => resolvedCodeViewPlacement.value === "hide");
+const terminalPlacement = computed(() => OPPOSITE_PLACEMENTS[resolvedCodeViewPlacement.value]);
 const isSideBySide = computed(() => ["left", "right"].includes(terminalPlacement.value));
 const isScriptBeforeTerminal = computed(() => ["right", "bottom"].includes(
   terminalPlacement.value,
@@ -391,9 +401,7 @@ function createDraft(
 ): CommandEditorDraft {
   if (isTreeViewItem(entity)) {
     const loadedData = commandItemDataSerializer.fromEntityData(entityData);
-    const data = cloneItemData(entityData.dataJson === null
-      ? { ...loadedData, codeViewPlacement: OPPOSITE_PLACEMENTS[props.terminalPlacement] }
-      : loadedData);
+    const data = cloneItemData(loadedData);
     return {
       kind: "item",
       id: entity.properties.id,
@@ -700,6 +708,7 @@ async function openHandler(): Promise<void> {
     if (terminalApi === null) throw new Error("Terminal is unavailable");
     await runWithOperationProgress("Opening Terminal...", async () => {
       if (terminalApi.hasConnectedPty) return;
+      await terminalApi.destroyPty();
       await terminalApi.initialize();
       if (!await createTerminalPty(terminalApi, toTerminalType(getItemDraft().data.scriptType))) return;
       isTerminalActive.value = true;
@@ -760,6 +769,7 @@ function createTerminalPty(
     props.terminalInitialPath,
     TERMINAL_STATUS_CHECK_INTERVAL_MS,
     onTerminalRunStatusChange,
+    isTerminalUAC.value,
   ).then(() => true).catch(async (reason: unknown) => {
     const message = errorMessage(reason);
     reportTerminalError(message);
@@ -911,7 +921,8 @@ function areFolderDataEqual(left: CommandFolderData, right: CommandFolderData): 
 function areItemDataEqual(left: CommandItemData, right: CommandItemData): boolean {
   return left.scriptType === right.scriptType
     && left.content === right.content
-    && (left.codeViewPlacement ?? "left") === (right.codeViewPlacement ?? "left")
+    && (left.codeViewPlacement ?? "follow") === (right.codeViewPlacement ?? "follow")
+    && (left.isUAC ?? false) === (right.isUAC ?? false)
     && left.selectedParamGroupId === right.selectedParamGroupId
     && areParamGroupsEqual(left.paramGroups, right.paramGroups);
 }
@@ -948,6 +959,7 @@ function cloneItemData(data: CommandItemData): CommandItemData {
     scriptType: data.scriptType,
     content: data.content,
     codeViewPlacement: data.codeViewPlacement,
+    isUAC: data.isUAC,
     selectedParamGroupId: data.selectedParamGroupId,
     paramGroups: cloneParamGroups(data.paramGroups),
   };
@@ -1163,7 +1175,9 @@ function reportTerminalLastLine(): void {
         >Open</button>
         <CommandTerminalMenu
           v-model:code-view-placement="codeViewPlacement"
+          v-model:is-uac="isTerminalUAC"
           :is-active="isActive"
+          :is-terminal-active="isTerminalActive"
         />
       </header>
       <TerminalComponent

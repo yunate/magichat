@@ -1,8 +1,9 @@
 {
   "id": "8b7d44e2-1d57-4dbc-a999-519cafc1cf23",
-  "isExpanded": true,
+  "isExpanded": false,
   "folderOrder": [],
   "itemOrder": [
+    "show env",
     "ps1-mhgetenv",
     "cmd-mhgetenv",
     "node-mhgetenv",

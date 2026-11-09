@@ -35,10 +35,6 @@ export type TreeViewTabsDataProvider = Pick<
   | "move"
 >;
 
-type TreeViewRemoteOperationRunner = (
-  start: (operationId: string) => Promise<void>,
-) => Promise<void>;
-
 type TreeViewTabsOperationIdentity = Readonly<{
   workspacePath: string;
   installRevision: number;
@@ -46,7 +42,7 @@ type TreeViewTabsOperationIdentity = Readonly<{
 
 export type TreeViewTabsSnapshot = Pick<
   TreeViewWorkspace,
-  "tabs" | "activeTabId" | "previewTabId"
+  "tabs" | "activeTabPath" | "previewTabPath"
 >;
 
 type TreeViewTabsState = TreeViewTabsSnapshot & {
@@ -67,7 +63,6 @@ export type TreeViewDraftCreated = Readonly<{
 
 export type TreeViewDraftDiscarded = Readonly<{
   workspacePath: string;
-  itemId: string;
   path: string;
 }>;
 
@@ -76,17 +71,13 @@ export class TreeViewTabsModel {
     this.tabs = computed(() => this._state.value?.tabs ?? []);
     this.activeTab = computed(() => {
       const state = this._state.value;
-      return state?.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+      return state?.tabs.find((tab) => tab.path === state.activeTabPath) ?? null;
     });
-    this.previewTabId = computed(() => this._state.value?.previewTabId ?? null);
+    this.previewTabPath = computed(() => this._state.value?.previewTabPath ?? null);
   }
 
-  public initialize(
-    dataProvider: TreeViewTabsDataProvider,
-    runRemoteOperation: TreeViewRemoteOperationRunner,
-  ): void {
+  public initialize(dataProvider: TreeViewTabsDataProvider): void {
     this._dataProvider = dataProvider;
-    this._runRemoteOperation = runRemoteOperation;
   }
 
   public install(workspacePath: string | null, snapshot: TreeViewTabsSnapshot | null): void {
@@ -100,12 +91,8 @@ export class TreeViewTabsModel {
     this._state.value = {
       workspacePath,
       tabs,
-      activeTabId: tabs.some((tab) => tab.id === snapshot.activeTabId)
-        ? snapshot.activeTabId
-        : tabs[0]?.id ?? null,
-      previewTabId: tabs.some((tab) => (
-        tab.id === snapshot.previewTabId && !tab.isPinned
-      )) ? snapshot.previewTabId : null,
+      activeTabPath: snapshot.activeTabPath === null ? null : join(workspacePath, snapshot.activeTabPath),
+      previewTabPath: snapshot.previewTabPath === null ? null : join(workspacePath, snapshot.previewTabPath),
     };
   }
 
@@ -117,17 +104,25 @@ export class TreeViewTabsModel {
         ...tab,
         path: relative(state.workspacePath, tab.path) || ".",
       })),
-      activeTabId: state.activeTabId,
-      previewTabId: state.previewTabId,
+      activeTabPath: state.activeTabPath === null ? null : relative(state.workspacePath, state.activeTabPath) || ".",
+      previewTabPath: state.previewTabPath === null ? null : relative(state.workspacePath, state.previewTabPath) || ".",
     };
   }
 
-  public getTab(tabId: string): TreeViewTab | null {
-    return this._state.value?.tabs.find((tab) => tab.id === tabId) ?? null;
+  public getTab(tabPath: string): TreeViewTab | null {
+    return this._state.value?.tabs.find((tab) => tab.path === tabPath) ?? null;
+  }
+
+  public getPageKey(tab: TreeViewTab): number {
+    const existing = this._pageKeys.get(tab);
+    if (existing !== undefined) return existing;
+    const key = this._nextPageKey++;
+    this._pageKeys.set(tab, key);
+    return key;
   }
 
   public isTabEntityComplete(tab: TreeViewTab): boolean {
-    return this._incompleteEntities.value.get(tab.id) !== tab.path;
+    return this._incompleteEntities.value.get(tab.path) !== tab.path;
   }
 
   public async checkTabEntitiesIntegrity(): Promise<void> {
@@ -143,100 +138,99 @@ export class TreeViewTabsModel {
     if (revision !== this._installRevision) return;
     const incompleteEntities = new Map<string, string>();
     for (const [index, tab] of tabs.entries()) {
-      const current = this.getTab(tab.id);
+      const current = this.getTab(tab.path);
       if (current?.kind === tab.kind && current.path === tab.path && results[index] === false) {
-        incompleteEntities.set(tab.id, tab.path);
+        incompleteEntities.set(tab.path, tab.path);
       }
     }
     this._incompleteEntities.value = incompleteEntities;
   }
 
-  public activate(params: TreeViewActivateParams, path: string): void {
+  public activate(params: TreeViewActivateParams): void {
     const state = this._requireStateClone();
-    const existingIndex = state.tabs.findIndex((tab) => tab.id === params.id);
+    const existingIndex = state.tabs.findIndex((tab) => tab.path === params.path);
     if (existingIndex < 0 && params.openMode !== "normal" && params.openMode !== "pinned") {
-      const previewTabId = state.previewTabId;
-      if (previewTabId !== null) {
-        const previewIndex = state.tabs.findIndex((tab) => tab.id === previewTabId);
+      const previewTabPath = state.previewTabPath;
+      if (previewTabPath !== null) {
+        const previewIndex = state.tabs.findIndex((tab) => tab.path === previewTabPath);
         if (previewIndex >= 0) {
           state.tabs[previewIndex] = {
             kind: params.kind,
-            id: params.id,
-            path,
+            path: params.path,
             isPinned: false,
           };
-          state.previewTabId = params.id;
-          if (state.activeTabId === previewTabId) state.activeTabId = params.id;
+          state.previewTabPath = params.path;
+          if (state.activeTabPath === previewTabPath) state.activeTabPath = params.path;
         }
       }
     }
-    const isNewTab = !state.tabs.some((tab) => tab.id === params.id);
+    const isNewTab = !state.tabs.some((tab) => tab.path === params.path);
     if (isNewTab) {
-      state.tabs.push({ kind: params.kind, id: params.id, path, isPinned: false });
+      state.tabs.push({ kind: params.kind, path: params.path, isPinned: false });
     }
     if (params.openMode === "pinned") {
-      this._pinTab(state, params.id, true);
-      this._clearPreviewTab(state, params.id);
+      this._pinTab(state, params.path, true);
+      this._clearPreviewTab(state, params.path);
     } else if (params.openMode === "normal") {
-      this._clearPreviewTab(state, params.id);
+      this._clearPreviewTab(state, params.path);
     } else if (isNewTab) {
-      state.previewTabId = params.id;
+      state.previewTabPath = params.path;
     }
-    state.activeTabId ??= params.id;
+    state.activeTabPath ??= params.path;
     this._state.value = state;
   }
 
   public promoteTab(params: TreeViewSwitchTabParams): boolean {
     const state = this._requireStateClone();
-    if (!state.tabs.some((tab) => tab.id === params.tabId)) {
+    if (!state.tabs.some((tab) => tab.path === params.tabPath)) {
       throw new Error("TreeView tab is missing");
     }
-    if (state.previewTabId !== params.tabId) return false;
-    this._clearPreviewTab(state, params.tabId);
+    if (state.previewTabPath !== params.tabPath) return false;
+    this._clearPreviewTab(state, params.tabPath);
     this._state.value = state;
     return true;
   }
 
   public switchTab(params: TreeViewSwitchTabParams): boolean {
     const state = this._requireStateClone();
-    if (!state.tabs.some((tab) => tab.id === params.tabId)) {
+    if (!state.tabs.some((tab) => tab.path === params.tabPath)) {
       throw new Error("TreeView tab is missing");
     }
-    if (state.activeTabId === params.tabId) return false;
-    state.activeTabId = params.tabId;
+    if (state.activeTabPath === params.tabPath) return false;
+    state.activeTabPath = params.tabPath;
     this._state.value = state;
     return true;
   }
 
   public closeTabs(params: TreeViewCloseTabsParams): void {
     const state = this._requireStateClone();
-    const closingIds = new Set(params.tabIds);
-    const activeIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
-    state.tabs = state.tabs.filter((tab) => !closingIds.has(tab.id));
-    if (state.previewTabId !== null && closingIds.has(state.previewTabId)) {
-      state.previewTabId = null;
+    const closingPaths = new Set(params.tabPaths);
+    const activeIndex = state.tabs.findIndex((tab) => tab.path === state.activeTabPath);
+    state.tabs = state.tabs.filter((tab) => !closingPaths.has(tab.path));
+    if (state.previewTabPath !== null && closingPaths.has(state.previewTabPath)) {
+      state.previewTabPath = null;
     }
-    if (state.activeTabId !== null && closingIds.has(state.activeTabId)) {
-      const preferred = params.preferredActiveId;
-      state.activeTabId = preferred !== undefined
-        && state.tabs.some((tab) => tab.id === preferred)
+    if (state.activeTabPath !== null && closingPaths.has(state.activeTabPath)) {
+      const preferred = params.preferredActivePath;
+      state.activeTabPath = preferred !== undefined
+        && state.tabs.some((tab) => tab.path === preferred)
         ? preferred
-        : state.tabs[Math.min(activeIndex, state.tabs.length - 1)]?.id ?? null;
+        : state.tabs[Math.min(activeIndex, state.tabs.length - 1)]?.path ?? null;
     }
     this._state.value = state;
   }
 
   public setTabPinned(params: TreeViewSetTabPinnedParams): void {
     const state = this._requireStateClone();
-    this._pinTab(state, params.tabId, params.isPinned);
-    if (params.isPinned) this._clearPreviewTab(state, params.tabId);
+    this._pinTab(state, params.tabPath, params.isPinned);
+    if (params.isPinned) this._clearPreviewTab(state, params.tabPath);
     this._state.value = state;
   }
 
   public reorderTabs(params: TreeViewReorderTabsParams): void {
     const state = this._requireStateClone();
-    const sourceIndex = state.tabs.findIndex((tab) => tab.id === params.draggedId);
-    const targetIndex = state.tabs.findIndex((tab) => tab.id === params.targetId);
+    const sourceIndex = state.tabs.findIndex((tab) => tab.path === params.draggedPath);
+    const targetIndex = state.tabs.findIndex((tab) => tab.path === params.targetPath);
     const tab = state.tabs[sourceIndex];
     const targetTab = state.tabs[targetIndex];
     if (tab === undefined || targetTab === undefined) throw new Error("TreeView reorder tab is missing");
@@ -244,38 +238,49 @@ export class TreeViewTabsModel {
       throw new Error("TreeView tabs cannot be reordered across the pinned boundary");
     }
     state.tabs.splice(sourceIndex, 1);
-    const adjustedTarget = state.tabs.findIndex((candidate) => candidate.id === params.targetId);
+    const adjustedTarget = state.tabs.findIndex((candidate) => candidate.path === params.targetPath);
     state.tabs.splice(adjustedTarget + (params.position === "after" ? 1 : 0), 0, tab);
     this._state.value = state;
   }
 
   public rebasePaths(sourcePath: string, targetPath: string): boolean {
     const state = this._requireStateClone();
+    const rebase = (value: string): string => value === sourcePath || value.startsWith(`${sourcePath}/`)
+      ? `${targetPath}${value.slice(sourcePath.length)}`
+      : value;
     let hasChanged = false;
     state.tabs = state.tabs.map((tab) => {
       if (tab.path !== sourcePath && !tab.path.startsWith(`${sourcePath}/`)) return tab;
       hasChanged = true;
-      return {
-        ...tab,
-        path: tab.path === sourcePath
-          ? targetPath
-          : `${targetPath}${tab.path.slice(sourcePath.length)}`,
-      };
+      const rebased = { ...tab, path: rebase(tab.path) };
+      this._pageKeys.set(rebased, this.getPageKey(tab));
+      return rebased;
     });
-    if (hasChanged) this._state.value = state;
+    if (state.workspacePath === sourcePath) {
+      state.workspacePath = targetPath;
+      hasChanged = true;
+    }
+    if (hasChanged) {
+      if (state.activeTabPath !== null) state.activeTabPath = rebase(state.activeTabPath);
+      if (state.previewTabPath !== null) state.previewTabPath = rebase(state.previewTabPath);
+      this._incompleteEntities.value = new Map(
+        [...this._incompleteEntities.value].map(([key, value]) => [rebase(key), rebase(value)]),
+      );
+      this._state.value = state;
+    }
     return hasChanged;
   }
 
   public closeDeleted(kind: "folder" | "item", deletedPath: string): boolean {
     const state = this._requireStateClone();
-    const closingIds = state.tabs.flatMap((tab) => {
+    const closingPaths = state.tabs.flatMap((tab) => {
       const isDeleted = kind === "item"
         ? tab.kind === "item" && tab.path === deletedPath
         : tab.path === deletedPath || tab.path.startsWith(`${deletedPath}/`);
-      return isDeleted ? [tab.id] : [];
+      return isDeleted ? [tab.path] : [];
     });
-    if (closingIds.length === 0) return false;
-    this.closeTabs({ tabIds: closingIds });
+    if (closingPaths.length === 0) return false;
+    this.closeTabs({ tabPaths: closingPaths });
     return true;
   }
 
@@ -299,12 +304,11 @@ export class TreeViewTabsModel {
       ? await this._getDataProvider().getFolder(tab.path, 1)
       : await this._getDataProvider().getItem(tab.path);
     const current = this._state.value;
-    const currentTab = current?.tabs.find((candidate) => candidate.id === tab.id);
+    const currentTab = current?.tabs.find((candidate) => candidate.path === tab.path);
     if (current?.workspacePath !== workspacePath
       || currentTab?.kind !== tab.kind
       || currentTab.path !== tab.path
       || entity.path !== tab.path
-      || entity.properties.id !== tab.id
       || (tab.kind === "folder") !== ("folders" in entity)) {
       throw new Error(`TreeView Tab target does not match: ${tab.path}`);
     }
@@ -325,10 +329,10 @@ export class TreeViewTabsModel {
   public async createDraft(itemPath: string): Promise<TreeViewDraftCreated> {
     const identity = this._captureOperationIdentity();
     const availablePath = await this._getDataProvider().getAvailableItemPath(itemPath);
-    const item = await this._getDataProvider().createItem(availablePath, { isDraft: true });
+    const item = await this._getDataProvider().createItem(availablePath, { isDraft: true, iconDescription: "" });
     this._ensureOperationIdentity(identity);
-    this.activate({ kind: "item", id: item.properties.id, openMode: "normal" }, item.path);
-    this.switchTab({ tabId: item.properties.id });
+    this.activate({ kind: "item", path: item.path, openMode: "normal" });
+    this.switchTab({ tabPath: item.path });
     return { workspacePath: identity.workspacePath, item };
   }
 
@@ -337,7 +341,7 @@ export class TreeViewTabsModel {
   ): Promise<TreeViewDraftPublished> {
     const identity = this._captureOperationIdentity();
     const sourceItem = await this._getDataProvider().getItem(params.sourcePath);
-    if (sourceItem.properties.id !== params.itemId) throw new Error("TreeView draft is missing");
+    if (!sourceItem.properties.isDraft) throw new Error("TreeView draft is missing");
     const trimmedName = params.name.trim();
     if (trimmedName.length === 0) throw new Error("TreeView item name is required");
     const targetPath = join(
@@ -358,7 +362,7 @@ export class TreeViewTabsModel {
     });
     const targetItem = await this._getDataProvider().getItem(targetPath);
     this._ensureOperationIdentity(identity);
-    this.activate({ kind: "item", id: params.itemId, openMode: "normal" }, targetPath);
+    this.activate({ kind: "item", path: targetPath, openMode: "normal" });
     return {
       workspacePath: identity.workspacePath,
       sourceItem,
@@ -367,26 +371,29 @@ export class TreeViewTabsModel {
     };
   }
 
-  public async discardDraft(itemId: string): Promise<TreeViewDraftDiscarded> {
+  public async discardDraft(itemPath: string): Promise<TreeViewDraftDiscarded> {
     const identity = this._captureOperationIdentity();
-    const tab = this.getTab(itemId);
+    const tab = this.getTab(itemPath);
     if (tab?.kind !== "item") throw new Error("TreeView draft is missing");
     const item = await this._getDataProvider().getItem(tab.path);
-    if (item.properties.id !== itemId || !item.properties.isDraft) {
+    if (item.path !== itemPath || !item.properties.isDraft) {
       throw new Error("TreeView draft is missing");
     }
-    await this._runRemote((operationId) => (
-      this._getDataProvider().deleteItem(operationId, item.path)
-    ));
+    await this._getDataProvider().deleteItem(item.path);
     this._ensureOperationIdentity(identity);
-    this.closeTabs({ tabIds: [itemId] });
-    return { workspacePath: identity.workspacePath, itemId, path: item.path };
+    this.closeTabs({ tabPaths: [itemPath] });
+    return { workspacePath: identity.workspacePath, path: item.path };
   }
 
   private _requireStateClone(): TreeViewTabsState {
     const state = this._state.value;
     if (state === null) throw new Error("TreeView workspace is not loaded");
-    return structuredClone(state);
+    const clone = structuredClone(state);
+    for (const [index, tab] of clone.tabs.entries()) {
+      const original = state.tabs[index];
+      if (original !== undefined) this._pageKeys.set(tab, this.getPageKey(original));
+    }
+    return clone;
   }
 
   private _getDataProvider(): TreeViewTabsDataProvider {
@@ -395,16 +402,8 @@ export class TreeViewTabsModel {
     return dataProvider;
   }
 
-  private _runRemote(start: (operationId: string) => Promise<void>): Promise<void> {
-    const runRemoteOperation = this._runRemoteOperation;
-    if (runRemoteOperation === null) {
-      throw new Error("TreeView Tabs operation runner is not initialized");
-    }
-    return runRemoteOperation(start);
-  }
-
-  private _pinTab(state: TreeViewTabsState, tabId: string, isPinned: boolean): void {
-    const index = state.tabs.findIndex((tab) => tab.id === tabId);
+  private _pinTab(state: TreeViewTabsState, tabPath: string, isPinned: boolean): void {
+    const index = state.tabs.findIndex((tab) => tab.path === tabPath);
     const tab = state.tabs[index];
     if (tab === undefined) throw new Error("TreeView tab is missing");
     if (tab.isPinned === isPinned) return;
@@ -415,8 +414,8 @@ export class TreeViewTabsModel {
     state.tabs.splice(insertionIndex, 0, tab);
   }
 
-  private _clearPreviewTab(state: TreeViewTabsState, tabId: string): void {
-    if (state.previewTabId === tabId) state.previewTabId = null;
+  private _clearPreviewTab(state: TreeViewTabsState, tabPath: string): void {
+    if (state.previewTabPath === tabPath) state.previewTabPath = null;
   }
 
   private _ensureWorkspacePath(workspacePath: string, targetPath: string): void {
@@ -439,11 +438,12 @@ export class TreeViewTabsModel {
 
   public readonly tabs: ComputedRef<readonly TreeViewTab[]>;
   public readonly activeTab: ComputedRef<TreeViewTab | null>;
-  public readonly previewTabId: ComputedRef<string | null>;
+  public readonly previewTabPath: ComputedRef<string | null>;
 
   private _dataProvider: TreeViewTabsDataProvider | null = null;
-  private _runRemoteOperation: TreeViewRemoteOperationRunner | null = null;
   private _installRevision = 0;
+  private _nextPageKey = 0;
+  private readonly _pageKeys = new WeakMap<TreeViewTab, number>();
   private readonly _state = shallowRef<TreeViewTabsState | null>(null);
   private readonly _incompleteEntities = shallowRef<ReadonlyMap<string, string>>(new Map());
 }

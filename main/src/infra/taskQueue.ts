@@ -1,5 +1,6 @@
 export class TaskQueue {
-  public pushTask(task: () => Promise<void>): void {
+  public pushTask(task: () => Promise<void> | void): void {
+    if (this._isDisposed) return;
     this._pendingTasks.push(task);
     this._ensureRun();
   }
@@ -13,10 +14,15 @@ export class TaskQueue {
     await this._runningTask;
   }
 
+  public async dispose(): Promise<void> {
+    this._isDisposed = true;
+    await this.cancel();
+  }
+
   private _ensureRun(): void {
     if (this._runningTask !== null || this._pendingTasks.length === 0) return;
     this._runningTask = new Promise<void>((resolve) => {
-      setImmediate(async () => {
+      setTimeout(async () => {
         try {
           const task = this._pendingTasks.shift();
           if (task !== undefined) await task();
@@ -25,10 +31,11 @@ export class TaskQueue {
           resolve();
           this._ensureRun();
         }
-      });
+      }, 0);
     });
   }
 
-  private readonly _pendingTasks: (() => Promise<void>)[] = [];
+  private readonly _pendingTasks: Array<() => Promise<void> | void> = [];
   private _runningTask: Promise<void> | null = null;
+  private _isDisposed = false;
 }

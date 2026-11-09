@@ -1,6 +1,6 @@
 export type TreeViewSelection = {
   kind: "folder" | "item";
-  id: string;
+  path: string;
 };
 
 export type TreeViewDropPosition = "before" | "inside" | "inside-before" | "after";
@@ -10,27 +10,26 @@ export type TreeViewActivateParams = TreeViewSelection & {
 };
 
 export type TreeViewCloseTabsParams = {
-  tabIds: readonly string[];
-  preferredActiveId?: string;
+  tabPaths: readonly string[];
+  preferredActivePath?: string;
 };
 
 export type TreeViewSetTabPinnedParams = {
-  tabId: string;
+  tabPath: string;
   isPinned: boolean;
 };
 
 export type TreeViewReorderTabsParams = {
-  draggedId: string;
-  targetId: string;
+  draggedPath: string;
+  targetPath: string;
   position: "before" | "after";
 };
 
 export type TreeViewSwitchTabParams = {
-  tabId: string;
+  tabPath: string;
 };
 
 export type TreeViewSaveDraftParams = {
-  itemId: string;
   sourcePath: string;
   targetFolderPath: string;
   name: string;

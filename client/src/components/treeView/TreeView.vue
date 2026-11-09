@@ -163,11 +163,9 @@ onMounted(() => {
     contextMenuResizeObserver.observe(element);
   }
   updateContextMenuArea();
-  props.treeView.startBackgroundTasks();
 });
 
 onUnmounted(() => {
-  props.treeView.pauseBackgroundTasks();
   window.removeEventListener("resize", updateContextMenuArea);
   contextMenuResizeObserver?.disconnect();
   contextMenuResizeObserver = null;
@@ -218,8 +216,9 @@ onUnmounted(() => {
         <TreeViewExplorer
           :model="treeView.explorerModel"
           :actions="treeView.controller"
+          :selected-path="treeView.selection.value"
           :workspace-path="treeView.selectedWorkspaceRef.value?.workspacePath ?? null"
-          :workspace-revision="treeView.workspaceRevision.value"
+          :workspace-ref="treeView.selectedWorkspaceRef.value"
           :workspace-root-key="treeView.selectedWorkspaceRef.value?.rootKey ?? null"
           :workspace-refs="treeView.workspaceRefs.value"
           :folder-label="folderLabel"

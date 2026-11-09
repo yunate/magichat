@@ -1,6 +1,5 @@
 import type {
   TreeViewCloneParams,
-  TreeViewCreateItemProperties,
   TreeViewEntityData,
   TreeViewEntityDataParams,
   TreeViewFolder,
@@ -12,7 +11,6 @@ import type {
 } from "./treeViewTypes";
 
 export interface TreeViewDataNotifierClientRpcApi {
-  operationCompleted(operationId: string, errorMessage: string | null): void;
   storageChanged(): void;
   storageWarning(message: string): void;
 }
@@ -29,25 +27,24 @@ export interface TreeViewDataProvider {
     isSelected: boolean,
   ): Promise<string>;
   renameWorkspace(workspacePath: string, newName: string): Promise<string>;
-  deleteWorkspace(operationId: string, workspacePath: string): void;
+  deleteWorkspace(workspacePath: string): Promise<void>;
   getFolder(folderPath: string, depth?: number): Promise<TreeViewFolder>;
   getFolderProperties(folderPath: string): Promise<TreeViewFolderProperties>;
-  createFolder(folderPath: string): Promise<string>;
+  createFolder(folderPath: string): Promise<TreeViewFolder>;
   updateFolderProperties(folderPath: string, properties: TreeViewFolderProperties): Promise<void>;
-  deleteFolder(operationId: string, folderPath: string): void;
+  deleteFolder(folderPath: string): Promise<void>;
   checkEntitiesIntegrity(entities: TreeViewEntityDataParams[]): Promise<boolean[]>;
   getItem(itemPath: string): Promise<TreeViewItem>;
   getAvailableItemPath(itemPath: string): Promise<string>;
   createItem(
     itemPath: string,
-    properties: TreeViewCreateItemProperties,
+    properties: TreeViewItemProperties,
   ): Promise<TreeViewItem>;
   updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void>;
-  repairEntityId(params: TreeViewEntityDataParams, id: string): Promise<void>;
-  deleteItem(operationId: string, itemPath: string): void;
+  deleteItem(itemPath: string): Promise<void>;
   getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData>;
   updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void>;
   openInExplorer(kind: "folder" | "item", targetPath: string): Promise<void>;
-  clone(operationId: string, params: TreeViewCloneParams): void;
+  clone(params: TreeViewCloneParams): Promise<void>;
   move(params: TreeViewMoveParams): Promise<void>;
 }

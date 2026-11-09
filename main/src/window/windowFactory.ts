@@ -13,10 +13,10 @@ export class WindowFactory {
     const connectId = randomUUID();
     const { port1, port2 } = new MessageChannelMain();
     const peer = createMessagePortPeer(port1, connectId);
+    BridgeRouter.getRouter().startDispatchMessage(peer);
     const window = new MainWindow(peer);
 
     WindowManager.getInstance().add(window);
-    BridgeRouter.getRouter().startDispatchMessage(peer);
     peer.onDisconnect(() => {
       WindowManager.getInstance().remove(peer);
       console.log(`[main] ${connectId} disconnected`);

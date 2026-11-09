@@ -16,14 +16,14 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  save: [name: string, folderId: string];
+  save: [name: string, folderPath: string];
   cancel: [];
 }>();
 
 const dialog = useTemplateRef<HTMLElement>("dialog");
 const nameInput = useTemplateRef<HTMLInputElement>("nameInput");
 const name = ref("");
-const folderId = ref("");
+const folderPath = ref("");
 let returnFocus: HTMLElement | null = null;
 
 const folderOptions = computed<readonly FolderOption[]>(() => {
@@ -38,13 +38,13 @@ const folderOptions = computed<readonly FolderOption[]>(() => {
 });
 
 const selectedFolder = computed(() => folderOptions.value
-  .find((option) => option.folder.properties.id === folderId.value)?.folder ?? null);
+  .find((option) => option.folder.path === folderPath.value)?.folder ?? null);
 
 watch(() => props.item, (item, previous) => {
   if (item !== null) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     name.value = item.name;
-    folderId.value = props.rootFolder?.properties.id ?? "";
+    folderPath.value = props.rootFolder?.path ?? "";
     void nextTick(() => {
       nameInput.value?.focus();
       nameInput.value?.select();
@@ -57,8 +57,8 @@ watch(() => props.item, (item, previous) => {
 });
 
 function submit(): void {
-  if (props.isSubmitting || folderId.value.length === 0) return;
-  emit("save", name.value, folderId.value);
+  if (props.isSubmitting || folderPath.value.length === 0) return;
+  emit("save", name.value, folderPath.value);
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -123,12 +123,12 @@ function onKeydown(event: KeyboardEvent): void {
           <legend class="sr-only">Folder</legend>
           <label
             v-for="option in folderOptions"
-            :key="option.folder.properties.id"
+            :key="option.folder.path"
             class="draft-dialog__folder"
-            :class="{ 'is-selected': option.folder.properties.id === folderId }"
+            :class="{ 'is-selected': option.folder.path === folderPath }"
             :style="{ paddingInlineStart: `${option.depth * 16 + 8}px` }"
           >
-            <input v-model="folderId" type="radio" name="draft-folder" :value="option.folder.properties.id" />
+            <input v-model="folderPath" type="radio" name="draft-folder" :value="option.folder.path" />
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 4.25h4l1.3 1.5h7.2v6.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-8Z" /></svg>
             <span>{{ option.folder.name }}</span>
           </label>

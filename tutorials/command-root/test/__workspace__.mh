@@ -1,0 +1,28 @@
+{
+  "isSelected": true,
+  "ui": {
+    "layout": {
+      "sidebarWidth": 400
+    }
+  },
+  "tabs": [
+    {
+      "kind": "item",
+      "path": "Untitled folder/test.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "Untitled folder/tst.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "path": "Untitled folder/Untitled folder/Untitled folder",
+      "isPinned": false
+    }
+  ],
+  "activeTabPath": "Untitled folder/tst.mh",
+  "previewTabPath": "Untitled folder/Untitled folder/Untitled folder",
+  "data": null
+}

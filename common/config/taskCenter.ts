@@ -24,10 +24,8 @@ export class TaskCenterSerializer extends ISerializer<TaskCenterConfig> {
     ValidateUtils.ensureRecord(value);
     if (Array.isArray(value)) throw new Error("Task center config must be a record");
     const expectedKeys = Object.keys(TaskCenterSerializer._DEFAULT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Task center config contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Task center config is missing required properties");
     }
     const maxParallel = value.maxParallel;
     if (
@@ -73,10 +71,8 @@ export class TaskCenterSerializer extends ISerializer<TaskCenterConfig> {
   private static _validateTemplateRoot(value: unknown): asserts value is TaskTemplateRootConfig {
     ValidateUtils.ensureRecord(value);
     const expectedKeys = Object.keys(TaskCenterSerializer._DEFAULT_TEMPLATE_ROOT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Task template root contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Task template root is missing required properties");
     }
     ValidateUtils.ensureNonBlankString(value.key, "Task template root key must not be blank");
     ValidateUtils.ensureString(value.path, "Task template root path must be a string");

@@ -1,0 +1,21 @@
+{
+  "isExpanded": true,
+  "folderOrder": [],
+  "itemOrder": [],
+  "data": {
+    "selectedParamGroupId": "folder",
+    "paramGroups": [
+      {
+        "id": "folder",
+        "name": "default params",
+        "params": [
+          {
+            "key": "dada",
+            "value": "dafa",
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

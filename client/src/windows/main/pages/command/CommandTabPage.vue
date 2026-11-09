@@ -62,7 +62,6 @@ import { IS_DEBUG } from "../../../../environment";
 
 type CommandFolderDraft = Readonly<{
   kind: "folder";
-  id: string;
   data: CommandFolderData;
   baseline: CommandFolderData;
   extends: TreeViewEntityData["extends"];
@@ -70,7 +69,6 @@ type CommandFolderDraft = Readonly<{
 
 type CommandItemDraft = Readonly<{
   kind: "item";
-  id: string;
   data: CommandItemData;
   baseline: CommandItemData;
   extends: TreeViewEntityData["extends"];
@@ -99,7 +97,7 @@ type Props = {
   defaultCodeViewPlacement: DefaultCodeViewPlacement;
   terminalInitialPath: string;
   treeView: TreeView;
-  getOpenFolderData: (id: string) => CommandFolderData | null;
+  getOpenFolderData: (path: string) => CommandFolderData | null;
   getWorkspaceEnv: () => readonly CommandParam[];
   requestDraftSave: () => Promise<boolean>;
 };
@@ -108,7 +106,7 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
   register: [api: CommandTabPageApi];
   unregister: [api: CommandTabPageApi];
-  folderDataSaved: [folderId: string, data: CommandFolderData];
+  folderDataSaved: [folderPath: string, data: CommandFolderData];
   stateChange: [state: CommandTabPageState];
 }>();
 
@@ -145,6 +143,7 @@ const ancestorDataRevision = ref(0);
 const popupToast = useTemplateRef<PopupToastHandle>("popupToast");
 const terminal = useTemplateRef<TerminalExposed>("terminal");
 const textEdit = useTemplateRef<TextEditExposed>("textEdit");
+const executionScriptId = crypto.randomUUID();
 let itemRenameOperation: Promise<string | null> | null = null;
 let tabPromoteOperation: Promise<void> | null = null;
 let isMounted = false;
@@ -232,7 +231,7 @@ const isScriptBeforeTerminal = computed(() => ["right", "bottom"].includes(
   terminalPlacement.value,
 ));
 const api: CommandTabPageApi = {
-  id: props.entity.properties.id,
+  get path() { return props.tab.path; },
   isDirty: () => isDirty.value || isItemDraft.value,
   isDraft: () => isItemDraft.value,
   isRunning: () => isCommandRunning.value,
@@ -249,6 +248,8 @@ watch(() => props.entity.name, () => {
   titleError.value = "";
 });
 watch(() => props.tab.path, (path, previousPath) => {
+  if (isRegistered) emit("register", api);
+  emitState();
   if (!isMounted || draft.value === null || dirname(path) === dirname(previousPath)) return;
   void refreshAncestorFolderData(path);
 });
@@ -268,7 +269,7 @@ onUnmounted(() => {
 
 function emitState(): void {
   emit("stateChange", {
-    id: api.id,
+    path: api.path,
     isDirty: isDirty.value || isItemDraft.value,
     isRunning: isCommandRunning.value,
     scriptType: scriptType.value,
@@ -295,8 +296,8 @@ async function ensureTabPromoted(): Promise<void> {
     await pendingOperation;
     return;
   }
-  if (props.treeView.previewTabId.value !== api.id) return;
-  const operation = props.treeView.controller.promoteTab({ tabId: api.id });
+  if (props.treeView.previewTabPath.value !== api.path) return;
+  const operation = props.treeView.controller.promoteTab({ tabPath: api.path });
   tabPromoteOperation = operation;
   try {
     await operation;
@@ -365,7 +366,7 @@ async function loadAncestorFolderData(entityPath: string): Promise<Map<string, C
       kind: "folder",
       path: folder.path,
     });
-    loadedData.set(folder.properties.id, entityData.dataJson === null
+    loadedData.set(folder.path, entityData.dataJson === null
       ? commandFolderDataSerializer.getDefault()
       : commandFolderDataSerializer.fromJson(entityData.dataJson));
   }
@@ -392,7 +393,7 @@ async function resolveAncestorFolders(entityPath: string): Promise<TreeViewFolde
 
 function replaceAncestorFolderData(loadedData: ReadonlyMap<string, CommandFolderData>): void {
   ancestorFolderData.clear();
-  for (const [folderId, data] of loadedData) ancestorFolderData.set(folderId, data);
+  for (const [folderPath, data] of loadedData) ancestorFolderData.set(folderPath, data);
 }
 
 function createDraft(
@@ -404,7 +405,6 @@ function createDraft(
     const data = cloneItemData(loadedData);
     return {
       kind: "item",
-      id: entity.properties.id,
       data,
       baseline: cloneItemData(data),
       extends: entityData.extends,
@@ -415,7 +415,6 @@ function createDraft(
     : commandFolderDataSerializer.fromJson(entityData.dataJson));
   return {
     kind: "folder",
-    id: entity.properties.id,
     data,
     baseline: cloneFolderData(data),
     extends: entityData.extends,
@@ -515,7 +514,7 @@ async function save(): Promise<boolean> {
           extends: current.extends,
         },
       );
-      emit("folderDataSaved", current.id, cloneFolderData(current.data));
+      emit("folderDataSaved", props.tab.path, cloneFolderData(current.data));
     } else {
       await props.treeView.controller.updateEntityData(
         { kind: "item", path: props.tab.path },
@@ -546,7 +545,7 @@ async function publishItemDraft(): Promise<boolean> {
 
 async function discardDraft(): Promise<void> {
   if (!isItemDraft.value) return;
-  await props.treeView.controller.discardDraft(api.id);
+  await props.treeView.controller.discardDraft(api.path);
 }
 
 async function saveClickHandler(): Promise<void> {
@@ -563,7 +562,7 @@ async function renameItem(name: string): Promise<string | null> {
     TreeViewPath.ensureName(name, "Command title");
     if (name === props.entity.name) return null;
     const parent = await props.treeView.resolveFolderByPath(dirname(props.tab.path));
-    const targetOrder = parent.items.findIndex((item) => item.properties.id === api.id);
+    const targetOrder = parent.items.findIndex((item) => item.path === api.path);
     if (targetOrder < 0) return "Command order is unavailable";
     await props.treeView.controller.move({
       kind: "item",
@@ -606,8 +605,8 @@ function itemTitleEnterHandler(event: KeyboardEvent): void {
 function collectAdditionalParams(): readonly TextEditAdditionalParamScope[] {
   void ancestorDataRevision.value;
   return ancestorFolders.value.map((folder) => {
-    const data = props.getOpenFolderData(folder.properties.id)
-      ?? ancestorFolderData.get(folder.properties.id);
+    const data = props.getOpenFolderData(folder.path)
+      ?? ancestorFolderData.get(folder.path);
     if (data === undefined) throw new Error("Command folder data is not loaded");
     const selectedGroup = data.paramGroups.find((group) => group.id === data.selectedParamGroupId);
     if (selectedGroup === undefined) throw new Error("Selected folder param group is unavailable");
@@ -653,7 +652,7 @@ async function runHandler(): Promise<void> {
     }
     if (!await prepareTerminalForRun(terminalApi, current.data.scriptType)) return;
     await terminalApi.run({
-      scriptId: current.id,
+      scriptId: executionScriptId,
       commandPath: props.tab.path,
       scriptType: current.data.scriptType,
       scriptContent: resolution.value,
@@ -853,9 +852,9 @@ function applyPersistedParams(
   emitState();
 }
 
-function applyAncestorFolderData(folderId: string, data: CommandFolderData): void {
-  if (!ancestorFolderData.has(folderId)) return;
-  ancestorFolderData.set(folderId, cloneFolderData(data));
+function applyAncestorFolderData(folderPath: string, data: CommandFolderData): void {
+  if (!ancestorFolderData.has(folderPath)) return;
+  ancestorFolderData.set(folderPath, cloneFolderData(data));
   ancestorDataRevision.value += 1;
 }
 
@@ -1036,7 +1035,8 @@ function reportTerminalLastLine(): void {
       Folder parameters are unavailable.
     </p>
     <TextEditComponent
-      v-else
+      v-if="ancestorDataError.length === 0"
+      v-show="!isAncestorDataLoading"
       :param-groups="paramGroups"
       :selected-group-id="getFolderDraft().data.selectedParamGroupId"
       :is-text-area-visible="false"
@@ -1104,7 +1104,8 @@ function reportTerminalLastLine(): void {
         Folder parameters are unavailable.
       </p>
       <TextEditComponent
-        v-else
+        v-if="ancestorDataError.length === 0"
+        v-show="!isAncestorDataLoading"
         ref="textEdit"
         :param-groups="paramGroups"
         :text="getItemDraft().data.content"
@@ -1112,7 +1113,7 @@ function reportTerminalLastLine(): void {
         :get-additional-params="collectAdditionalParams"
         :get-override-params="collectWorkspaceEnv"
         :param-priority-description="PARAM_PRIORITY_DESCRIPTION"
-        :text-identity="entity.properties.id"
+        :text-identity="executionScriptId"
         :script-type="getItemDraft().data.scriptType"
         :get-completions="getScriptCompletions"
         @update-param-groups="paramGroupsUpdateHandler"

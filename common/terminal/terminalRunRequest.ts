@@ -19,7 +19,7 @@ export class TerminalRunRequestSerializer extends ISerializer<TerminalRunRequest
     ValidateUtils.ensureRecord(value);
     const expectedKeys = Object.keys(TerminalRunRequestSerializer._DEFAULT);
     const actualKeys = Object.keys(value);
-    if (Array.isArray(value) || actualKeys.length !== expectedKeys.length
+    if (Array.isArray(value)
       || !expectedKeys.every((key) => actualKeys.includes(key))) {
       throw new Error("Terminal run request has an invalid schema");
     }

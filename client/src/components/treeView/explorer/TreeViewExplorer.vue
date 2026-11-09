@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { dirname, join, relative } from "pathe";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/vue-virtual";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import type { ComponentPublicInstance } from "vue";
 import type {
   TreeViewFolder,
   TreeViewItem,
@@ -34,7 +36,7 @@ type TreeViewExplorerActions = Pick<
 
 type MenuState = Readonly<{
   kind: "folder" | "item";
-  id: string;
+  path: string;
   isMissing: boolean;
   position: ContextMenuPosition;
 }> | null;
@@ -44,11 +46,19 @@ type TreeViewDragSource = Readonly<{
   sourcePath: string;
 }>;
 
+type ExplorerRow = Readonly<{
+  key: string;
+  folder: TreeViewFolder;
+  item: TreeViewItem | null;
+  depth: number;
+}>;
+
 const props = defineProps<{
   model: TreeViewExplorerModel;
   actions: TreeViewExplorerActions;
+  selectedPath: string | null;
   workspacePath: string | null;
-  workspaceRevision: number;
+  workspaceRef: TreeViewWorkspaceRef | null;
   workspaceRootKey: string | null;
   workspaceRefs: readonly TreeViewWorkspaceRef[];
   folderLabel: string;
@@ -73,6 +83,58 @@ const menu = ref<MenuState>(null);
 const renameTarget = ref<TreeViewSelection | null>(null);
 const selectedNodes = ref<readonly TreeViewSelection[]>([]);
 const rootFolder = props.model.rootFolder;
+const scrollElement = ref<HTMLElement | null>(null);
+const draggedNodeKey = ref<string | null>(null);
+const pendingRevealPath = ref<string | null>(null);
+const rows = computed(() => {
+  const result: ExplorerRow[] = [];
+  const root = rootFolder.value;
+  if (root === null) return result;
+  const pending: ExplorerRow[] = [{ key: `folder:${root.path}`, folder: root, item: null, depth: 0 }];
+  while (pending.length > 0) {
+    const row = pending.pop();
+    if (row === undefined) break;
+    result.push(row);
+    if (row.item !== null || !row.folder.properties.isExpanded || !isFolderLoaded(row.folder.path)) continue;
+    for (let index = row.folder.items.length - 1; index >= 0; index -= 1) {
+      const item = row.folder.items[index];
+      if (item === undefined || item.properties.isDraft) continue;
+      pending.push({ key: `item:${item.path}`, folder: row.folder, item, depth: row.depth });
+    }
+    for (let index = row.folder.folders.length - 1; index >= 0; index -= 1) {
+      const folder = row.folder.folders[index];
+      if (folder === undefined) continue;
+      pending.push({ key: `folder:${folder.path}`, folder, item: null, depth: row.depth + 1 });
+    }
+  }
+  return result;
+});
+const rowIndexes = computed(() => new Map(rows.value.map((row, index) => [row.key, index])));
+const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => {
+  const renameKey = renameTarget.value === null ? null : selectionKey(renameTarget.value);
+  const pinnedIndexes = [renameKey, draggedNodeKey.value].flatMap((key) => {
+    const index = key === null ? undefined : rowIndexes.value.get(key);
+    return index === undefined ? [] : [index];
+  });
+  return {
+    count: rows.value.length,
+    getScrollElement: () => scrollElement.value,
+    estimateSize: () => 32,
+    overscan: 8,
+    getItemKey: (index: number) => {
+      const row = rows.value[index];
+      if (row === undefined) throw new Error("TreeView virtual row is unavailable");
+      return row.key;
+    },
+    rangeExtractor: (range: Parameters<typeof defaultRangeExtractor>[0]) => [...new Set([
+      ...defaultRangeExtractor(range), ...pinnedIndexes,
+    ])].sort((first, second) => first - second),
+  };
+}));
+const visibleRows = computed(() => virtualizer.value.getVirtualItems().flatMap((virtualRow) => {
+  const row = rows.value[virtualRow.index];
+  return row === undefined ? [] : [{ ...row, index: virtualRow.index, start: virtualRow.start }];
+}));
 const selectedNodeKeys = computed<ReadonlySet<string>>(() => new Set(
   selectedNodes.value.map(selectionKey),
 ));
@@ -80,50 +142,63 @@ const highlightedNodeKeys = computed<ReadonlySet<string>>(() => {
   const keys = new Set(selectedNodeKeys.value);
   const root = rootFolder.value;
   if (root === null) return keys;
-  keys.delete(selectionKey({ kind: "folder", id: root.properties.id }));
+  keys.delete(selectionKey({ kind: "folder", path: root.path }));
   const selectedPaths = selectedNodes.value.flatMap((selection) => {
     const entity = resolveSelection(selection);
     return entity === null ? [] : [entity.path];
   });
-  const activeEntityPath = props.model.activeEntityPath.value;
-  if (activeEntityPath !== null) selectedPaths.push(activeEntityPath);
-  const pending = [...root.folders];
-  while (pending.length > 0) {
-    const folder = pending.pop();
-    if (folder === undefined) continue;
-    if (selectedPaths.some((path) => path === folder.path || path.startsWith(`${folder.path}/`))) {
-      keys.add(selectionKey({ kind: "folder", id: folder.properties.id }));
+  const selectedPath = props.selectedPath;
+  if (selectedPath !== null) selectedPaths.push(selectedPath);
+  const rootPrefix = root.path.endsWith("/") ? root.path : `${root.path}/`;
+  for (const path of selectedPaths) {
+    let ancestorPath = path;
+    while (ancestorPath !== root.path && ancestorPath.startsWith(rootPrefix)) {
+      if (props.model.findLoadedFolderByPath(ancestorPath) !== null) {
+        keys.add(selectionKey({ kind: "folder", path: ancestorPath }));
+      }
+      ancestorPath = dirname(ancestorPath);
     }
-    pending.push(...folder.folders);
   }
   return keys;
 });
 const isMultiNodeMenu = computed(() => {
   const target = menu.value;
-  const selection = target === null ? null : { kind: target.kind, id: target.id };
+  const selection = target === null ? null : { kind: target.kind, path: target.path };
   return selection !== null && selectedNodes.value.length > 1
     && selectedNodeKeys.value.has(selectionKey(selection));
 });
 
-watch(() => props.workspaceRevision, () => {
-  selectedNodes.value = selectionArray(props.model.selection.value);
+watch(() => props.workspaceRef, (current, previous) => {
+  if (current !== null && previous !== undefined
+    && current.workspacePath !== previous?.workspacePath
+    && rootFolder.value?.path === current.workspacePath) return;
+  selectedNodes.value = selectionArray(props.selectedPath);
   closeMenu();
   renameTarget.value = null;
   report(props.model.loadWorkspace(props.workspacePath));
 }, { immediate: true });
-watch(() => props.model.selection.value, (selection) => {
-  if (selection !== null && !selectedNodeKeys.value.has(selectionKey(selection))) {
-    selectedNodes.value = [selection];
-  }
-});
-watch(rootFolder, () => {
+watch([() => props.selectedPath, rootFolder], ([path]) => {
   selectedNodes.value = selectedNodes.value.filter((selection) => resolveSelection(selection) !== null);
+  const [selected] = selectionArray(path);
+  if (selected !== undefined && !selectedNodeKeys.value.has(selectionKey(selected))) {
+    selectedNodes.value = [selected];
+  }
 });
 
 function report(operation: Promise<unknown>): void {
   void operation.catch((reason: unknown) => {
+    if (reason instanceof DOMException && reason.name === "AbortError") return;
     emit("error", reason instanceof Error ? reason.message : String(reason));
   });
+}
+
+function measureRow(element: Element | ComponentPublicInstance | null): void {
+  if (element instanceof HTMLElement) virtualizer.value.measureElement(element);
+}
+
+function pinDraggedNode(event: DragEvent): void {
+  if (!(event.target instanceof Element)) return;
+  draggedNodeKey.value = event.target.closest<HTMLElement>("[data-tree-row-key]")?.dataset.treeRowKey ?? null;
 }
 
 function activate(
@@ -135,8 +210,14 @@ function activate(
     toggleNodeSelection(selection);
     return;
   }
-  selectedNodes.value = [selection];
+  if (openMode !== "preview" || !selectedNodeKeys.value.has(selectionKey(selection))) {
+    selectedNodes.value = [selection];
+  }
   emit("entityActivated", { ...selection, openMode });
+}
+
+function isFolderLoaded(folderPath: string): boolean {
+  return props.model.isFolderLoaded(folderPath);
 }
 
 function toggleFolder(folder: TreeViewFolder): void {
@@ -146,7 +227,7 @@ function toggleFolder(folder: TreeViewFolder): void {
       ...structuredClone(folder.properties),
       isExpanded,
     });
-    if (isExpanded) await props.model.loadFolderChildren(folder.path);
+    if (isExpanded) await props.model.loadFolder(folder.path);
   })());
 }
 
@@ -166,10 +247,10 @@ function openMenu(event: MouseEvent | KeyboardEvent, selection: TreeViewSelectio
   const entity = resolveSelection(selection);
   if (entity === null) return;
   const entityPath = entity.path;
-  const workspaceRevision = props.workspaceRevision;
+  const workspacePath = props.workspacePath;
   report((async (): Promise<void> => {
     const isComplete = await props.model.isEntityComplete(selection.kind, entityPath);
-    if (workspaceRevision !== props.workspaceRevision
+    if (workspacePath !== props.workspacePath
       || resolveSelection(selection)?.path !== entityPath) return;
     menu.value = { ...target, isMissing: !isComplete };
   })());
@@ -177,14 +258,14 @@ function openMenu(event: MouseEvent | KeyboardEvent, selection: TreeViewSelectio
 
 function clearNodeSelectionOnExplorerBlank(event: MouseEvent): void {
   if (event.target instanceof Element && event.target.closest(".tree-row") !== null) return;
-  selectedNodes.value = selectionArray(props.model.selection.value);
+  selectedNodes.value = selectionArray(props.selectedPath);
 }
 
 function selectedFolder(): TreeViewFolder | null {
   const target = menu.value;
-  if (target?.kind === "folder") return props.model.getFolderById(target.id);
+  if (target?.kind === "folder") return props.model.findLoadedFolderByPath(target.path);
   if (target?.kind === "item") {
-    const item = props.model.getItemById(target.id);
+    const item = props.model.findLoadedItemByPath(target.path);
     return item === null ? null : props.model.findLoadedFolderByPath(dirname(item.path));
   }
   return rootFolder.value;
@@ -207,7 +288,10 @@ async function prepareCreationParent(parent: TreeViewFolder): Promise<TreeViewFo
       isExpanded: true,
     });
   }
-  return props.model.loadFolderChildren(parent.path);
+  await props.model.loadFolder(parent.path);
+  const loadedParent = props.model.findLoadedFolderByPath(parent.path);
+  if (loadedParent === null) throw new Error("TreeView folder is missing");
+  return loadedParent;
 }
 
 function createFolder(): void {
@@ -217,8 +301,8 @@ function createFolder(): void {
   report((async (): Promise<void> => {
     const loadedParent = await prepareCreationParent(parent);
     const name = availableName(loadedParent, `Untitled ${props.folderLabel.toLowerCase()}`);
-    const folderId = await props.model.createFolder(join(loadedParent.path, name));
-    renameTarget.value = { kind: "folder", id: folderId };
+    const folder = await props.model.createFolder(join(loadedParent.path, name));
+    renameTarget.value = { kind: "folder", path: folder.path };
   })());
 }
 
@@ -231,21 +315,21 @@ function createItem(): void {
     const name = availableName(loadedParent, "Untitled");
     const item = await props.model.createItem(
       join(loadedParent.path, `${name}${TREE_VIEW_ITEM_FILE_EXTENSION}`),
-      { isDraft: false },
+      { isDraft: false, iconDescription: "" },
     );
     emit("entityActivated", {
       kind: "item",
-      id: item.properties.id,
+      path: item.path,
       openMode: "preview",
     });
-    renameTarget.value = { kind: "item", id: item.properties.id };
+    renameTarget.value = { kind: "item", path: item.path };
   })());
 }
 
 function beginRename(): void {
   const target = menu.value;
   menu.value = null;
-  if (target !== null) renameTarget.value = { kind: target.kind, id: target.id };
+  if (target !== null) renameTarget.value = { kind: target.kind, path: target.path };
 }
 
 function rename(selection: TreeViewSelection, name: string): void {
@@ -274,7 +358,7 @@ function deleteTarget(): void {
   const target = menu.value;
   menu.value = null;
   if (target === null) return;
-  const selection: TreeViewSelection = { kind: target.kind, id: target.id };
+  const selection: TreeViewSelection = { kind: target.kind, path: target.path };
   const selections = selectedNodeKeys.value.has(selectionKey(selection))
     ? normalizeSelections(selectedNodes.value)
     : [selection];
@@ -284,7 +368,7 @@ function deleteTarget(): void {
 async function deleteSelections(selections: readonly TreeViewSelection[]): Promise<void> {
   for (const selection of selections) {
     if (!isWorkspaceRoot(selection)) continue;
-    const folder = props.model.getFolderById(selection.id);
+    const folder = props.model.findLoadedFolderByPath(selection.path);
     if (folder === null) continue;
     const action = await confirmActionDialog({
       title: "Delete workspace",
@@ -300,26 +384,26 @@ async function deleteSelections(selections: readonly TreeViewSelection[]): Promi
   await runWithOperationProgress("Deleting...", async () => {
     for (const selection of selections) {
       if (selection.kind === "folder") {
-        const folder = props.model.getFolderById(selection.id);
+        const folder = props.model.findLoadedFolderByPath(selection.path);
         if (folder === null) continue;
         if (folder.path === rootFolder.value?.path) {
           await props.actions.deleteWorkspace(folder.path);
         } else {
-          await props.actions.deleteFolder(selection.id);
+          await props.actions.deleteFolder(selection.path);
         }
       } else {
-        await props.actions.deleteItem(selection.id);
+        await props.actions.deleteItem(selection.path);
       }
     }
-  }, 0);
-  selectedNodes.value = selectionArray(props.model.selection.value);
+  });
+  selectedNodes.value = selectionArray(props.selectedPath);
 }
 
 function cloneTarget(): void {
   const target = menu.value;
   menu.value = null;
   if (target === null) return;
-  const selection: TreeViewSelection = { kind: target.kind, id: target.id };
+  const selection: TreeViewSelection = { kind: target.kind, path: target.path };
   const selections = selectedNodeKeys.value.has(selectionKey(selection))
     ? normalizeSelections(selectedNodes.value)
     : [selection];
@@ -328,7 +412,6 @@ function cloneTarget(): void {
     async () => {
       for (const current of selections) await cloneSelection(current);
     },
-    0,
   ));
 }
 
@@ -368,7 +451,7 @@ async function cloneSelection(selection: TreeViewSelection): Promise<void> {
     ),
   });
   if (clone !== null && selectedNodes.value.length === 1) {
-    renameTarget.value = { kind: selection.kind, id: clone.properties.id };
+    renameTarget.value = { kind: selection.kind, path: clone.path };
   }
 }
 
@@ -389,21 +472,21 @@ function openMenuTarget(openMode: "normal" | "pinned"): void {
   const target = menu.value;
   menu.value = null;
   if (target === null) return;
-  activate({ kind: target.kind, id: target.id }, openMode);
+  activate({ kind: target.kind, path: target.path }, openMode);
 }
 
 function openMenuTargetInExplorer(): void {
   const target = menu.value;
   menu.value = null;
   if (target === null) return;
-  report(props.model.openInExplorer({ kind: target.kind, id: target.id }));
+  report(props.model.openInExplorer({ kind: target.kind, path: target.path }));
 }
 
 async function copyMenuPath(kind: "relative" | "full"): Promise<void> {
   const target = menu.value;
   const entity = target === null
     ? null
-    : resolveSelection({ kind: target.kind, id: target.id });
+    : resolveSelection({ kind: target.kind, path: target.path });
   menu.value = null;
   if (entity === null || props.workspacePath === null) return;
   const path = kind === "full" ? entity.path : relative(dirname(props.workspacePath), entity.path);
@@ -420,7 +503,7 @@ function setMenuSubtreeExpanded(isExpanded: boolean): void {
   const target = menu.value;
   menu.value = null;
   if (target?.kind !== "folder") return;
-  const folder = props.model.getFolderById(target.id);
+  const folder = props.model.findLoadedFolderByPath(target.path);
   if (folder === null) return;
   report((async (): Promise<void> => {
     const pending = [folder.path];
@@ -435,7 +518,11 @@ function setMenuSubtreeExpanded(isExpanded: boolean): void {
           isExpanded,
         });
       }
-      if (isExpanded) current = await props.model.loadFolderChildren(current.path);
+      if (isExpanded) {
+        await props.model.loadFolder(path);
+        current = props.model.findLoadedFolderByPath(path);
+        if (current === null) throw new Error("TreeView folder is missing");
+      }
       pending.push(...current.folders.map((child) => child.path));
     }
   })());
@@ -467,7 +554,7 @@ async function moveSelections(
   if (targetEntity === null) return;
   if (selections.some((selection) => selectionKey(selection) === selectionKey({
     kind: targetKind,
-    id: targetEntity.properties.id,
+    path: targetEntity.path,
   }))) return;
   const targetFolder = targetKind === "folder"
     && (position === "inside" || position === "inside-before")
@@ -563,13 +650,13 @@ function selectionFromSource(source: TreeViewDragSource | undefined): TreeViewSe
   const entity = source.kind === "folder"
     ? props.model.findLoadedFolderByPath(source.sourcePath)
     : props.model.findLoadedItemByPath(source.sourcePath);
-  return entity === null ? null : { kind: source.kind, id: entity.properties.id };
+  return entity === null ? null : { kind: source.kind, path: entity.path };
 }
 
 function resolveSelection(selection: TreeViewSelection): TreeViewFolder | TreeViewItem | null {
   return selection.kind === "folder"
-    ? props.model.getFolderById(selection.id)
-    : props.model.getItemById(selection.id);
+    ? props.model.findLoadedFolderByPath(selection.path)
+    : props.model.findLoadedItemByPath(selection.path);
 }
 
 function toggleNodeSelection(selection: TreeViewSelection): void {
@@ -580,16 +667,20 @@ function toggleNodeSelection(selection: TreeViewSelection): void {
 }
 
 function selectionKey(selection: TreeViewSelection): string {
-  return `${selection.kind}:${selection.id}`;
+  return `${selection.kind}:${selection.path}`;
 }
 
-function selectionArray(selection: TreeViewSelection | null): readonly TreeViewSelection[] {
-  return selection === null ? [] : [selection];
+function selectionArray(path: string | null): readonly TreeViewSelection[] {
+  if (path === null) return [];
+  const folder = props.model.findLoadedFolderByPath(path);
+  if (folder !== null) return [{ kind: "folder", path: folder.path }];
+  const item = props.model.findLoadedItemByPath(path);
+  return item === null ? [] : [{ kind: "item", path: item.path }];
 }
 
 function isWorkspaceRoot(selection: TreeViewSelection): boolean {
   if (selection.kind !== "folder") return false;
-  const folder = props.model.getFolderById(selection.id);
+  const folder = props.model.findLoadedFolderByPath(selection.path);
   return folder !== null && folder.path === rootFolder.value?.path;
 }
 
@@ -617,6 +708,40 @@ function closeMenu(): void {
   menu.value = null;
 }
 
+watch(() => props.selectedPath, (path) => {
+  pendingRevealPath.value = path;
+}, { immediate: true, flush: "sync" });
+watch([pendingRevealPath, rows, scrollElement], () => {
+  const path = pendingRevealPath.value;
+  const element = scrollElement.value;
+  if (path === null || element === null || element.clientHeight === 0) return;
+  const index = rowIndexes.value.get(`folder:${path}`) ?? rowIndexes.value.get(`item:${path}`);
+  if (index === undefined) return;
+  virtualizer.value.getVirtualItems();
+  const row = virtualizer.value.measurementsCache[index];
+  if (row === undefined) return;
+  const content = element.querySelector(".tree-view__root");
+  if (content === null) return;
+  const contentOffset = content.getBoundingClientRect().top - element.getBoundingClientRect().top
+    + element.scrollTop - element.clientTop;
+  const viewportTop = element.scrollTop;
+  const viewportBottom = viewportTop + element.clientHeight;
+  if (row.start + contentOffset < viewportTop || row.end + contentOffset > viewportBottom) {
+    virtualizer.value.scrollToOffset(Math.max(0, row.start + contentOffset - element.clientHeight / 3));
+  }
+  pendingRevealPath.value = null;
+}, { immediate: true, flush: "post" });
+
+watch(renameTarget, (target) => {
+  if (target === null) return;
+  const index = rowIndexes.value.get(selectionKey(target));
+  if (index !== undefined) virtualizer.value.scrollToIndex(index, { align: "auto" });
+}, { flush: "post" });
+watch(() => props.workspacePath, () => {
+  draggedNodeKey.value = null;
+  virtualizer.value.scrollToOffset(0);
+}, { flush: "post" });
+
 onMounted(() => window.addEventListener("pointerdown", closeMenu));
 onUnmounted(() => {
   closeMenu();
@@ -626,18 +751,33 @@ onUnmounted(() => {
 
 <template>
   <nav
+    ref="scrollElement"
     class="tree-view__explorer"
     aria-label="Workspace files"
     @click="clearNodeSelectionOnExplorerBlank"
     @contextmenu.prevent
+    @dragstart.capture="pinDraggedNode"
+    @dragend="draggedNodeKey = null"
+    @drop.capture="draggedNodeKey = null"
   >
-    <ul v-if="rootFolder" class="tree-view__root">
+    <ul v-if="rootFolder" class="tree-view__root" :style="{ height: `${virtualizer.getTotalSize()}px` }">
+      <li
+        v-for="row in visibleRows"
+        :key="row.key"
+        :ref="measureRow"
+        class="tree-view__virtual-row"
+        :data-index="row.index"
+        :data-tree-row-key="row.key"
+        :style="{ transform: `translateY(${row.start}px)` }"
+      >
       <TreeViewNode
-        :folder="rootFolder"
+        :folder="row.folder"
+        :item="row.item"
+        :is-folder-loaded="isFolderLoaded"
         :selected-keys="selectedNodeKeys"
         :highlighted-keys="highlightedNodeKeys"
         :rename-target="renameTarget"
-        :depth="0"
+        :depth="row.depth"
         @activate="activate"
         @toggle="toggleFolder"
         @context-menu="openMenu"
@@ -649,6 +789,7 @@ onUnmounted(() => {
         <template v-if="$slots.itemIcon" #itemIcon="slotProps"><slot name="itemIcon" v-bind="slotProps"></slot></template>
         <template #itemOverlay="slotProps"><slot name="itemOverlay" v-bind="slotProps"></slot></template>
       </TreeViewNode>
+      </li>
     </ul>
 
     <TreeViewExplorerContextMenu
@@ -684,8 +825,17 @@ onUnmounted(() => {
 }
 
 .tree-view__root {
+  position: relative;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.tree-view__virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-width: 0;
 }
 </style>

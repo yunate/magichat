@@ -82,10 +82,8 @@ export class GlobalConfigSerializer extends ISerializer<GlobalConfig> {
     label: string,
   ): void {
     const expectedKeys = Object.keys(defaultValue);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error(`${label} contains unexpected properties`);
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error(`${label} is missing required properties`);
     }
   }
 

@@ -30,10 +30,8 @@ export class ToolsConfigSerializer extends ISerializer<ToolsConfig> {
     if (Array.isArray(value)) throw new Error("Tools config must be a record");
 
     const expectedKeys = Object.keys(ToolsConfigSerializer._DEFAULT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Tools config contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Tools config is missing required properties");
     }
 
     if (value.activeToolId !== null

@@ -1,19 +1,17 @@
 import { computed, shallowRef, type ComputedRef } from "vue";
 import { basename, dirname, join, relative } from "pathe";
 import type { RemoteObject } from "../../../../../common/ipc_bridge/rpc";
+import { sleep } from "../../../../../common/sleep";
 import type {
   TreeViewCloneParams,
-  TreeViewCreateItemProperties,
   TreeViewDataProvider,
   TreeViewFolder,
   TreeViewFolderProperties,
   TreeViewItem,
   TreeViewItemProperties,
   TreeViewMoveParams,
-  TreeViewTab,
 } from "../../../../../common/treeView";
-import { TREE_VIEW_ITEM_FILE_EXTENSION } from "../../../../../common/treeView";
-import { TreeViewBackgroundTaskQueue } from "../treeViewBackgroundTaskQueue";
+import { TREE_VIEW_ITEM_FILE_EXTENSION, TreeViewFolderUtils } from "../../../../../common/treeView";
 import type { TreeViewSelection } from "../treeViewTypes";
 
 export type TreeViewExplorerDataProvider = Pick<
@@ -28,83 +26,57 @@ export type TreeViewExplorerDataProvider = Pick<
   | "getAvailableItemPath"
   | "createItem"
   | "updateItem"
-  | "repairEntityId"
   | "deleteItem"
   | "openInExplorer"
   | "clone"
   | "move"
 >;
 
-type TreeViewRemoteOperationRunner = (
-  start: (operationId: string) => Promise<void>,
-) => Promise<void>;
-
-type TreeViewExplorerOperationIdentity = Readonly<{
-  workspacePath: string;
-  loadRevision: number;
-}>;
-
 export type TreeViewEntityPathChange = Readonly<{
   workspacePath: string;
   kind: "folder" | "item";
-  id: string;
   sourcePath: string;
   targetPath: string;
 }>;
 
 export type TreeViewEntityDeletion = Readonly<{
   kind: "folder" | "item";
-  id: string;
   path: string;
 }>;
 
 export class TreeViewExplorerModel {
   public constructor() {
     this.rootFolder = computed(() => this._rootFolder.value);
-    this.selection = computed(() => this._selection.value);
-    this.activeEntityPath = computed(() => this._activeEntityPath.value);
   }
 
-  public initialize(
-    dataProvider: TreeViewExplorerDataProvider,
-    runRemoteOperation: TreeViewRemoteOperationRunner,
-  ): void {
+  public initialize(dataProvider: TreeViewExplorerDataProvider): void {
     this._dataProvider = dataProvider;
-    this._runRemoteOperation = runRemoteOperation;
+  }
+
+  public dispose(): void {
+    this._isDisposed = true;
+    if (this._rootPublishTimeout !== null) {
+      clearTimeout(this._rootPublishTimeout);
+      this._rootPublishTimeout = null;
+    }
   }
 
   public async loadWorkspace(workspacePath: string | null): Promise<void> {
-    const loadRevision = ++this._loadRevision;
+    if (this._isDisposed) return;
     this._workspacePath = workspacePath;
-    this._resetFolderLoadState();
-    this._installRootFolder(null);
-    this.synchronizeActiveTab(this._activeTab);
-    if (workspacePath === null) return;
-    const rootFolder = await this._getDataProvider().getFolder(workspacePath, 1);
-    if (this._workspacePath !== workspacePath || this._loadRevision !== loadRevision) return;
-    if (rootFolder.path !== workspacePath) {
-      throw new Error("TreeView workspace root does not match");
-    }
-    this._loadedFolderPaths.add(rootFolder.path);
-    this._installRootFolder(rootFolder);
-    this.synchronizeActiveTab(this._activeTab);
-    this._scheduleRestoreExpandedChildren(rootFolder.path);
-  }
-
-  public getFolderById(id: string): TreeViewFolder | null {
-    return this._folderById.get(id) ?? null;
-  }
-
-  public getItemById(id: string): TreeViewItem | null {
-    return this._itemById.get(id) ?? null;
+    this._loadedFolderPaths.clear();
+    this._rootFolder.value = null;
+    if (workspacePath !== null) await this.loadFolder(workspacePath);
   }
 
   public findLoadedFolderByPath(path: string): TreeViewFolder | null {
-    return this._folderByPath.get(path) ?? null;
+    const rootFolder = this._rootFolder.value;
+    return rootFolder === null ? null : TreeViewFolderUtils.GetFolder(rootFolder, path);
   }
 
   public findLoadedItemByPath(path: string): TreeViewItem | null {
-    return this._itemByPath.get(path) ?? null;
+    const rootFolder = this._rootFolder.value;
+    return rootFolder === null ? null : TreeViewFolderUtils.GetItem(rootFolder, path);
   }
 
   public isFolderLoaded(path: string): boolean {
@@ -134,72 +106,80 @@ export class TreeViewExplorerModel {
     return isComplete;
   }
 
-  public loadFolderChildren(folderPath: string): Promise<TreeViewFolder> {
-    const folder = this._folderByPath.get(folderPath);
-    if (folder === undefined) return Promise.reject(new Error("TreeView folder is missing"));
-    if (this._loadedFolderPaths.has(folderPath)) return Promise.resolve(folder);
-    const pending = this._folderLoadOperations.get(folderPath);
-    if (pending !== undefined) return pending;
-    const workspacePath = this._workspacePath;
-    if (workspacePath === null) return Promise.reject(new Error("TreeView workspace is unavailable"));
-    const loadRevision = this._loadRevision;
-    const operation = this._getDataProvider().getFolder(folderPath, 1).then((loadedFolder) => {
-      if (this._workspacePath !== workspacePath || this._loadRevision !== loadRevision) {
-        return loadedFolder;
+  public async loadFolder(folderPath: string): Promise<void> {
+    if (this._isDisposed) return;
+    this._ensureCurrentWorkspacePath(folderPath);
+    const pending: string[] = [folderPath];
+    while (pending.length > 0 && !this._isDisposed) {
+      const path = pending.pop()!;
+      const isLoaded = this._loadedFolderPaths.has(path);
+      let current: TreeViewFolder;
+      if (isLoaded) {
+        const loaded = TreeViewFolderUtils.GetFolder(this._requireRootFolder(), path);
+        if (loaded === null) throw new Error("TreeView loaded folder is missing");
+        current = loaded;
+      } else {
+        current = await this._getDataProvider().getFolder(path, 1);
+        if (this._isDisposed) return;
+        if (current.path !== path) throw new Error("TreeView folder path does not match");
+        if (path === this._workspacePath) {
+          this._rootFolder.value = current;
+        } else {
+          const root = this._requireRootFolder();
+          if (!TreeViewFolderUtils.UpdateFolder(root, current)) {
+            throw new Error("TreeView folder could not be updated");
+          }
+        }
       }
-      const current = this._folderByPath.get(folderPath);
-      if (current === undefined
-        || current.path !== loadedFolder.path
-        || current.properties.id !== loadedFolder.properties.id) return loadedFolder;
-      this._commitLoadedFolderLevel(loadedFolder, current.properties.isExpanded);
-      return this._folderByPath.get(folderPath) ?? loadedFolder;
-    });
-    this._folderLoadOperations.set(folderPath, operation);
-    void operation.finally(() => {
-      if (this._folderLoadOperations.get(folderPath) === operation) {
-        this._folderLoadOperations.delete(folderPath);
+      if (current.properties.isExpanded) {
+        for (const child of [...current.folders].reverse()) {
+          // if (!child.properties.isExpanded) continue;
+          const childPath = child.path;
+          if (childPath !== undefined) pending.push(childPath);
+        }
       }
-    }).catch(() => undefined);
-    return operation;
+      if (!isLoaded) {
+        this._loadedFolderPaths.add(path);
+        this._refreshRootFolder();
+      }
+      await sleep(0);
+    }
   }
 
-  public async createFolder(folderPath: string): Promise<string> {
-    const identity = this._captureOperationIdentity();
-    const folderId = await this._getDataProvider().createFolder(folderPath);
+  public async createFolder(folderPath: string): Promise<TreeViewFolder> {
+    const folder = await this._getDataProvider().createFolder(folderPath);
     const parentPath = dirname(folderPath);
-    const folder = await this._getDataProvider().getFolder(folderPath);
     const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
-    this._ensureOperationIdentity(identity);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView folder parent is missing");
+    if (!TreeViewFolderUtils.AddFolder(rootFolder, folder)) {
+      throw new Error("TreeView folder could not be added");
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.folders = this._sortByOrder(parent.folders, parent.properties.folderOrder);
     this.markFolderLoaded(folder.path);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "folder",
-      folderId,
-      folder,
-    ));
-    return folderId;
+    this._refreshRootFolder();
+    return folder;
   }
 
   public async createItem(
     itemPath: string,
-    properties: TreeViewCreateItemProperties,
+    properties: TreeViewItemProperties,
   ): Promise<TreeViewItem> {
-    const identity = this._captureOperationIdentity();
     const availablePath = await this._getDataProvider().getAvailableItemPath(itemPath);
     const item = await this._getDataProvider().createItem(availablePath, properties);
     const parentPath = dirname(itemPath);
     const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "item",
-      item.properties.id,
-      item,
-    ));
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView item parent is missing");
+    if (!TreeViewFolderUtils.AddItem(rootFolder, item)) {
+      throw new Error("TreeView item could not be added");
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
     return item;
   }
 
@@ -207,100 +187,73 @@ export class TreeViewExplorerModel {
     folderPath: string,
     properties: TreeViewFolderProperties,
   ): Promise<void> {
-    const identity = this._captureOperationIdentity();
     await this._getDataProvider().updateFolderProperties(folderPath, properties);
-    this._ensureOperationIdentity(identity);
     const folder = this.findLoadedFolderByPath(folderPath);
     if (folder === null) throw new Error("TreeView folder is missing");
-    this.commitRootFolder(this._updateFolderNode(
-      this._requireRootFolder(),
-      folderPath,
-      (current) => ({
-        ...current,
-        properties: {
-          ...structuredClone(properties),
-          folderOrder: [...current.properties.folderOrder],
-          itemOrder: [...current.properties.itemOrder],
-        },
-      }),
-    ));
+    folder.properties = {
+      ...structuredClone(properties),
+      folderOrder: [...folder.properties.folderOrder],
+      itemOrder: [...folder.properties.itemOrder],
+    };
+    this._refreshRootFolder();
   }
 
   public async updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void> {
-    const identity = this._captureOperationIdentity();
+    await this._getDataProvider().updateItem(itemPath, properties);
     const item = this.findLoadedItemByPath(itemPath);
     if (item === null) throw new Error("TreeView item is missing");
-    await this._getDataProvider().updateItem(itemPath, properties);
-    this._ensureOperationIdentity(identity);
-    const parentPath = dirname(itemPath);
-    const parent = this.findLoadedFolderByPath(parentPath);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, dirname(itemPath));
     if (parent === null) throw new Error("TreeView item parent is missing");
-    const itemOrder = properties.isDraft
-      ? parent.properties.itemOrder.filter((name) => name !== item.name)
-      : parent.properties.itemOrder.includes(item.name)
-        ? [...parent.properties.itemOrder]
-        : [...parent.properties.itemOrder, item.name];
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      { ...structuredClone(parent.properties), itemOrder },
-      "item",
-      item.properties.id,
-      { ...item, properties: structuredClone(properties) },
-    ));
+    item.properties = structuredClone(properties);
+    if (!TreeViewFolderUtils.UpdateItem(rootFolder, item)) {
+      throw new Error("TreeView item could not be updated");
+    }
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
   }
 
-  public async deleteFolder(folderId: string): Promise<TreeViewEntityDeletion> {
-    const identity = this._captureOperationIdentity();
-    const folder = this.getFolderById(folderId);
+  public async deleteFolder(folderPath: string): Promise<TreeViewEntityDeletion> {
+    const folder = this.findLoadedFolderByPath(folderPath);
     if (folder === null) throw new Error("TreeView folder is missing");
     const parentPath = dirname(folder.path);
-    await this._runRemote((operationId) => (
-      this._getDataProvider().deleteFolder(operationId, folder.path)
-    ));
-    const parentProperties = await this._readParentPropertiesAfterDeletion(
-      parentPath, "folder", folder.name, identity,
-    );
-    this._ensureOperationIdentity(identity);
+    await this._getDataProvider().deleteFolder(folder.path);
+    const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView folder parent is missing");
+    if (!TreeViewFolderUtils.DeleteFolder(rootFolder, folder.path)) {
+      throw new Error("TreeView folder could not be removed");
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.folders = this._sortByOrder(parent.folders, parent.properties.folderOrder);
     this.removeFolderLoadState(folder.path);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "folder",
-      folderId,
-      null,
-    ));
-    return { kind: "folder", id: folderId, path: folder.path };
+    this._refreshRootFolder();
+    return { kind: "folder", path: folder.path };
   }
 
-  public async deleteItem(itemId: string): Promise<TreeViewEntityDeletion> {
-    const identity = this._captureOperationIdentity();
-    const item = this.getItemById(itemId);
+  public async deleteItem(itemPath: string): Promise<TreeViewEntityDeletion> {
+    const item = this.findLoadedItemByPath(itemPath);
     if (item === null) throw new Error("TreeView item is missing");
     const parentPath = dirname(item.path);
-    await this._runRemote((operationId) => (
-      this._getDataProvider().deleteItem(operationId, item.path)
-    ));
-    const parentProperties = await this._readParentPropertiesAfterDeletion(
-      parentPath, "item", item.name, identity,
-    );
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "item",
-      itemId,
-      null,
-    ));
-    return { kind: "item", id: itemId, path: item.path };
+    await this._getDataProvider().deleteItem(item.path);
+    const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView item parent is missing");
+    if (!TreeViewFolderUtils.DeleteItem(rootFolder, item.path)) {
+      throw new Error("TreeView item could not be removed");
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
+    return { kind: "item", path: item.path };
   }
 
   public async openInExplorer(selection: TreeViewSelection): Promise<void> {
     const entity = selection.kind === "folder"
-      ? this.getFolderById(selection.id)
-      : this.getItemById(selection.id);
+      ? this.findLoadedFolderByPath(selection.path)
+      : this.findLoadedItemByPath(selection.path);
     if (entity === null) throw new Error("TreeView Explorer target is missing");
     await this._getDataProvider().openInExplorer(selection.kind, entity.path);
   }
@@ -313,127 +266,27 @@ export class TreeViewExplorerModel {
   public async clone(
     params: TreeViewCloneParams & { kind: "folder" | "item" },
   ): Promise<TreeViewFolder | TreeViewItem> {
-    const identity = this._captureOperationIdentity();
-    await this._runRemote((operationId) => this._getDataProvider().clone(operationId, params));
-    const parentPath = dirname(params.targetPath);
-    const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
-    if (params.kind === "folder") {
-      const folder = await this._getDataProvider().getFolder(params.targetPath, 1);
-      this._ensureOperationIdentity(identity);
-      this.commitRootFolder(this._updateFolderNode(
-        this._requireRootFolder(),
-        parentPath,
-        (parent) => ({
-          ...parent,
-          properties: structuredClone(parentProperties),
-          folders: this._sortByOrder(
-            [...parent.folders, folder],
-            parentProperties.folderOrder,
-          ),
-        }),
-      ));
-      if (folder.properties.isExpanded) {
-        this.markFolderLoaded(folder.path);
-        this._scheduleRestoreExpandedChildren(folder.path);
-      }
-      return folder;
-    }
-    const item = await this._getDataProvider().getItem(params.targetPath);
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "item",
-      item.properties.id,
-      item,
-    ));
-    return item;
+    return params.kind === "folder"
+      ? this._cloneFolder(params.sourcePath, params.targetPath)
+      : this._cloneItem(params.sourcePath, params.targetPath);
   }
 
   public async move(params: TreeViewMoveParams): Promise<TreeViewEntityPathChange | null> {
-    const identity = this._captureOperationIdentity();
-    const source = params.kind === "folder"
-      ? this.findLoadedFolderByPath(params.sourcePath)
-      : this.findLoadedItemByPath(params.sourcePath);
-    if (source === null) return null;
-    const sourceParentPath = dirname(params.sourcePath);
-    const targetParentPath = dirname(params.targetPath);
-    await this._getDataProvider().move(params);
-    const sourceProperties = await this._getDataProvider().getFolderProperties(sourceParentPath);
-    const targetProperties = sourceParentPath === targetParentPath
-      ? sourceProperties
-      : await this._getDataProvider().getFolderProperties(targetParentPath);
-    this._ensureOperationIdentity(identity);
-    if (params.kind === "folder") {
-      this.rebaseLoadedFolderPaths(params.sourcePath, params.targetPath);
-    }
-    let target: TreeViewFolder | TreeViewItem;
-    if (params.kind === "folder") {
-      if (!("folders" in source)) throw new Error("TreeView move source kind is invalid");
-      target = this._rebaseFolder(source, params.sourcePath, params.targetPath);
-    } else {
-      if ("folders" in source) throw new Error("TreeView move source kind is invalid");
-      target = {
-        ...source,
-        path: params.targetPath,
-        name: basename(params.targetPath, TREE_VIEW_ITEM_FILE_EXTENSION),
-      };
-    }
-    let rootFolder = this._requireRootFolder();
-    if (sourceParentPath === targetParentPath) {
-      rootFolder = this._replaceChild(
-        rootFolder,
-        sourceParentPath,
-        sourceProperties,
-        params.kind,
-        source.properties.id,
-        target,
-      );
-    } else {
-      rootFolder = this._replaceChild(
-        rootFolder,
-        sourceParentPath,
-        sourceProperties,
-        params.kind,
-        source.properties.id,
-        null,
-      );
-      rootFolder = this._replaceChild(
-        rootFolder,
-        targetParentPath,
-        targetProperties,
-        params.kind,
-        source.properties.id,
-        target,
-      );
-    }
-    this.commitRootFolder(rootFolder);
-    return {
-      workspacePath: identity.workspacePath,
-      kind: params.kind,
-      id: source.properties.id,
-      sourcePath: params.sourcePath,
-      targetPath: params.targetPath,
-    };
+    return params.kind === "folder"
+      ? this._moveFolder(params.sourcePath, params.targetPath, params.targetOrder)
+      : this._moveItem(params.sourcePath, params.targetPath, params.targetOrder);
   }
 
   public async expandAncestors(entityPath: string): Promise<void> {
-    const identity = this._captureOperationIdentity();
     let parentPath = dirname(entityPath);
-    let rootFolder = this._requireRootFolder();
+    const rootFolder = this._requireRootFolder();
     let hasChanged = false;
     while (true) {
-      const folder = this.findLoadedFolderByPath(parentPath);
+      const folder = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
       if (folder !== null && !folder.properties.isExpanded) {
         const properties = { ...structuredClone(folder.properties), isExpanded: true };
         await this._getDataProvider().updateFolderProperties(folder.path, properties);
-        this._ensureOperationIdentity(identity);
-        rootFolder = this._updateFolderNode(
-          rootFolder,
-          folder.path,
-          (current) => ({ ...current, properties }),
-        );
+        folder.properties = properties;
         hasChanged = true;
       }
       if (parentPath === this._workspacePath) break;
@@ -441,131 +294,98 @@ export class TreeViewExplorerModel {
       if (nextParentPath === parentPath) break;
       parentPath = nextParentPath;
     }
-    if (hasChanged) this.commitRootFolder(rootFolder);
+    if (hasChanged) this._refreshRootFolder();
   }
 
   public rebaseWorkspace(sourcePath: string, targetPath: string): void {
     const rootFolder = this._requireRootFolder();
-    this._loadRevision += 1;
     this.rebaseLoadedFolderPaths(sourcePath, targetPath);
     this._workspacePath = targetPath;
-    this.commitRootFolder(this._rebaseFolder(rootFolder, sourcePath, targetPath));
+    this._rebaseFolder(rootFolder, sourcePath, targetPath);
+    this._refreshRootFolder();
   }
 
   public async synchronizePublishedItem(
-    workspacePath: string,
+    _workspacePath: string,
     sourceItem: TreeViewItem,
     targetItem: TreeViewItem,
     targetFolderPath: string,
   ): Promise<void> {
-    const identity = this._captureOperationIdentity(workspacePath);
     const sourceParentPath = dirname(sourceItem.path);
-    let rootFolder = this._requireRootFolder();
-    if (sourceParentPath === targetFolderPath) {
-      const properties = await this._getDataProvider().getFolderProperties(targetFolderPath);
-      rootFolder = this._replaceChild(
-        rootFolder,
-        targetFolderPath,
-        properties,
-        "item",
-        sourceItem.properties.id,
-        targetItem,
-      );
+    const sourceProperties = await this._getDataProvider().getFolderProperties(sourceParentPath);
+    const targetProperties = sourceParentPath === targetFolderPath
+      ? sourceProperties
+      : await this._getDataProvider().getFolderProperties(targetFolderPath);
+    const rootFolder = this._requireRootFolder();
+    const sourceParent = TreeViewFolderUtils.GetFolder(rootFolder, sourceParentPath);
+    const targetParent = TreeViewFolderUtils.GetFolder(rootFolder, targetFolderPath);
+    if (sourceParent === null || targetParent === null) throw new Error("TreeView item parent is missing");
+    const current = this.findLoadedItemByPath(sourceItem.path)
+      ?? this.findLoadedItemByPath(targetItem.path);
+    if (current !== null && current.path === targetItem.path) {
+      if (!TreeViewFolderUtils.UpdateItem(rootFolder, targetItem)) {
+        throw new Error("TreeView item could not be updated");
+      }
     } else {
-      const sourceProperties = await this._getDataProvider().getFolderProperties(sourceParentPath);
-      const targetProperties = await this._getDataProvider().getFolderProperties(targetFolderPath);
-      rootFolder = this._replaceChild(
-        rootFolder,
-        sourceParentPath,
-        sourceProperties,
-        "item",
-        sourceItem.properties.id,
-        null,
-      );
-      rootFolder = this._replaceChild(
-        rootFolder,
-        targetFolderPath,
-        targetProperties,
-        "item",
-        sourceItem.properties.id,
-        targetItem,
-      );
+      if (current !== null && !TreeViewFolderUtils.DeleteItem(rootFolder, current.path)) {
+        throw new Error("TreeView item could not be removed");
+      }
+      if (!TreeViewFolderUtils.AddItem(rootFolder, targetItem)) {
+        throw new Error("TreeView item could not be added");
+      }
     }
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(rootFolder);
+    if (sourceParent !== targetParent) {
+      sourceParent.properties = structuredClone(sourceProperties);
+      sourceParent.items = this._sortByOrder(sourceParent.items, sourceParent.properties.itemOrder);
+    }
+    targetParent.properties = structuredClone(targetProperties);
+    targetParent.items = this._sortByOrder(targetParent.items, targetParent.properties.itemOrder);
+    this._refreshRootFolder();
   }
 
-  public async synchronizeCreatedItem(workspacePath: string, item: TreeViewItem): Promise<void> {
-    const identity = this._captureOperationIdentity(workspacePath);
+  public async synchronizeCreatedItem(_workspacePath: string, item: TreeViewItem): Promise<void> {
     const parentPath = dirname(item.path);
     const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "item",
-      item.properties.id,
-      item,
-    ));
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView item parent is missing");
+    const current = parent.items.find((candidate) => candidate.path === item.path);
+    if (current !== undefined) {
+      if (!TreeViewFolderUtils.UpdateItem(rootFolder, item)) {
+        throw new Error("TreeView item could not be updated");
+      }
+    } else {
+      if (!TreeViewFolderUtils.AddItem(rootFolder, item)) {
+        throw new Error("TreeView item could not be added");
+      }
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
   }
 
   public async synchronizeDeletedItem(
-    workspacePath: string,
-    itemId: string,
+    _workspacePath: string,
     itemPath: string,
   ): Promise<void> {
-    const identity = this._captureOperationIdentity(workspacePath);
     const parentPath = dirname(itemPath);
     const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
-    this._ensureOperationIdentity(identity);
-    this.commitRootFolder(this._replaceChild(
-      this._requireRootFolder(),
-      parentPath,
-      parentProperties,
-      "item",
-      itemId,
-      null,
-    ));
-  }
-
-  public synchronizeActiveTab(tab: TreeViewTab | null): void {
-    this._selection.value = this.getSelectionForTab(tab);
-  }
-
-  public getSelectionForTab(tab: TreeViewTab | null): TreeViewSelection | null {
-    if (tab === null) {
-      return null;
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView item parent is missing");
+    const item = parent.items.find((candidate) => candidate.path === itemPath);
+    if (item !== undefined && !TreeViewFolderUtils.DeleteItem(rootFolder, item.path)) {
+      throw new Error("TreeView item could not be removed");
     }
-    if (tab.kind === "folder" && this._folderById.get(tab.id)?.path === tab.path) {
-      return { kind: "folder", id: tab.id };
-    }
-    if (tab.kind === "item" && this._itemById.get(tab.id)?.path === tab.path) {
-      return { kind: "item", id: tab.id };
-    }
-    return null;
-  }
-
-  public commitRootFolder(rootFolder: TreeViewFolder): void {
-    this._installRootFolder(rootFolder);
-    this.synchronizeActiveTab(this._activeTab);
-  }
-
-  public setActiveTab(tab: TreeViewTab | null): void {
-    this._activeTab = tab;
-    this._activeEntityPath.value = tab?.path ?? null;
-    this.synchronizeActiveTab(tab);
+    parent.properties = structuredClone(parentProperties);
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
   }
 
   public removeFolderLoadState(folderPath: string): void {
     for (const path of [...this._loadedFolderPaths]) {
       if (path === folderPath || path.startsWith(`${folderPath}/`)) {
         this._loadedFolderPaths.delete(path);
-      }
-    }
-    for (const path of [...this._folderLoadOperations.keys()]) {
-      if (path === folderPath || path.startsWith(`${folderPath}/`)) {
-        this._folderLoadOperations.delete(path);
       }
     }
   }
@@ -580,184 +400,145 @@ export class TreeViewExplorerModel {
     const loadedPaths = [...this._loadedFolderPaths];
     this._loadedFolderPaths.clear();
     for (const path of loadedPaths) this._loadedFolderPaths.add(rebase(path));
-    for (const path of [...this._folderLoadOperations.keys()]) {
-      if (path === sourcePath || path.startsWith(`${sourcePath}/`)) {
-        this._folderLoadOperations.delete(path);
-      }
-    }
   }
 
-  public scheduleRestoreExpandedChildren(folderPath: string): void {
-    this._scheduleRestoreExpandedChildren(folderPath);
-  }
-
-  public startBackgroundTasks(): void {
-    this._backgroundTasks.start();
-  }
-
-  public pauseBackgroundTasks(): void {
-    this._backgroundTasks.pause();
-  }
-
-  public enqueueBackgroundTask(task: () => Promise<void> | void): void {
-    this._backgroundTasks.enqueue(task);
-  }
-
-  public dispose(): void {
-    this._backgroundTasks.dispose();
-  }
-
-  private async _readParentPropertiesAfterDeletion(
-    parentPath: string,
-    kind: "folder" | "item",
-    deletedName: string,
-    identity: TreeViewExplorerOperationIdentity,
-  ): Promise<TreeViewFolderProperties> {
-    try {
-      return await this._getDataProvider().getFolderProperties(parentPath);
-    } catch (reason: unknown) {
-      const isMissingParent = reason instanceof Error && (
-        reason.message === "Folder does not exist"
-        || /^MH file could not be read: .*\. ENOENT: /s.test(reason.message)
-      );
-      if (!isMissingParent) throw reason;
-      this._ensureOperationIdentity(identity);
-      const parent = this.findLoadedFolderByPath(parentPath);
-      if (parent === null) throw new Error(`TreeView ${kind} parent is missing`);
-      const orderKey = kind === "folder" ? "folderOrder" : "itemOrder";
-      return {
-        ...structuredClone(parent.properties),
-        [orderKey]: parent.properties[orderKey].filter((name) => name !== deletedName),
-      };
-    }
-  }
-
-  private _commitLoadedFolderLevel(folder: TreeViewFolder, isExpanded: boolean): void {
-    const rootFolder = this._updateFolderNode(
-      this._requireRootFolder(),
-      folder.path,
-      () => ({
-        ...folder,
-        properties: { ...folder.properties, isExpanded },
-      }),
-    );
-    this._loadedFolderPaths.add(folder.path);
-    this.commitRootFolder(rootFolder);
-    this._scheduleRestoreExpandedChildren(folder.path);
-  }
-
-  private _scheduleRestoreExpandedChildren(folderPath: string): void {
-    this._backgroundTasks.enqueue(() => {
-      const folder = this._folderByPath.get(folderPath);
-      if (folder === undefined || !folder.properties.isExpanded) return;
-      for (const child of folder.folders) {
-        if (!child.properties.isExpanded) continue;
-        this._backgroundTasks.enqueue(async () => {
-          await this.loadFolderChildren(child.path);
-        });
-      }
+  private async _cloneFolder(sourcePath: string, targetPath: string): Promise<TreeViewFolder> {
+    await this._getDataProvider().clone({
+      kind: "folder", sourcePath, targetPath,
     });
-  }
-
-  private _resetFolderLoadState(): void {
-    this._backgroundTasks.clear();
-    this._loadedFolderPaths.clear();
-    this._folderLoadOperations.clear();
-  }
-
-  private _installRootFolder(rootFolder: TreeViewFolder | null): void {
-    this._folderById = new Map();
-    this._folderByPath = new Map();
-    this._itemById = new Map();
-    this._itemByPath = new Map();
-    if (rootFolder !== null) this._indexFolder(rootFolder);
-    this._rootFolder.value = rootFolder;
-  }
-
-  private _indexFolder(folder: TreeViewFolder): void {
-    if (this._folderById.has(folder.properties.id)) {
-      folder.properties.id = crypto.randomUUID();
-      void this._getDataProvider().repairEntityId(
-        { kind: "folder", path: folder.path },
-        folder.properties.id,
-      );
+    const parentPath = dirname(targetPath);
+    const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
+    const folder = await this._getDataProvider().getFolder(targetPath, 1);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView clone parent is missing");
+    if (!TreeViewFolderUtils.AddFolder(rootFolder, folder)) {
+      throw new Error("TreeView folder could not be added");
     }
-    this._folderById.set(folder.properties.id, folder);
-    this._folderByPath.set(folder.path, folder);
-    for (const item of folder.items) {
-      if (this._itemById.has(item.properties.id)) {
-        item.properties.id = crypto.randomUUID();
-        void this._getDataProvider().repairEntityId(
-          { kind: "item", path: item.path },
-          item.properties.id,
-        );
-      }
-      this._itemById.set(item.properties.id, item);
-      this._itemByPath.set(item.path, item);
+    parent.properties = structuredClone(parentProperties);
+    parent.folders = this._sortByOrder(parent.folders, parent.properties.folderOrder);
+    this.markFolderLoaded(folder.path);
+    this._refreshRootFolder();
+    if (folder.properties.isExpanded) {
+      await this.loadFolder(folder.path);
     }
-    for (const child of folder.folders) this._indexFolder(child);
+    return folder;
   }
 
-  private _updateFolderNode(
-    rootFolder: TreeViewFolder,
-    folderPath: string,
-    update: (folder: TreeViewFolder) => TreeViewFolder,
-  ): TreeViewFolder {
-    const updated = this._tryUpdateFolderNode(rootFolder, folderPath, update);
-    if (updated === null) throw new Error("TreeView folder is missing");
-    return updated;
-  }
-
-  private _replaceChild(
-    rootFolder: TreeViewFolder,
-    parentPath: string,
-    parentProperties: TreeViewFolderProperties,
-    kind: "folder" | "item",
-    removedId: string,
-    replacement: TreeViewFolder | TreeViewItem | null,
-  ): TreeViewFolder {
-    return this._updateFolderNode(rootFolder, parentPath, (parent) => {
-      if (kind === "folder") {
-        const folders = parent.folders.filter((folder) => folder.properties.id !== removedId);
-        if (replacement !== null) {
-          if (!("folders" in replacement)) throw new Error("TreeView folder replacement is invalid");
-          folders.push(replacement);
-        }
-        return {
-          ...parent,
-          properties: structuredClone(parentProperties),
-          folders: this._sortByOrder(folders, parentProperties.folderOrder),
-        };
-      }
-      const items = parent.items.filter((item) => item.properties.id !== removedId);
-      if (replacement !== null) {
-        if ("folders" in replacement) throw new Error("TreeView item replacement is invalid");
-        items.push(replacement);
-      }
-      return {
-        ...parent,
-        properties: structuredClone(parentProperties),
-        items: this._sortByOrder(items, parentProperties.itemOrder),
-      };
+  private async _cloneItem(sourcePath: string, targetPath: string): Promise<TreeViewItem> {
+    await this._getDataProvider().clone({
+      kind: "item", sourcePath, targetPath,
     });
+    const parentPath = dirname(targetPath);
+    const parentProperties = await this._getDataProvider().getFolderProperties(parentPath);
+    const item = await this._getDataProvider().getItem(targetPath);
+    const rootFolder = this._requireRootFolder();
+    const parent = TreeViewFolderUtils.GetFolder(rootFolder, parentPath);
+    if (parent === null) throw new Error("TreeView clone parent is missing");
+    if (!TreeViewFolderUtils.AddItem(rootFolder, item)) {
+      throw new Error("TreeView item could not be added");
+    }
+    parent.properties = structuredClone(parentProperties);
+    parent.items = this._sortByOrder(parent.items, parent.properties.itemOrder);
+    this._refreshRootFolder();
+    return item;
   }
 
-  private _tryUpdateFolderNode(
-    folder: TreeViewFolder,
-    folderPath: string,
-    update: (folder: TreeViewFolder) => TreeViewFolder,
-  ): TreeViewFolder | null {
-    if (folder.path === folderPath) return update(folder);
-    for (let index = 0; index < folder.folders.length; index += 1) {
-      const child = folder.folders[index];
-      if (child === undefined) continue;
-      const updatedChild = this._tryUpdateFolderNode(child, folderPath, update);
-      if (updatedChild === null) continue;
-      const folders = [...folder.folders];
-      folders[index] = updatedChild;
-      return { ...folder, folders };
+  private async _moveFolder(
+    sourcePath: string,
+    targetPath: string,
+    targetOrder: number,
+  ): Promise<TreeViewEntityPathChange | null> {
+    const workspacePath = this._requireWorkspacePath();
+    const source = this.findLoadedFolderByPath(sourcePath);
+    if (source === null) return null;
+    const sourceParentPath = dirname(sourcePath);
+    const targetParentPath = dirname(targetPath);
+    await this._getDataProvider().move({ kind: "folder", sourcePath, targetPath, targetOrder });
+    const sourceProperties = await this._getDataProvider().getFolderProperties(sourceParentPath);
+    const targetProperties = sourceParentPath === targetParentPath
+      ? sourceProperties
+      : await this._getDataProvider().getFolderProperties(targetParentPath);
+    const rootFolder = this._requireRootFolder();
+    const sourceParent = TreeViewFolderUtils.GetFolder(rootFolder, sourceParentPath);
+    const targetParent = TreeViewFolderUtils.GetFolder(rootFolder, targetParentPath);
+    if (sourceParent === null || targetParent === null) throw new Error("TreeView move parent is missing");
+    if (!("folders" in source)) throw new Error("TreeView move source kind is invalid");
+    this.rebaseLoadedFolderPaths(sourcePath, targetPath);
+    if (sourcePath === targetPath) {
+      if (!TreeViewFolderUtils.UpdateFolder(rootFolder, source)) {
+        throw new Error("TreeView folder could not be updated");
+      }
+    } else {
+      if (!TreeViewFolderUtils.DeleteFolder(rootFolder, sourcePath)) {
+        throw new Error("TreeView folder could not be removed");
+      }
+      this._rebaseFolder(source, sourcePath, targetPath);
+      if (!TreeViewFolderUtils.AddFolder(rootFolder, source)) {
+        throw new Error("TreeView folder could not be added");
+      }
     }
-    return null;
+    if (sourceParent !== targetParent) {
+      sourceParent.properties = structuredClone(sourceProperties);
+      sourceParent.folders = this._sortByOrder(sourceParent.folders, sourceParent.properties.folderOrder);
+    }
+    targetParent.properties = structuredClone(targetProperties);
+    targetParent.folders = this._sortByOrder(targetParent.folders, targetParent.properties.folderOrder);
+    this._refreshRootFolder();
+    return { workspacePath, kind: "folder", sourcePath, targetPath };
+  }
+
+  private async _moveItem(
+    sourcePath: string,
+    targetPath: string,
+    targetOrder: number,
+  ): Promise<TreeViewEntityPathChange | null> {
+    const workspacePath = this._requireWorkspacePath();
+    const source = this.findLoadedItemByPath(sourcePath);
+    if (source === null) return null;
+    const sourceParentPath = dirname(sourcePath);
+    const targetParentPath = dirname(targetPath);
+    await this._getDataProvider().move({ kind: "item", sourcePath, targetPath, targetOrder });
+    const sourceProperties = await this._getDataProvider().getFolderProperties(sourceParentPath);
+    const targetProperties = sourceParentPath === targetParentPath
+      ? sourceProperties
+      : await this._getDataProvider().getFolderProperties(targetParentPath);
+    const rootFolder = this._requireRootFolder();
+    const sourceParent = TreeViewFolderUtils.GetFolder(rootFolder, sourceParentPath);
+    const targetParent = TreeViewFolderUtils.GetFolder(rootFolder, targetParentPath);
+    if (sourceParent === null || targetParent === null) throw new Error("TreeView move parent is missing");
+    if ("folders" in source) throw new Error("TreeView move source kind is invalid");
+    if (sourcePath === targetPath) {
+      if (!TreeViewFolderUtils.UpdateItem(rootFolder, source)) {
+        throw new Error("TreeView item could not be updated");
+      }
+    } else {
+      if (!TreeViewFolderUtils.DeleteItem(rootFolder, sourcePath)) {
+        throw new Error("TreeView item could not be removed");
+      }
+      source.path = targetPath;
+      source.name = basename(targetPath, TREE_VIEW_ITEM_FILE_EXTENSION);
+      if (!TreeViewFolderUtils.AddItem(rootFolder, source)) {
+        throw new Error("TreeView item could not be added");
+      }
+    }
+    if (sourceParent !== targetParent) {
+      sourceParent.properties = structuredClone(sourceProperties);
+      sourceParent.items = this._sortByOrder(sourceParent.items, sourceParent.properties.itemOrder);
+    }
+    targetParent.properties = structuredClone(targetProperties);
+    targetParent.items = this._sortByOrder(targetParent.items, targetParent.properties.itemOrder);
+    this._refreshRootFolder();
+    return { workspacePath, kind: "item", sourcePath, targetPath };
+  }
+
+  private _refreshRootFolder(): void {
+    if (this._isDisposed || this._rootPublishTimeout !== null) return;
+    this._rootPublishTimeout = setTimeout(() => {
+      this._rootPublishTimeout = null;
+      const rootFolder = this._rootFolder.value;
+      this._rootFolder.value = rootFolder === null ? null : { ...rootFolder };
+    }, TreeViewExplorerModel._PUBLISH_DELAY_MS);
   }
 
   private _rebaseFolder(
@@ -769,13 +550,11 @@ export class TreeViewExplorerModel {
       const relativePath = relative(sourcePath, path);
       return relativePath.length === 0 ? targetPath : join(targetPath, relativePath);
     };
-    return {
-      ...folder,
-      path: rebasePath(folder.path),
-      name: folder.path === sourcePath ? basename(targetPath) : folder.name,
-      folders: folder.folders.map((child) => this._rebaseFolder(child, sourcePath, targetPath)),
-      items: folder.items.map((item) => ({ ...item, path: rebasePath(item.path) })),
-    };
+    if (folder.path === sourcePath) folder.name = basename(targetPath);
+    folder.path = rebasePath(folder.path);
+    for (const child of folder.folders) this._rebaseFolder(child, sourcePath, targetPath);
+    for (const item of folder.items) item.path = rebasePath(item.path);
+    return folder;
   }
 
   private _sortByOrder<TEntry extends { name: string }>(
@@ -817,54 +596,20 @@ export class TreeViewExplorerModel {
     return workspacePath;
   }
 
-  private _captureOperationIdentity(
-    expectedWorkspacePath?: string,
-  ): TreeViewExplorerOperationIdentity {
-    const workspacePath = this._requireWorkspacePath();
-    if (expectedWorkspacePath !== undefined && workspacePath !== expectedWorkspacePath) {
-      throw new Error("TreeView Workspace changed during operation");
-    }
-    return { workspacePath, loadRevision: this._loadRevision };
-  }
-
-  private _ensureOperationIdentity(identity: TreeViewExplorerOperationIdentity): void {
-    if (this._workspacePath !== identity.workspacePath
-      || this._loadRevision !== identity.loadRevision) {
-      throw new Error("TreeView Workspace changed during operation");
-    }
-  }
-
   private _getDataProvider(): TreeViewExplorerDataProvider {
     const dataProvider = this._dataProvider;
     if (dataProvider === null) throw new Error("TreeView Explorer DataProvider is not initialized");
     return dataProvider;
   }
 
-  private _runRemote(start: (operationId: string) => Promise<void>): Promise<void> {
-    const runRemoteOperation = this._runRemoteOperation;
-    if (runRemoteOperation === null) {
-      throw new Error("TreeView Explorer operation runner is not initialized");
-    }
-    return runRemoteOperation(start);
-  }
-
   public readonly rootFolder: ComputedRef<TreeViewFolder | null>;
-  public readonly selection: ComputedRef<TreeViewSelection | null>;
-  public readonly activeEntityPath: ComputedRef<string | null>;
 
-  private readonly _backgroundTasks = new TreeViewBackgroundTaskQueue();
+  private static readonly _PUBLISH_DELAY_MS = 50;
+
   private _dataProvider: TreeViewExplorerDataProvider | null = null;
-  private _runRemoteOperation: TreeViewRemoteOperationRunner | null = null;
   private _workspacePath: string | null = null;
-  private _loadRevision = 0;
+  private _isDisposed = false;
   private readonly _rootFolder = shallowRef<TreeViewFolder | null>(null);
-  private readonly _selection = shallowRef<TreeViewSelection | null>(null);
-  private readonly _activeEntityPath = shallowRef<string | null>(null);
-  private _activeTab: TreeViewTab | null = null;
   private readonly _loadedFolderPaths = new Set<string>();
-  private readonly _folderLoadOperations = new Map<string, Promise<TreeViewFolder>>();
-  private _folderById = new Map<string, TreeViewFolder>();
-  private _folderByPath = new Map<string, TreeViewFolder>();
-  private _itemById = new Map<string, TreeViewItem>();
-  private _itemByPath = new Map<string, TreeViewItem>();
+  private _rootPublishTimeout: ReturnType<typeof setTimeout> | null = null;
 }

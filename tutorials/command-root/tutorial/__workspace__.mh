@@ -1,5 +1,5 @@
 {
-  "isSelected": true,
+  "isSelected": false,
   "ui": {
     "layout": {
       "sidebarWidth": 342
@@ -13,62 +13,83 @@
       "isPinned": false
     },
     {
-      "kind": "item",
-      "id": "6defa06e-5707-4b35-93b0-b86f0390678b",
-      "path": "get-env/node-mhgetenv.mh",
+      "kind": "folder",
+      "path": "targets",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "e05fa166-cc85-4285-a3f4-a4422583365c",
-      "path": "test-uac.mh",
+      "path": "set-env/node-mhsetenv.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000015",
-      "path": "get-env/show env.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "9a90cf86-0988-4009-8019-dfac9cb27ae9",
-      "path": "targets/test-set-prompt.mh",
-      "isPinned": false
-    },
-    {
-      "kind": "item",
-      "id": "ddf0d92b-8996-402d-b1f0-4b68cabde5ce",
       "path": "test-cmd-cd.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000016",
-      "path": "call/test-ps-call.mh",
+      "path": "get-env/show env.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "path": "call",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000017",
-      "path": "call/test-cmd-call.mh",
+      "path": "get-env/node-mhgetenv.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "10000000-0000-4000-8000-000000000018",
+      "path": "get-env/cmd-mhgetenv.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "Untitled.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
       "path": "call/test-node-call.mh",
       "isPinned": false
     },
     {
       "kind": "item",
-      "id": "525f622c-71f8-45f2-9c54-ccf4a953b923",
-      "path": "Untitled.mh",
+      "path": "call/test-ps-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "call/test-cmd-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "call/test-py-call.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "get-env/ps1-mhgetenv.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "item",
+      "path": "test-uac.mh",
+      "isPinned": false
+    },
+    {
+      "kind": "folder",
+      "path": "get-env",
       "isPinned": false
     }
   ],
-  "activeTabId": "525f622c-71f8-45f2-9c54-ccf4a953b923",
-  "previewTabId": "10000000-0000-4000-8000-000000000018",
+  "activeTabPath": "call/test-node-call.mh",
+  "previewTabPath": "get-env",
   "data": {
     "selectedEnvGroupId": "de4f2968-ebec-4456-898b-bad45ad19f8d",
     "envGroups": [

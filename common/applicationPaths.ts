@@ -19,7 +19,7 @@ class ApplicationPathsOptionsSerializer extends ISerializer<ApplicationPathsOpti
     ValidateUtils.ensureRecord(value);
     const expectedKeys = Object.keys(ApplicationPathsOptionsSerializer._DEFAULT);
     const actualKeys = Object.keys(value);
-    if (Array.isArray(value) || actualKeys.length !== expectedKeys.length
+    if (Array.isArray(value)
       || !expectedKeys.every((key) => actualKeys.includes(key))) {
       throw new Error("Application paths options have an invalid schema");
     }

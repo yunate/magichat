@@ -28,7 +28,7 @@ type TreeViewTabActions = Pick<
 >;
 
 type MenuState = Readonly<{
-  tabId: string;
+  tabPath: string;
   position: ContextMenuPosition;
 }> | null;
 
@@ -81,8 +81,8 @@ const tabs = computed(() => props.model.tabs.value.filter((tab) => (
   tab.kind === "folder" ? props.isFolderTabVisible : props.isItemTabVisible
 )));
 const activeTab = computed(() => {
-  const activeTabId = props.model.activeTab.value?.id;
-  return tabs.value.find((tab) => tab.id === activeTabId) ?? null;
+  const activeTabPath = props.model.activeTab.value?.path;
+  return tabs.value.find((tab) => tab.path === activeTabPath) ?? null;
 });
 const activeTabPageKey = computed(() => {
   const tab = activeTab.value;
@@ -90,7 +90,7 @@ const activeTabPageKey = computed(() => {
 });
 const contextMenuTab = computed(() => {
   const state = menu.value;
-  return state === null ? null : tabs.value.find((tab) => tab.id === state.tabId) ?? null;
+  return state === null ? null : tabs.value.find((tab) => tab.path === state.tabPath) ?? null;
 });
 const breadcrumbPath = computed(() => {
   const tab = activeTab.value;
@@ -103,7 +103,7 @@ const breadcrumbSegments = computed<readonly string[]>(() => (
 const hasWorkspace = computed(() => props.workspacePath !== null);
 
 function getTabPageKey(tab: TreeViewTab): string {
-  return `${props.workspacePath ?? ""}:${tab.kind}:${tab.id}`;
+  return `${tab.kind}:${props.model.getPageKey(tab)}`;
 }
 
 function report(operation: Promise<unknown>): void {
@@ -113,16 +113,16 @@ function report(operation: Promise<unknown>): void {
 }
 
 function switchTab(tab: TreeViewTab): void {
-  report(props.actions.switchTab({ tabId: tab.id }));
+  report(props.actions.switchTab({ tabPath: tab.path }));
 }
 
 function promoteTab(tab: TreeViewTab): void {
-  runTabsChange(() => props.model.promoteTab({ tabId: tab.id }));
+  runTabsChange(() => props.model.promoteTab({ tabPath: tab.path }));
 }
 
 function openTabMenu(event: MouseEvent, tab: TreeViewTab): void {
   menu.value = {
-    tabId: tab.id,
+    tabPath: tab.path,
     position: { x: event.clientX, y: event.clientY },
   };
 }
@@ -130,30 +130,30 @@ function openTabMenu(event: MouseEvent, tab: TreeViewTab): void {
 function closeMenuTab(): void {
   const state = menu.value;
   menu.value = null;
-  if (state !== null) report(props.actions.closeTabs({ tabIds: [state.tabId] }));
+  if (state !== null) report(props.actions.closeTabs({ tabPaths: [state.tabPath] }));
 }
 
 function closeMenuTabs(mode: "others" | "left" | "right" | "othersExceptPinned"): void {
   const target = contextMenuTab.value;
   menu.value = null;
   if (target === null) return;
-  const targetIndex = tabs.value.findIndex((tab) => tab.id === target.id);
+  const targetIndex = tabs.value.findIndex((tab) => tab.path === target.path);
   if (targetIndex < 0) return;
-  const tabIds = tabs.value.flatMap((tab, index) => {
-    if (tab.id === target.id) return [];
-    if (mode === "left") return index < targetIndex ? [tab.id] : [];
-    if (mode === "right") return index > targetIndex ? [tab.id] : [];
+  const tabPaths = tabs.value.flatMap((tab, index) => {
+    if (tab.path === target.path) return [];
+    if (mode === "left") return index < targetIndex ? [tab.path] : [];
+    if (mode === "right") return index > targetIndex ? [tab.path] : [];
     if (mode === "othersExceptPinned" && tab.isPinned) return [];
-    return [tab.id];
+    return [tab.path];
   });
-  report(props.actions.closeTabs({ tabIds, preferredActiveId: target.id }));
+  report(props.actions.closeTabs({ tabPaths, preferredActivePath: target.path }));
 }
 
 function toggleMenuTabPinned(): void {
   const tab = contextMenuTab.value;
   menu.value = null;
   if (tab !== null) {
-    runTabsChange(() => props.model.setTabPinned({ tabId: tab.id, isPinned: !tab.isPinned }));
+    runTabsChange(() => props.model.setTabPinned({ tabPath: tab.path, isPinned: !tab.isPinned }));
   }
 }
 
@@ -211,16 +211,15 @@ function requestDraftSave(entity: TreeViewFolder | TreeViewItem): Promise<boolea
   return isTreeViewItem(entity) ? openDraftDialog(entity) : Promise.resolve(false);
 }
 
-async function saveDraft(name: string, folderId: string): Promise<void> {
+async function saveDraft(name: string, folderPath: string): Promise<void> {
   const state = draftDialog.value;
   if (state === null || state.isSubmitting) return;
   state.isSubmitting = true;
   state.error = "";
   try {
-    const targetFolder = findLoadedFolder(folderId);
+    const targetFolder = findLoadedFolder(folderPath);
     if (targetFolder === null) throw new Error("TreeView target folder is unavailable");
     const change = await props.model.publishDraft({
-      itemId: state.item.properties.id,
       sourcePath: state.item.path,
       targetFolderPath: targetFolder.path,
       name,
@@ -236,14 +235,14 @@ async function saveDraft(name: string, folderId: string): Promise<void> {
   }
 }
 
-function findLoadedFolder(folderId: string): TreeViewFolder | null {
+function findLoadedFolder(folderPath: string): TreeViewFolder | null {
   const root = props.rootFolder;
   if (root === null) return null;
   const pending = [root];
   while (pending.length > 0) {
     const folder = pending.shift();
     if (folder === undefined) continue;
-    if (folder.properties.id === folderId) return folder;
+    if (folder.path === folderPath) return folder;
     pending.push(...folder.folders);
   }
   return null;
@@ -257,15 +256,15 @@ function closeDraftDialog(): void {
 }
 
 function setTabPinned(tab: TreeViewTab, isPinned: boolean): void {
-  runTabsChange(() => props.model.setTabPinned({ tabId: tab.id, isPinned }));
+  runTabsChange(() => props.model.setTabPinned({ tabPath: tab.path, isPinned }));
 }
 
 function reorderTabs(
-  draggedId: string,
-  targetId: string,
+  draggedPath: string,
+  targetPath: string,
   position: "before" | "after",
 ): void {
-  runTabsChange(() => props.model.reorderTabs({ draggedId, targetId, position }));
+  runTabsChange(() => props.model.reorderTabs({ draggedPath, targetPath, position }));
 }
 
 function runTabsChange(change: () => boolean | void): void {
@@ -313,14 +312,14 @@ onUnmounted(() => {
         <slot name="tabHeaderLeading"></slot>
         <TreeViewTabs
           :tabs="tabs"
-          :active-tab-id="activeTab?.id ?? null"
-          :preview-tab-id="model.previewTabId.value"
+          :active-tab-path="activeTab?.path ?? null"
+          :preview-tab-path="model.previewTabPath.value"
           :is-multiline="isMultiline"
           :is-add-visible="isItemTabVisible && hasWorkspace"
           @activate="switchTab"
           @promote="promoteTab"
           @pin="setTabPinned"
-          @close="report(actions.closeTabs({ tabIds: [$event.id] }))"
+          @close="report(actions.closeTabs({ tabPaths: [$event.path] }))"
           @context-menu="openTabMenu"
           @reorder="reorderTabs"
           @add="createDraft"

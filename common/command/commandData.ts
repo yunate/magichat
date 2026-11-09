@@ -45,7 +45,7 @@ export class CommandWorkspaceDataSerializer extends ISerializer<CommandWorkspace
   }
 
   public validate(value: unknown): asserts value is CommandWorkspaceData {
-    ensureExactRecord(
+    ensureRequiredRecord(
       value,
       Object.keys(CommandWorkspaceDataSerializer._DEFAULT),
       "Command workspace data",
@@ -66,7 +66,7 @@ export class CommandFolderDataSerializer extends ISerializer<CommandFolderData> 
 
   public validate(value: unknown): asserts value is CommandFolderData {
     migrateCommandParamEnabled(value);
-    ensureExactRecord(value, Object.keys(CommandFolderDataSerializer._DEFAULT), "Command folder data");
+    ensureRequiredRecord(value, Object.keys(CommandFolderDataSerializer._DEFAULT), "Command folder data");
     validateCommandParamGroups(value.paramGroups, value.selectedParamGroupId);
   }
 
@@ -113,7 +113,7 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
 
   public validate(value: unknown): asserts value is CommandItemData {
     migrateCommandParamEnabled(value);
-    ensureExactRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data", ["codeViewPlacement", "isUAC"]);
+    ensureRequiredRecord(value, Object.keys(CommandItemDataSerializer._DEFAULT), "Command item data", ["codeViewPlacement", "isUAC"]);
     if (!isScriptType(value.scriptType)) throw new Error("Command script type is invalid");
     if (value.codeViewPlacement !== undefined && !CommandItemDataSerializer._isCodeViewPlacement(value.codeViewPlacement)) {
       throw new Error("Command code view placement is invalid");
@@ -131,7 +131,7 @@ export class CommandItemDataSerializer extends ISerializer<CommandItemData> {
       throw new Error("Command item data must be valid JSON");
     }
     migrateCommandParamEnabled(value);
-    ensureExactRecord(
+    ensureRequiredRecord(
       value,
       Object.keys(CommandItemDataSerializer._META_DEFAULT),
       "Command item data",
@@ -187,7 +187,7 @@ class CommandParamGroupSerializer extends ISerializer<CommandParamGroup> {
   }
 
   public validate(value: unknown): asserts value is CommandParamGroup {
-    ensureExactRecord(value, Object.keys(CommandParamGroupSerializer._DEFAULT), "Command param group");
+    ensureRequiredRecord(value, Object.keys(CommandParamGroupSerializer._DEFAULT), "Command param group");
     ValidateUtils.ensureString(value.id, "Command param group ID must be a string");
     ValidateUtils.ensureString(value.name, "Command param group name must be a string");
     if (value.id.length === 0) throw new Error("Command param group ID must not be empty");
@@ -204,7 +204,7 @@ export class CommandParamSerializer extends ISerializer<CommandParam> {
   }
 
   public validate(value: unknown): asserts value is CommandParam {
-    ensureExactRecord(value, Object.keys(CommandParamSerializer._DEFAULT), "Command param");
+    ensureRequiredRecord(value, Object.keys(CommandParamSerializer._DEFAULT), "Command param");
     ValidateUtils.ensureString(value.key, "Command param key must be a string");
     ValidateUtils.ensureString(value.value, "Command param value must be a string");
     ValidateUtils.ensureBoolean(value.enabled, "Command param enabled must be a boolean");
@@ -260,7 +260,7 @@ function isMutableRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function ensureExactRecord(
+function ensureRequiredRecord(
   value: unknown,
   keys: readonly string[],
   description: string,
@@ -268,8 +268,7 @@ function ensureExactRecord(
 ): asserts value is Record<string, unknown> {
   ValidateUtils.ensureRecord(value);
   const actualKeys = Object.keys(value);
-  if (actualKeys.some((key) => !keys.includes(key))
-    || !keys.every((key) => actualKeys.includes(key) || optionalKeys.includes(key))) {
+  if (!keys.every((key) => actualKeys.includes(key) || optionalKeys.includes(key))) {
     throw new Error(`${description} has an invalid schema`);
   }
 }

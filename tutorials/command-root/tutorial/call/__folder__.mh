@@ -3,10 +3,10 @@
   "isExpanded": true,
   "folderOrder": [],
   "itemOrder": [
-    "test-ps-call",
-    "test-cmd-call",
     "test-node-call",
-    "test-py-call"
+    "test-py-call",
+    "test-ps-call",
+    "test-cmd-call"
   ],
   "data": {
     "selectedParamGroupId": "folder",

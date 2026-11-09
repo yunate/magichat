@@ -15,22 +15,15 @@ import {
 } from "./treeViewTypes";
 import { TreeViewPath } from "./treeViewPath";
 
-function ensureExactRecord(
+function ensureRequiredRecord(
   value: unknown,
   keys: readonly string[],
   description: string,
 ): asserts value is Record<string, unknown> {
   ValidateUtils.ensureRecord(value);
   const actualKeys = Object.keys(value);
-  if (actualKeys.length !== keys.length || !keys.every((key) => actualKeys.includes(key))) {
+  if (!keys.every((key) => actualKeys.includes(key))) {
     throw new Error(`${description} has an invalid schema`);
-  }
-}
-
-function ensureIdentifier(value: unknown, description: string): asserts value is string {
-  ValidateUtils.ensureNonBlankString(value, `${description} must be a nonblank string`);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new Error(`${description} must be a UUID v4`);
   }
 }
 
@@ -51,15 +44,33 @@ export class TreeViewFolderPropertiesSerializer extends ISerializer<TreeViewFold
   }
 
   public validate(value: unknown): asserts value is TreeViewFolderProperties {
-    ensureExactRecord(value, Object.keys(TreeViewFolderPropertiesSerializer._DEFAULT), "TreeView folder properties");
-    ensureIdentifier(value.id, "TreeView folder id");
+    ensureRequiredRecord(value, Object.keys(TreeViewFolderPropertiesSerializer._DEFAULT), "TreeView folder properties");
     ValidateUtils.ensureBoolean(value.isExpanded, "TreeView folder isExpanded must be a boolean");
     ensureStringArray(value.folderOrder, "TreeView folder folderOrder");
     ensureStringArray(value.itemOrder, "TreeView folder itemOrder");
   }
 
+  public fromStoredValue(value: unknown): TreeViewFolderProperties {
+    ValidateUtils.ensureRecord(value);
+    const properties = {
+      ...value,
+      folderOrder: this._readStoredOrder(value.folderOrder),
+      itemOrder: this._readStoredOrder(value.itemOrder),
+    };
+    this.validate(properties);
+    return properties;
+  }
+
+  private _readStoredOrder(value: unknown): string[] {
+    try {
+      ensureStringArray(value, "TreeView folder order");
+      return value;
+    } catch {
+      return [];
+    }
+  }
+
   private static readonly _DEFAULT: TreeViewFolderProperties = {
-    id: "00000000-0000-4000-8000-000000000000",
     isExpanded: true,
     folderOrder: [],
     itemOrder: [],
@@ -72,14 +83,14 @@ export class TreeViewItemPropertiesSerializer extends ISerializer<TreeViewItemPr
   }
 
   public validate(value: unknown): asserts value is TreeViewItemProperties {
-    ensureExactRecord(value, Object.keys(TreeViewItemPropertiesSerializer._DEFAULT), "TreeView item properties");
-    ensureIdentifier(value.id, "TreeView item id");
+    ensureRequiredRecord(value, Object.keys(TreeViewItemPropertiesSerializer._DEFAULT), "TreeView item properties");
     ValidateUtils.ensureBoolean(value.isDraft, "TreeView item isDraft must be a boolean");
+    ValidateUtils.ensureString(value.iconDescription, "TreeView item iconDescription must be a string");
   }
 
   private static readonly _DEFAULT: TreeViewItemProperties = {
-    id: "00000000-0000-4000-8000-000000000000",
     isDraft: false,
+    iconDescription: "",
   };
 }
 
@@ -98,7 +109,7 @@ export class TreeViewItemSerializer extends ISerializer<TreeViewItem> {
   }
 
   public validate(value: unknown): asserts value is TreeViewItem {
-    ensureExactRecord(value, Object.keys(this.getDefault()), "TreeView item");
+    ensureRequiredRecord(value, Object.keys(this.getDefault()), "TreeView item");
     const itemPath = TreeViewPath.normalize(value.path, "TreeView item path");
     ValidateUtils.ensureNonBlankString(value.name, "TreeView item name must be nonblank");
     const fileName = itemPath.slice(itemPath.lastIndexOf("/") + 1);
@@ -137,7 +148,7 @@ export class TreeViewFolderSerializer extends ISerializer<TreeViewFolder> {
   }
 
   private _validateFolder(value: unknown): asserts value is TreeViewFolder {
-    ensureExactRecord(value, Object.keys(this.getDefault()), "TreeView folder");
+    ensureRequiredRecord(value, Object.keys(this.getDefault()), "TreeView folder");
     const folderPath = TreeViewPath.normalize(value.path, "TreeView folder path");
     ValidateUtils.ensureNonBlankString(value.name, "TreeView folder name must be nonblank");
     if (value.name !== folderPath.slice(folderPath.lastIndexOf("/") + 1)) {
@@ -168,19 +179,21 @@ class TreeViewTabSerializer extends ISerializer<TreeViewTab> {
   public getDefault(): TreeViewTab {
     return {
       kind: "item",
-      id: "00000000-0000-4000-8000-000000000000",
       path: "item.mh",
       isPinned: false,
     };
   }
 
   public validate(value: unknown): asserts value is TreeViewTab {
-    ensureExactRecord(value, Object.keys(this.getDefault()), "TreeView tab");
+    ensureRequiredRecord(value, Object.keys(this.getDefault()), "TreeView tab");
     if (value.kind !== "folder" && value.kind !== "item") {
       throw new Error("TreeView tab kind is invalid");
     }
-    ensureIdentifier(value.id, "TreeView tab id");
     ValidateUtils.ensureNonBlankString(value.path, "TreeView tab path must be nonblank");
+    if (value.path !== "." && (value.path.includes("\\") || value.path.startsWith("/")
+      || value.path.includes(":") || value.path.split("/").some((part) => part === "" || part === "." || part === ".."))) {
+      throw new Error("TreeView tab path must be normalized and Workspace-relative");
+    }
     ValidateUtils.ensureBoolean(value.isPinned, "TreeView tab isPinned must be a boolean");
   }
 }
@@ -190,42 +203,51 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
     return structuredClone(TreeViewWorkspaceSerializer._DEFAULT);
   }
 
-  public override fromValue(value: unknown): TreeViewWorkspace {
-    return super.fromValue(this._migrateLegacyValue(value));
+  public fromStoredValue(value: unknown): { properties: TreeViewWorkspace; hasValidTabs: boolean } {
+    ValidateUtils.ensureRecord(value);
+    let tabs: TreeViewTab[] = [];
+    let hasValidTabs = true;
+    try {
+      this._validateTabs(value.tabs);
+      tabs = value.tabs;
+    } catch {
+      hasValidTabs = false;
+    }
+    const properties = {
+      ...value,
+      tabs,
+      activeTabPath: typeof value.activeTabPath === "string"
+        && tabs.some((tab) => tab.path === value.activeTabPath) ? value.activeTabPath : tabs[0]?.path ?? null,
+      previewTabPath: typeof value.previewTabPath === "string"
+        && tabs.some((tab) => tab.path === value.previewTabPath && !tab.isPinned) ? value.previewTabPath : null,
+    };
+    this.validate(properties);
+    return { properties, hasValidTabs };
   }
 
   public validate(value: unknown): asserts value is TreeViewWorkspace {
-    ensureExactRecord(value, Object.keys(TreeViewWorkspaceSerializer._DEFAULT), "TreeView workspace");
+    ensureRequiredRecord(value, Object.keys(TreeViewWorkspaceSerializer._DEFAULT), "TreeView workspace");
     ValidateUtils.ensureBoolean(value.isSelected, "TreeView workspace isSelected must be a boolean");
-    ValidateUtils.ensureArray(value.tabs, "TreeView workspace tabs must be an array");
-    const tabIds = new Set<string>();
-    const pinnedTabIds = new Set<string>();
-    let foundUnpinned = false;
-    for (const tab of value.tabs) {
-      TreeViewWorkspaceSerializer._TAB_SERIALIZER.validate(tab);
-      if (tabIds.has(tab.id)) throw new Error("TreeView tab ids must be unique");
-      tabIds.add(tab.id);
-      if (tab.isPinned) pinnedTabIds.add(tab.id);
-      if (!tab.isPinned) foundUnpinned = true;
-      else if (foundUnpinned) throw new Error("Pinned TreeView tabs must precede unpinned tabs");
+    this._validateTabs(value.tabs);
+    const tabPaths = new Set(value.tabs.map((tab) => tab.path));
+    const pinnedTabPaths = new Set(value.tabs.filter((tab) => tab.isPinned).map((tab) => tab.path));
+    if (value.activeTabPath !== null) {
+      ValidateUtils.ensureNonBlankString(value.activeTabPath, "TreeView active tab path must be nonblank");
+      if (!tabPaths.has(value.activeTabPath)) throw new Error("TreeView active tab path must reference a tab");
+    } else if (tabPaths.size > 0) {
+      throw new Error("TreeView active tab path is required when tabs exist");
     }
-    if (value.activeTabId !== null) {
-      ensureIdentifier(value.activeTabId, "TreeView active tab id");
-      if (!tabIds.has(value.activeTabId)) throw new Error("TreeView active tab id must reference a tab");
-    } else if (tabIds.size > 0) {
-      throw new Error("TreeView active tab id is required when tabs exist");
-    }
-    if (value.previewTabId !== null) {
-      ensureIdentifier(value.previewTabId, "TreeView preview tab id");
-      if (!tabIds.has(value.previewTabId)) {
-        throw new Error("TreeView preview tab id must reference a tab");
+    if (value.previewTabPath !== null) {
+      ValidateUtils.ensureNonBlankString(value.previewTabPath, "TreeView preview tab path must be nonblank");
+      if (!tabPaths.has(value.previewTabPath)) {
+        throw new Error("TreeView preview tab path must reference a tab");
       }
-      if (pinnedTabIds.has(value.previewTabId)) {
+      if (pinnedTabPaths.has(value.previewTabPath)) {
         throw new Error("TreeView preview tab must not be pinned");
       }
     }
-    ensureExactRecord(value.ui, Object.keys(TreeViewWorkspaceSerializer._DEFAULT.ui), "TreeView workspace ui");
-    ensureExactRecord(
+    ensureRequiredRecord(value.ui, Object.keys(TreeViewWorkspaceSerializer._DEFAULT.ui), "TreeView workspace ui");
+    ensureRequiredRecord(
       value.ui.layout,
       Object.keys(TreeViewWorkspaceSerializer._DEFAULT.ui.layout),
       "TreeView workspace layout",
@@ -236,27 +258,28 @@ export class TreeViewWorkspaceSerializer extends ISerializer<TreeViewWorkspace> 
     }
   }
 
-  private _migrateLegacyValue(value: unknown): unknown {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== TreeViewWorkspaceSerializer._LEGACY_KEYS.length
-      || !TreeViewWorkspaceSerializer._LEGACY_KEYS.every((key) => actualKeys.includes(key))) {
-      return value;
+  private _validateTabs(value: unknown): asserts value is TreeViewTab[] {
+    ValidateUtils.ensureArray(value, "TreeView workspace tabs must be an array");
+    const tabPaths = new Set<string>();
+    let hasUnpinnedTab = false;
+    for (const tab of value) {
+      TreeViewWorkspaceSerializer._TAB_SERIALIZER.validate(tab);
+      if (tabPaths.has(tab.path)) throw new Error("TreeView tab paths must be unique");
+      tabPaths.add(tab.path);
+      if (!tab.isPinned) hasUnpinnedTab = true;
+      else if (hasUnpinnedTab) throw new Error("Pinned TreeView tabs must precede unpinned tabs");
     }
-    return { ...value, previewTabId: null };
   }
 
   private static readonly _TAB_SERIALIZER: TreeViewTabSerializer = new TreeViewTabSerializer();
   private static readonly _DEFAULT: TreeViewWorkspace = {
     isSelected: false,
     tabs: [],
-    activeTabId: null,
-    previewTabId: null,
+    activeTabPath: null,
+    previewTabPath: null,
     ui: { layout: { sidebarWidth: TREE_VIEW_DEFAULT_SIDEBAR_WIDTH } },
   };
-  private static readonly _LEGACY_KEYS = Object.keys(TreeViewWorkspaceSerializer._DEFAULT)
-    .filter((key) => key !== "previewTabId");
 }
 
-export const treeViewWorkspaceSerializer: ISerializer<TreeViewWorkspace> =
+export const treeViewWorkspaceSerializer: TreeViewWorkspaceSerializer =
   new TreeViewWorkspaceSerializer();

@@ -36,10 +36,8 @@ export class CommandConfigSerializer extends ISerializer<CommandConfig> {
     if (Array.isArray(value)) throw new Error("Command config must be a record");
 
     const expectedKeys = Object.keys(CommandConfigSerializer._DEFAULT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Command config contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Command config is missing required properties");
     }
     if (!isDefaultCodeViewPlacement(value.codeViewPlacement)) {
       throw new Error("Command codeViewPlacement is invalid");
@@ -77,10 +75,8 @@ export class CommandConfigSerializer extends ISerializer<CommandConfig> {
   private static _validateRoot(value: unknown): asserts value is CommandRootConfig {
     ValidateUtils.ensureRecord(value);
     const expectedKeys = Object.keys(CommandConfigSerializer._DEFAULT_ROOT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Command root contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Command root is missing required properties");
     }
     ValidateUtils.ensureNonBlankString(value.key, "Command root key must not be blank");
     ValidateUtils.ensureString(value.path, "Command root path must be a string");

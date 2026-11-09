@@ -2,18 +2,15 @@ export const TREE_VIEW_ITEM_FILE_EXTENSION = ".mh";
 export const TREE_VIEW_DEFAULT_SIDEBAR_WIDTH = 400;
 
 export type TreeViewFolderProperties = {
-  id: string;
   isExpanded: boolean;
   folderOrder: string[];
   itemOrder: string[];
 };
 
 export type TreeViewItemProperties = {
-  id: string;
   isDraft: boolean;
+  iconDescription: string;
 };
-
-export type TreeViewCreateItemProperties = Omit<TreeViewItemProperties, "id">;
 
 export type TreeViewStorageRoot = {
   key: string;
@@ -42,7 +39,6 @@ export type TreeViewFolder = {
 
 export type TreeViewTab = {
   kind: "folder" | "item";
-  id: string;
   path: string;
   isPinned: boolean;
 };
@@ -50,8 +46,8 @@ export type TreeViewTab = {
 export type TreeViewWorkspace = {
   isSelected: boolean;
   tabs: TreeViewTab[];
-  activeTabId: string | null;
-  previewTabId: string | null;
+  activeTabPath: string | null;
+  previewTabPath: string | null;
   ui: {
     layout: {
       sidebarWidth: number;

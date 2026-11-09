@@ -11,7 +11,7 @@
                          "buildScript":  "cli-helper/src/build-native.bat",
                          "targetExecutable":  "cli-helper/bin/magichat-cli.exe",
                          "sourceHash":  "37e8233f18117443b60ccb7debe54bce05e886e756b572b3704234ec8e8e745a",
-                         "targetHash":  "2c96c0c8d754d27ccfb40f5f0bf5a01a498858d4828bdf2cf7f1d0bc539db4b1"
+                         "targetHash":  "90268e60d0698c6641eb651f23bee49de7cafd0b213f41b0c3c0642b95f1f4b4"
                      },
                      {
                          "name":  "js-launcher",
@@ -23,7 +23,7 @@
                          "buildScript":  "js-launcher/src/build-native.bat",
                          "targetExecutable":  "js-launcher/bin/js-launcher.exe",
                          "sourceHash":  "282755fcb1ef67ea1389404582946bf11bfd1dc5bf436e3845779e3eb6af1882",
-                         "targetHash":  "be0243f26866235845e911d36fd7a5e32530111c0fb699d7008adbd0063091b1"
+                         "targetHash":  "55458d602dd92f1edfd223f778c62781c3e34705dc33e98f91873591a6ff709e"
                      },
                      {
                          "name":  "launcher",
@@ -37,7 +37,7 @@
                          "buildScript":  "launcher/src/build-native.bat",
                          "targetExecutable":  "launcher/bin/launcher.exe",
                          "sourceHash":  "a004ae5e998f2fea160dc61e889dc5e718015a45ba8e4bbe800317e885ed7074",
-                         "targetHash":  "5a525d62400eeea9eeb8102c8e1cdbd1f20ccc82c1545908da669a4e3846b08a"
+                         "targetHash":  "3c95836fd82595d4bddec08ed34e444510ab7d8dd0c2ca840f496c577971d033"
                      }
                  ]
 }

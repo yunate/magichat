@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 export type MHFile = {
   json: string;
@@ -51,10 +52,33 @@ export class MFFileSerializer {
     const temporaryPath = MFFileSerializer._createTemporaryPath(filePath);
     try {
       fs.writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
-      fs.renameSync(temporaryPath, filePath);
+      MFFileSerializer._renameWithRetry(temporaryPath, filePath);
     } catch (error: unknown) {
       fs.rmSync(temporaryPath, { force: true });
       throw error;
+    }
+  }
+
+  private static _renameWithRetry(sourcePath: string, targetPath: string): void {
+    const deadline = performance.now() + MFFileSerializer._RENAME_RETRY_TIMEOUT_MS;
+    for (;;) {
+      try {
+        fs.renameSync(sourcePath, targetPath);
+        return;
+      } catch (error: unknown) {
+        const remainingMs = deadline - performance.now();
+        if (remainingMs > 0) {
+          Atomics.wait(
+            new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+            0,
+            0,
+            Math.min(MFFileSerializer._RENAME_RETRY_DELAY_MS, remainingMs),
+          );
+          if (performance.now() < deadline) continue;
+        }
+        console.error(`Failed to rename ${sourcePath} to ${targetPath} within ${MFFileSerializer._RENAME_RETRY_TIMEOUT_MS}ms`);
+        throw error;
+      }
     }
   }
 
@@ -93,4 +117,6 @@ export class MFFileSerializer {
   }
 
   private static readonly _HEADER_PATTERN = /^---MH:([^\r\n]+)---\r?$/gm;
+  private static readonly _RENAME_RETRY_TIMEOUT_MS = 300;
+  private static readonly _RENAME_RETRY_DELAY_MS = 10;
 }

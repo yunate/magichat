@@ -20,7 +20,7 @@ export class TerminalDimensionsSerializer extends ISerializer<TerminalDimensions
   }
 
   public validate(value: unknown): asserts value is TerminalDimensions {
-    ensureExactRecord(value, Object.keys(TerminalDimensionsSerializer._DEFAULT), "Terminal dimensions");
+    ensureRequiredRecord(value, Object.keys(TerminalDimensionsSerializer._DEFAULT), "Terminal dimensions");
     ValidateUtils.ensureNumber(value.columns, "Terminal columns are invalid");
     ValidateUtils.ensureNumber(value.rows, "Terminal rows are invalid");
     if (!Number.isSafeInteger(value.columns) || value.columns < 1
@@ -46,7 +46,7 @@ export class TerminalPtyOptionsSerializer extends ISerializer<TerminalPtyOptions
   }
 
   public validate(value: unknown): asserts value is TerminalPtyOptions {
-    ensureExactRecord(value, Object.keys(TerminalPtyOptionsSerializer._DEFAULT), "Terminal PTY options");
+    ensureRequiredRecord(value, Object.keys(TerminalPtyOptionsSerializer._DEFAULT), "Terminal PTY options");
     if (!isTerminalType(value.terminalType)) throw new Error("Terminal type is invalid");
     ValidateUtils.ensureNumber(value.columns, "Terminal columns are invalid");
     ValidateUtils.ensureNumber(value.rows, "Terminal rows are invalid");
@@ -64,14 +64,14 @@ export class TerminalPtyOptionsSerializer extends ISerializer<TerminalPtyOptions
 
 export const terminalPtyOptionsSerializer: ISerializer<TerminalPtyOptions> = new TerminalPtyOptionsSerializer();
 
-function ensureExactRecord(
+function ensureRequiredRecord(
   value: unknown,
   expectedKeys: readonly string[],
   description: string,
 ): asserts value is Record<string, unknown> {
   ValidateUtils.ensureRecord(value);
   const actualKeys = Object.keys(value);
-  if (Array.isArray(value) || actualKeys.length !== expectedKeys.length
+  if (Array.isArray(value)
     || !expectedKeys.every((key) => actualKeys.includes(key))) {
     throw new Error(`${description} has an invalid schema`);
   }

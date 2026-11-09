@@ -34,10 +34,8 @@ export class UpdateConfigSerializer extends ISerializer<UpdateConfig> {
     ValidateUtils.ensureRecord(value);
     if (Array.isArray(value)) throw new Error("Update config must be a record");
     const expectedKeys = Object.keys(UpdateConfigSerializer._DEFAULT);
-    const actualKeys = Object.keys(value);
-    if (actualKeys.length !== expectedKeys.length
-      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
-      throw new Error("Update config contains unexpected properties");
+    if (!expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      throw new Error("Update config is missing required properties");
     }
     if (typeof value.isAutoUpdateEnabled !== "boolean") {
       throw new Error("Update isAutoUpdateEnabled must be a boolean");

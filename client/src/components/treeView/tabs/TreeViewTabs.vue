@@ -3,14 +3,14 @@ import { basename } from "pathe";
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
 import { TREE_VIEW_ITEM_FILE_EXTENSION, type TreeViewTab } from "../../../../../common/treeView";
 type TabDropIndicator = Readonly<{
-  targetId: string;
+  targetPath: string;
   position: "before" | "after";
 }>;
 
 const props = withDefaults(defineProps<{
   tabs: readonly TreeViewTab[];
-  activeTabId: string | null;
-  previewTabId: string | null;
+  activeTabPath: string | null;
+  previewTabPath: string | null;
   isMultiline?: boolean;
   isAddVisible?: boolean;
 }>(), {
@@ -27,7 +27,7 @@ const emit = defineEmits<{
   pin: [tab: TreeViewTab, isPinned: boolean];
   close: [tab: TreeViewTab];
   contextMenu: [event: MouseEvent, tab: TreeViewTab];
-  reorder: [draggedId: string, targetId: string, position: "before" | "after"];
+  reorder: [draggedPath: string, targetPath: string, position: "before" | "after"];
   add: [];
 }>();
 const tabsViewport = useTemplateRef<HTMLElement>("tabsViewport");
@@ -43,7 +43,7 @@ const scrollbarThumbStyle = computed(() => ({
 }));
 
 watch(
-  () => props.tabs.map((tab) => `${tab.id}:${tab.path}`).join("|"),
+  () => props.tabs.map((tab) => `${tab.path}:${tab.path}`).join("|"),
   () => void nextTick(updateScrollMetrics),
 );
 watch(() => props.isMultiline, () => void nextTick(updateScrollMetrics));
@@ -124,14 +124,14 @@ function onTabsWheel(event: WheelEvent): void {
   if (viewport.scrollLeft !== previousScrollLeft) event.preventDefault();
 }
 
-function onDragStart(event: DragEvent, tabId: string): void {
-  event.dataTransfer?.setData("application/x-tree-view-tab", tabId);
+function onDragStart(event: DragEvent, tabPath: string): void {
+  event.dataTransfer?.setData("application/x-tree-view-tab", tabPath);
   if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = "move";
-  draggedTabId.value = tabId;
+  draggedTabId.value = tabPath;
 }
 
-function onDragOver(event: DragEvent, targetId: string): void {
-  if (draggedTabId.value === null || draggedTabId.value === targetId
+function onDragOver(event: DragEvent, targetPath: string): void {
+  if (draggedTabId.value === null || draggedTabId.value === targetPath
     || !(event.currentTarget instanceof HTMLElement)) {
     dropIndicator.value = null;
     return;
@@ -139,7 +139,7 @@ function onDragOver(event: DragEvent, targetId: string): void {
   event.preventDefault();
   const bounds = event.currentTarget.getBoundingClientRect();
   dropIndicator.value = {
-    targetId,
+    targetPath,
     position: event.clientX < bounds.left + bounds.width / 2 ? "before" : "after",
   };
   if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
@@ -156,13 +156,13 @@ function tabTitle(tab: TreeViewTab): string {
     : basename(tab.path);
 }
 
-function onDrop(event: DragEvent, targetId: string): void {
+function onDrop(event: DragEvent, targetPath: string): void {
   event.preventDefault();
-  const draggedId = event.dataTransfer?.getData("application/x-tree-view-tab");
+  const draggedPath = event.dataTransfer?.getData("application/x-tree-view-tab");
   const indicator = dropIndicator.value;
   stopTabDrag();
-  if (!draggedId || draggedId === targetId || indicator?.targetId !== targetId) return;
-  emit("reorder", draggedId, targetId, indicator.position);
+  if (!draggedPath || draggedPath === targetPath || indicator?.targetPath !== targetPath) return;
+  emit("reorder", draggedPath, targetPath, indicator.position);
 }
 </script>
 
@@ -171,19 +171,19 @@ function onDrop(event: DragEvent, targetId: string): void {
     <nav ref="tabsViewport" class="tree-tabs" :class="{ 'is-multiline': isMultiline }" aria-label="Open items" @scroll="updateScrollMetrics" @wheel="onTabsWheel">
       <div
         v-for="tab in tabs"
-        :key="tab.id"
+        :key="tab.path"
         class="tree-tab"
         :class="{
-          'is-active': activeTabId === tab.id,
-          'is-preview': previewTabId === tab.id,
-          'is-drop-before': dropIndicator?.targetId === tab.id && dropIndicator?.position === 'before',
-          'is-drop-after': dropIndicator?.targetId === tab.id && dropIndicator?.position === 'after',
+          'is-active': activeTabPath === tab.path,
+          'is-preview': previewTabPath === tab.path,
+          'is-drop-before': dropIndicator?.targetPath === tab.path && dropIndicator?.position === 'before',
+          'is-drop-after': dropIndicator?.targetPath === tab.path && dropIndicator?.position === 'after',
         }"
         draggable="true"
-        @dragstart="onDragStart($event, tab.id)"
-        @dragover="onDragOver($event, tab.id)"
+        @dragstart="onDragStart($event, tab.path)"
+        @dragover="onDragOver($event, tab.path)"
         @dragend="stopTabDrag"
-        @drop="onDrop($event, tab.id)"
+        @drop="onDrop($event, tab.path)"
         @contextmenu.prevent="emit('contextMenu', $event, tab)"
       >
         <button
@@ -198,7 +198,7 @@ function onDrop(event: DragEvent, targetId: string): void {
             <path d="M1.75 5.75v-2h4l1.3 1.5" />
           </svg>
           <span v-else class="tree-tab__item-icon">
-            <slot name="itemIcon" :tab="tab" :is-selected="activeTabId === tab.id">
+            <slot name="itemIcon" :tab="tab" :is-selected="activeTabPath === tab.path">
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M3 1.75h6l4 4v8.5H3z" />
                 <path d="M9 1.75v4h4" />
@@ -208,7 +208,7 @@ function onDrop(event: DragEvent, targetId: string): void {
           <span class="tree-tab__title">{{ tabTitle(tab) }}</span>
         </button>
         <div class="tree-tab__overlay">
-          <slot name="tabOverlay" :tab="tab" :is-active="activeTabId === tab.id"></slot>
+          <slot name="tabOverlay" :tab="tab" :is-active="activeTabPath === tab.path"></slot>
         </div>
         <button v-if="tab.isPinned" type="button" class="tree-tab__icon tree-tab__pin" aria-label="Unpin tab" title="Unpin tab" @click="emit('pin', tab, false)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 1.5 14.5 6.5 12 7l-2.5 2.5.5 3.5-1.5 1.5-3-3-3.5 3.5-.5-.5L5.5 11l-3-3L4 6.5l3.5.5L10 4.5z" /></svg>

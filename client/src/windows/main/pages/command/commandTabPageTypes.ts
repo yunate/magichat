@@ -6,14 +6,14 @@ import type {
 import type { ScriptType } from "../../../../../../common/tasks/scriptTaskDefinition";
 
 export type CommandTabPageState = Readonly<{
-  id: string;
+  path: string;
   isDirty: boolean;
   isRunning: boolean;
   scriptType: ScriptType | null;
 }>;
 
 export type CommandTabPageApi = Readonly<{
-  id: string;
+  path: string;
   isDirty(): boolean;
   isDraft(): boolean;
   isRunning(): boolean;
@@ -25,5 +25,5 @@ export type CommandTabPageApi = Readonly<{
     data: CommandFolderData | CommandItemData,
     updates: readonly CommandEnvUpdate[],
   ): void;
-  applyAncestorFolderData(folderId: string, data: CommandFolderData): void;
+  applyAncestorFolderData(folderPath: string, data: CommandFolderData): void;
 }>;

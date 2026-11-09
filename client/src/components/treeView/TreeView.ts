@@ -3,7 +3,6 @@ import { basename } from "pathe";
 import type { RemoteObject } from "../../../../common/ipc_bridge/rpc";
 import type {
   TreeViewCloneParams,
-  TreeViewCreateItemProperties,
   TreeViewDataProvider,
   TreeViewEntityData,
   TreeViewEntityDataParams,
@@ -17,6 +16,7 @@ import type {
   TreeViewWorkspace,
   TreeViewWorkspaceRef,
 } from "../../../../common/treeView";
+import { TaskQueue } from "../../../../main/src/infra/taskQueue";
 import { destroyTreeViewDataProvider } from "../../bridge/remote_rpc_objects/treeViewDataProvider";
 import { createDefaultTreeViewDataProvider } from "./createDefaultTreeViewDataProvider";
 import {
@@ -55,15 +55,14 @@ export type TreeViewOperations = {
   createWorkspace(workspaceName: string): Promise<void>;
   renameWorkspace(workspacePath: string, newName: string): Promise<void>;
   deleteWorkspace(workspacePath: string): Promise<void>;
-  createFolder(folderPath: string): Promise<string>;
-  loadFolderChildren(folderPath: string): Promise<TreeViewFolder>;
-  createItem(itemPath: string, properties: TreeViewCreateItemProperties): Promise<TreeViewItem>;
-  discardDraft(itemId: string): Promise<void>;
+  createFolder(folderPath: string): Promise<TreeViewFolder>;
+  createItem(itemPath: string, properties: TreeViewItemProperties): Promise<TreeViewItem>;
+  discardDraft(itemPath: string): Promise<void>;
   saveDraft(params: TreeViewSaveDraftParams): Promise<void>;
   updateFolder(folderPath: string, properties: TreeViewFolderProperties): Promise<void>;
   updateItem(itemPath: string, properties: TreeViewItemProperties): Promise<void>;
-  deleteFolder(folderId: string): Promise<void>;
-  deleteItem(itemId: string): Promise<void>;
+  deleteFolder(folderPath: string): Promise<void>;
+  deleteItem(itemPath: string): Promise<void>;
   getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData>;
   updateEntityData(params: TreeViewEntityDataParams, data: TreeViewEntityData): Promise<void>;
   openInExplorer(selection: TreeViewSelection): Promise<void>;
@@ -75,11 +74,6 @@ export type TreeViewOperations = {
 export type TreeViewOptions = {
   dataProvider?: RemoteObject<TreeViewDataProvider>;
   storageRoots: readonly TreeViewStorageRoot[];
-};
-
-type RemoteOperationCompletion = {
-  resolve: () => void;
-  reject: (reason: Error) => void;
 };
 
 type TreeViewWorkspaceMetadata = Pick<TreeViewWorkspace, "isSelected" | "ui">;
@@ -95,10 +89,6 @@ type TreeViewWorkspaceDataProvider = Pick<
 >;
 
 export class TreeViewController {
-  public emitOperationCompleted(operationId: string, errorMessage: string | null): void {
-    this._operationCompletionHandler(operationId, errorMessage);
-  }
-
   public initialize(): Promise<void> {
     return this._enqueue(() => this._operations.initialize());
   }
@@ -114,7 +104,7 @@ export class TreeViewController {
   public activate(params: TreeViewActivateParams): Promise<void> {
     return this._enqueue(async () => {
       await this._operations.activate(params);
-      await this._operations.switchTab({ tabId: params.id });
+      await this._operations.switchTab({ tabPath: params.path });
     });
   }
 
@@ -158,23 +148,19 @@ export class TreeViewController {
     return this._enqueue(() => this._operations.deleteWorkspace(workspacePath));
   }
 
-  public createFolder(folderPath: string): Promise<string> {
+  public createFolder(folderPath: string): Promise<TreeViewFolder> {
     return this._enqueue(() => this._operations.createFolder(folderPath));
-  }
-
-  public loadFolderChildren(folderPath: string): Promise<TreeViewFolder> {
-    return this._enqueue(() => this._operations.loadFolderChildren(folderPath));
   }
 
   public createItem(
     itemPath: string,
-    properties: TreeViewCreateItemProperties,
+    properties: TreeViewItemProperties,
   ): Promise<TreeViewItem> {
     return this._enqueue(() => this._operations.createItem(itemPath, properties));
   }
 
-  public discardDraft(itemId: string): Promise<void> {
-    return this._enqueue(() => this._operations.discardDraft(itemId));
+  public discardDraft(itemPath: string): Promise<void> {
+    return this._enqueue(() => this._operations.discardDraft(itemPath));
   }
 
   public saveDraft(params: TreeViewSaveDraftParams): Promise<void> {
@@ -189,12 +175,12 @@ export class TreeViewController {
     return this._enqueue(() => this._operations.updateItem(itemPath, properties));
   }
 
-  public deleteFolder(folderId: string): Promise<void> {
-    return this._enqueue(() => this._operations.deleteFolder(folderId));
+  public deleteFolder(folderPath: string): Promise<void> {
+    return this._enqueue(() => this._operations.deleteFolder(folderPath));
   }
 
-  public deleteItem(itemId: string): Promise<void> {
-    return this._enqueue(() => this._operations.deleteItem(itemId));
+  public deleteItem(itemPath: string): Promise<void> {
+    return this._enqueue(() => this._operations.deleteItem(itemPath));
   }
 
   public getEntityData(params: TreeViewEntityDataParams): Promise<TreeViewEntityData> {
@@ -224,21 +210,15 @@ export class TreeViewController {
   public constructor(
     operations: TreeViewOperations,
     enqueue: <TResult>(operation: () => Promise<TResult> | TResult) => Promise<TResult>,
-    operationCompletionHandler: (operationId: string, errorMessage: string | null) => void,
   ) {
     this._operations = operations;
     this._enqueue = enqueue;
-    this._operationCompletionHandler = operationCompletionHandler;
   }
 
   private readonly _operations: TreeViewOperations;
   private readonly _enqueue: <TResult>(
     operation: () => Promise<TResult> | TResult,
   ) => Promise<TResult>;
-  private readonly _operationCompletionHandler: (
-    operationId: string,
-    errorMessage: string | null,
-  ) => void;
 }
 
 export class TreeView {
@@ -263,14 +243,13 @@ export class TreeView {
       renameWorkspace: (workspacePath, newName) => this._renameWorkspace(workspacePath, newName),
       deleteWorkspace: (workspacePath) => this._deleteWorkspace(workspacePath),
       createFolder: (folderPath) => this._createFolder(folderPath),
-      loadFolderChildren: (folderPath) => this._loadFolderChildren(folderPath),
       createItem: (itemPath, properties) => this._createItem(itemPath, properties),
-      discardDraft: (itemId) => this._discardDraft(itemId),
+      discardDraft: (itemPath) => this._discardDraft(itemPath),
       saveDraft: (params) => this._saveDraft(params),
       updateFolder: (folderPath, properties) => this._updateFolder(folderPath, properties),
       updateItem: (itemPath, properties) => this._updateItem(itemPath, properties),
-      deleteFolder: (folderId) => this._deleteFolder(folderId),
-      deleteItem: (itemId) => this._deleteItem(itemId),
+      deleteFolder: (folderPath) => this._deleteFolder(folderPath),
+      deleteItem: (itemPath) => this._deleteItem(itemPath),
       getEntityData: (params) => this.tabsModel.getEntityData(params),
       updateEntityData: (params, data) => this.tabsModel.updateEntityData(params, data),
       openInExplorer: (selection) => this._openInExplorer(selection),
@@ -281,15 +260,13 @@ export class TreeView {
     this.controller = new TreeViewController(
       this.operations,
       <TResult>(operation: () => Promise<TResult> | TResult) => this._queue.enqueue(operation),
-      (operationId, errorMessage) => this._completeRemoteOperation(operationId, errorMessage),
     );
     this.workspaceRefs = this.workspaceSelectorModel.workspaceRefs;
     this.selectedWorkspaceRef = computed(() => this._state.value.selectedWorkspaceRef);
     this.workspace = computed(() => this._getWorkspaceSnapshot());
-    this.workspaceRevision = computed(() => this._workspaceRevision.value);
     this.rootFolder = this.explorerModel.rootFolder;
-    this.selection = this.explorerModel.selection;
-    this.previewTabId = this.tabsModel.previewTabId;
+    this.selection = computed(() => this.tabsModel.activeTab.value?.path ?? null);
+    this.previewTabPath = this.tabsModel.previewTabPath;
   }
 
   public get storageRoots(): readonly TreeViewStorageRoot[] {
@@ -297,32 +274,17 @@ export class TreeView {
   }
 
   public enqueueBackgroundTask(task: () => Promise<void> | void): void {
-    this.explorerModel.enqueueBackgroundTask(task);
-  }
-
-  public startBackgroundTasks(): void {
-    this.explorerModel.startBackgroundTasks();
-  }
-
-  public pauseBackgroundTasks(): void {
-    this.explorerModel.pauseBackgroundTasks();
+    this._backgroundTasks.pushTask(task);
   }
 
   public async dispose(): Promise<void> {
     this.explorerModel.dispose();
+    await this._backgroundTasks.dispose();
     if (!this._ownsDataProvider) return;
     const provider = this._dataProvider;
     this._dataProvider = null;
     this._ownsDataProvider = false;
     if (provider !== null) await destroyTreeViewDataProvider(provider);
-  }
-
-  public getFolderById(id: string): TreeViewFolder | null {
-    return this.explorerModel.getFolderById(id);
-  }
-
-  public getItemById(id: string): TreeViewItem | null {
-    return this.explorerModel.getItemById(id);
   }
 
   public findLoadedFolderByPath(path: string): TreeViewFolder | null {
@@ -350,25 +312,21 @@ export class TreeView {
   }
 
   public async synchronizeDraftCreated(change: TreeViewDraftCreated): Promise<void> {
-    const workspaceRevision = this._workspaceRevision.value;
-    this._ensureCurrentWorkspace(change.workspacePath, workspaceRevision);
+    this._ensureCurrentWorkspace(change.workspacePath);
     await this.explorerModel.synchronizeCreatedItem(change.workspacePath, change.item);
-    this._ensureCurrentWorkspace(change.workspacePath, workspaceRevision);
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
+    this._ensureCurrentWorkspace(change.workspacePath);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
   public async synchronizeDraftPublished(change: TreeViewDraftPublished): Promise<void> {
-    const workspaceRevision = this._workspaceRevision.value;
-    this._ensureCurrentWorkspace(change.workspacePath, workspaceRevision);
+    this._ensureCurrentWorkspace(change.workspacePath);
     await this.explorerModel.synchronizePublishedItem(
       change.workspacePath,
       change.sourceItem,
       change.targetItem,
       change.targetFolderPath,
     );
-    this._ensureCurrentWorkspace(change.workspacePath, workspaceRevision);
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
+    this._ensureCurrentWorkspace(change.workspacePath);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
@@ -377,11 +335,9 @@ export class TreeView {
     if (this.tabsModel.rebasePaths(change.sourcePath, change.targetPath)) {
       await this._saveWorkspace(this._requireWorkspaceClone());
     }
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
   }
 
   public async synchronizeTabs(): Promise<void> {
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
@@ -399,14 +355,8 @@ export class TreeView {
     const dataProvider = this._dataProvider;
     if (dataProvider === null) throw new Error("TreeView DataProvider is not initialized");
     await this.workspaceSelectorModel.initialize(dataProvider);
-    this.explorerModel.initialize(
-      dataProvider,
-      (start) => this._runRemoteOperation(start),
-    );
-    this.tabsModel.initialize(
-      dataProvider,
-      (start) => this._runRemoteOperation(start),
-    );
+    this.explorerModel.initialize(dataProvider);
+    this.tabsModel.initialize(dataProvider);
     await this._load();
   }
 
@@ -428,7 +378,6 @@ export class TreeView {
         selectedWorkspaceRef: null,
         workspace: null,
       });
-      this._workspaceRevision.value += 1;
       return;
     }
     if (firstWorkspace === null) throw new Error("TreeView first workspace is unavailable");
@@ -447,18 +396,12 @@ export class TreeView {
 
   private async _activate(params: TreeViewActivateParams): Promise<void> {
     const entity = params.kind === "folder"
-      ? this.getFolderById(params.id)
-      : this.getItemById(params.id);
+      ? this.findLoadedFolderByPath(params.path)
+      : this.findLoadedItemByPath(params.path);
     if (entity === null) throw new Error("TreeView activation target is missing");
     await this.explorerModel.expandAncestors(entity.path);
-    const previousActiveTabId = this.tabsModel.activeTab.value?.id ?? null;
-    this.tabsModel.activate(params, entity.path);
-    const workspace = this._requireWorkspaceClone();
-    const activeTabId = this.tabsModel.activeTab.value?.id ?? null;
-    if (activeTabId !== previousActiveTabId) {
-      this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
-    }
-    await this._saveWorkspace(workspace);
+    this.tabsModel.activate(params);
+    await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
   private async _promoteTab(params: TreeViewSwitchTabParams): Promise<void> {
@@ -468,13 +411,12 @@ export class TreeView {
 
   private async _switchTab(params: TreeViewSwitchTabParams): Promise<void> {
     if (!this.tabsModel.switchTab(params)) return;
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
+    await this.explorerModel.expandAncestors(params.tabPath);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
   private async _closeTabs(params: TreeViewCloseTabsParams): Promise<void> {
     this.tabsModel.closeTabs(params);
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
@@ -559,14 +501,15 @@ export class TreeView {
       this._setWorkspaceRefs(workspaceRefs);
       return;
     }
-    this._install({
+    this._state.value = {
+      ...this._state.value,
       selectedWorkspaceRef: {
         ...selectedWorkspaceRef,
         workspacePath: targetPath,
         workspaceName: basename(targetPath),
       },
-      workspace,
-    });
+    };
+    this.tabsModel.rebasePaths(workspacePath, targetPath);
     this.explorerModel.rebaseWorkspace(workspacePath, targetPath);
     this._setWorkspaceRefs(workspaceRefs);
   }
@@ -580,9 +523,7 @@ export class TreeView {
     const workspaceRefs = this.workspaceRefs.value.filter(
       (workspaceRef) => workspaceRef.workspacePath !== workspacePath,
     );
-    await this._runRemoteOperation(
-      (operationId) => this._workspaceDataProvider.deleteWorkspace(operationId, workspacePath),
-    );
+    await this._workspaceDataProvider.deleteWorkspace(workspacePath);
     this._setWorkspaceRefs(workspaceRefs);
     if (!isSelected) {
       this._setWorkspaceRefs(workspaceRefs);
@@ -600,16 +541,15 @@ export class TreeView {
       selectedWorkspaceRef: null,
       workspace: null,
     });
-    this._workspaceRevision.value += 1;
   }
 
-  private async _createFolder(folderPath: string): Promise<string> {
+  private async _createFolder(folderPath: string): Promise<TreeViewFolder> {
     return this.explorerModel.createFolder(folderPath);
   }
 
   private async _createItem(
     itemPath: string,
-    properties: TreeViewCreateItemProperties,
+    properties: TreeViewItemProperties,
   ): Promise<TreeViewItem> {
     return this.explorerModel.createItem(itemPath, properties);
   }
@@ -626,17 +566,14 @@ export class TreeView {
     await this.synchronizeDraftPublished(change);
   }
 
-  private async _discardDraft(itemId: string): Promise<void> {
-    const discarded = await this.tabsModel.discardDraft(itemId);
-    const workspaceRevision = this._workspaceRevision.value;
-    this._ensureCurrentWorkspace(discarded.workspacePath, workspaceRevision);
+  private async _discardDraft(itemPath: string): Promise<void> {
+    const discarded = await this.tabsModel.discardDraft(itemPath);
+    this._ensureCurrentWorkspace(discarded.workspacePath);
     await this.explorerModel.synchronizeDeletedItem(
       discarded.workspacePath,
-      discarded.itemId,
       discarded.path,
     );
-    this._ensureCurrentWorkspace(discarded.workspacePath, workspaceRevision);
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
+    this._ensureCurrentWorkspace(discarded.workspacePath);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
@@ -651,13 +588,13 @@ export class TreeView {
     await this.explorerModel.updateItem(itemPath, properties);
   }
 
-  private async _deleteFolder(folderId: string): Promise<void> {
-    const deleted = await this.explorerModel.deleteFolder(folderId);
+  private async _deleteFolder(folderPath: string): Promise<void> {
+    const deleted = await this.explorerModel.deleteFolder(folderPath);
     await this._synchronizeDeletedEntity(deleted.kind, deleted.path);
   }
 
-  private async _deleteItem(itemId: string): Promise<void> {
-    const deleted = await this.explorerModel.deleteItem(itemId);
+  private async _deleteItem(itemPath: string): Promise<void> {
+    const deleted = await this.explorerModel.deleteItem(itemPath);
     await this._synchronizeDeletedEntity(deleted.kind, deleted.path);
   }
 
@@ -671,9 +608,7 @@ export class TreeView {
 
   private async _clone(params: TreeViewCloneParams): Promise<TreeViewFolder | TreeViewItem | null> {
     if (params.kind === "workspace") {
-      await this._runRemoteOperation(
-        (operationId) => this._workspaceDataProvider.clone(operationId, params),
-      );
+      await this._workspaceDataProvider.clone(params);
       const root = this._rootForWorkspacePath(params.targetPath);
       if (root === null) throw new Error("TreeView clone storage root is missing");
       this._setWorkspaceRefs([...this.workspaceRefs.value, {
@@ -686,39 +621,10 @@ export class TreeView {
     return this.explorerModel.clone({ ...params, kind: params.kind });
   }
 
-  private async _runRemoteOperation(
-    start: (operationId: string) => Promise<void>,
-  ): Promise<void> {
-    const operationId = crypto.randomUUID();
-    const completion = new Promise<void>((resolve, reject) => {
-      this._remoteOperationCompletions.set(operationId, { resolve, reject });
-    });
-    try {
-      await Promise.all([start(operationId), completion]);
-    } finally {
-      this._remoteOperationCompletions.delete(operationId);
-    }
-  }
-
-  private _completeRemoteOperation(operationId: string, errorMessage: string | null): void {
-    const completion = this._remoteOperationCompletions.get(operationId);
-    if (completion === undefined) {
-      console.warn(`[treeView] received completion for unknown operation ${operationId}.`);
-      return;
-    }
-    this._remoteOperationCompletions.delete(operationId);
-    if (errorMessage === null) {
-      completion.resolve();
-    } else {
-      completion.reject(new Error(errorMessage));
-    }
-  }
-
   private async _move(params: TreeViewMoveParams): Promise<void> {
     const change = await this.explorerModel.move(params);
     if (change === null) {
       await this.tabsModel.moveTabEntity(params);
-      this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
       await this._saveWorkspace(this._requireWorkspaceClone());
       return;
     }
@@ -735,11 +641,6 @@ export class TreeView {
       selectedWorkspaceRef: workspaceRef,
       workspace,
     });
-    this._workspaceRevision.value += 1;
-  }
-
-  private _loadFolderChildren(folderPath: string): Promise<TreeViewFolder> {
-    return this.explorerModel.loadFolderChildren(folderPath);
   }
 
   private _setWorkspaceRefs(workspaceRefs: readonly TreeViewWorkspaceRef[]): void {
@@ -751,7 +652,6 @@ export class TreeView {
     deletedPath: string,
   ): Promise<void> {
     if (!this.tabsModel.closeDeleted(kind, deletedPath)) return;
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
     await this._saveWorkspace(this._requireWorkspaceClone());
   }
 
@@ -786,12 +686,12 @@ export class TreeView {
     selectedWorkspaceRef: TreeViewWorkspaceRef | null;
     workspace: TreeViewWorkspace | null;
   }): void {
+    void this._backgroundTasks.cancel();
     this.tabsModel.install(state.selectedWorkspaceRef?.workspacePath ?? null, state.workspace);
     this._state.value = {
       selectedWorkspaceRef: state.selectedWorkspaceRef,
       workspace: state.workspace === null ? null : this._workspaceMetadata(state.workspace),
     };
-    this.explorerModel.setActiveTab(this.tabsModel.activeTab.value);
   }
 
   private _rootForWorkspacePath(workspacePath: string): TreeViewStorageRoot | null {
@@ -803,10 +703,8 @@ export class TreeView {
     return selected === null ? null : this._rootForWorkspacePath(selected.workspacePath);
   }
 
-  private _ensureCurrentWorkspace(workspacePath: string, workspaceRevision?: number): void {
-    if (this._state.value.selectedWorkspaceRef?.workspacePath !== workspacePath
-      || workspaceRevision !== undefined
-      && this._workspaceRevision.value !== workspaceRevision) {
+  private _ensureCurrentWorkspace(workspacePath: string): void {
+    if (this._state.value.selectedWorkspaceRef?.workspacePath !== workspacePath) {
       throw new Error("TreeView Workspace changed during operation");
     }
   }
@@ -819,13 +717,12 @@ export class TreeView {
   public readonly workspaceRefs: ComputedRef<readonly TreeViewWorkspaceRef[]>;
   public readonly selectedWorkspaceRef: ComputedRef<TreeViewWorkspaceRef | null>;
   public readonly workspace: ComputedRef<TreeViewWorkspace | null>;
-  public readonly workspaceRevision: ComputedRef<number>;
   public readonly rootFolder: ComputedRef<TreeViewFolder | null>;
-  public readonly selection: ComputedRef<TreeViewSelection | null>;
-  public readonly previewTabId: ComputedRef<string | null>;
+  public readonly selection: ComputedRef<string | null>;
+  public readonly previewTabPath: ComputedRef<string | null>;
 
   private readonly _queue = new TreeViewOperationQueue();
-  private readonly _remoteOperationCompletions = new Map<string, RemoteOperationCompletion>();
+  private readonly _backgroundTasks = new TaskQueue();
   private _dataProvider: RemoteObject<TreeViewDataProvider> | null;
   private _ownsDataProvider = false;
   private readonly _state = shallowRef<{
@@ -835,5 +732,4 @@ export class TreeView {
     selectedWorkspaceRef: null,
     workspace: null,
   });
-  private readonly _workspaceRevision = shallowRef(0);
 }

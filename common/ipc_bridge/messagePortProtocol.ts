@@ -5,6 +5,10 @@ export type BridgeConnectAccept = {
   readonly connectId: string;
 };
 
+export type BackendBridgeConnectAccept = BridgeConnectAccept & {
+  readonly source: "main" | "renderer";
+};
+
 export type BridgeTransportMessage =
   | { readonly kind: "message"; readonly data: string }
   | { readonly kind: "close" };
@@ -23,6 +27,15 @@ export function parseBridgeConnectAccept(value: unknown): BridgeConnectAccept {
     type: value.type,
     connectId: value.connectId,
   };
+}
+
+export function parseBackendBridgeConnectAccept(value: unknown): BackendBridgeConnectAccept {
+  const accept = parseBridgeConnectAccept(value);
+  if (value === null || typeof value !== "object" || !("source" in value)
+    || (value.source !== "main" && value.source !== "renderer")) {
+    throw new Error("Invalid backend bridge connection source");
+  }
+  return { ...accept, source: value.source };
 }
 
 export function parseBridgeTransportMessage(value: unknown): BridgeTransportMessage {

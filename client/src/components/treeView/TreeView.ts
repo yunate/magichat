@@ -16,7 +16,7 @@ import type {
   TreeViewWorkspace,
   TreeViewWorkspaceRef,
 } from "../../../../common/treeView";
-import { TaskQueue } from "../../../../main/src/infra/taskQueue";
+import { TaskQueue } from "../../../../common/taskQueue";
 import { destroyTreeViewDataProvider } from "../../bridge/remote_rpc_objects/treeViewDataProvider";
 import { createDefaultTreeViewDataProvider } from "./createDefaultTreeViewDataProvider";
 import {

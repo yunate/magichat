@@ -1,0 +1,19 @@
+{
+  "isDraft": false,
+  "data": {
+    "scriptType": "powershell",
+    "codeViewPlacement": "follow",
+    "isUAC": false,
+    "selectedParamGroupId": "command",
+    "paramGroups": [
+      {
+        "id": "command",
+        "name": "default params",
+        "params": []
+      }
+    ]
+  }
+}
+
+---MH:script---
+echo hello

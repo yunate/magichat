@@ -11,8 +11,8 @@ import type {
 import { UacBrokerRpcObjectRegistry } from "./bridge/rpc_object_registry/registerRpcObjects";
 import { FileOccupancyUacRpcObject } from "./fileOccupancy/fileOccupancyUacRpcObject";
 import { gApplicationPaths } from "../infra/applicationPaths";
-import { gPtyFactory } from "../services/terminal/ptyFactory";
-import { gTerminalRuntimeService } from "../services/terminal/terminalRuntimeService";
+import { gPtyFactory } from "../backend/services/terminal/ptyFactory";
+import { gTerminalRuntimeService } from "../backend/services/terminal/terminalRuntimeService";
 
 export class UacBroker implements UacBrokerServerRpcApi {
   public constructor(

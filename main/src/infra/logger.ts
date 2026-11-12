@@ -4,7 +4,9 @@ import { performance } from "node:perf_hooks";
 import { formatWithOptions } from "node:util";
 import { gApplicationPaths } from "./applicationPaths";
 
-const LOG_FILE_PATTERN = /^mh-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.log$/;
+const LOG_FILE_PATTERN = process.type === "utility"
+  ? /^mh-backend-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.log$/
+  : /^mh-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.log$/;
 const LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -49,7 +51,8 @@ export class Logger {
         .slice(0, 19)
         .replace("T", "-")
         .replaceAll(":", "-");
-      this._logFilePath = path.join(gApplicationPaths.logDirectoryPath, `mh-${timestamp}.log`);
+      const prefix = process.type === "utility" ? "mh-backend" : "mh";
+      this._logFilePath = path.join(gApplicationPaths.logDirectoryPath, `${prefix}-${timestamp}.log`);
       await fs.writeFile(this._logFilePath, "", { flag: "wx" });
       this._isFileEnabled = true;
       void this._cleanOldLogs();

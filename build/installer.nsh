@@ -60,11 +60,25 @@
     Abort "MagicHat ${MAGICHAT_VERSION} has no application executable."
   ${EndIf}
 
-  ${IfNot} ${FileExists} "$R0\active-version"
-    FileOpen $R3 "$R0\active-version" w
-    FileWrite $R3 "${MAGICHAT_VERSION}"
-    System::Call "kernel32::FlushFileBuffers(p r3)"
+  DetailPrint "Activating MagicHat ${MAGICHAT_VERSION}."
+  ClearErrors
+  FileOpen $R3 "$R0\active-version.tmp" w
+  ${If} ${Errors}
+    Abort "Failed to open the MagicHat active-version temporary file."
+  ${EndIf}
+  FileWrite $R3 "${MAGICHAT_VERSION}"
+  ${If} ${Errors}
     FileClose $R3
+    Abort "Failed to write the MagicHat active-version temporary file."
+  ${EndIf}
+  System::Call "kernel32::FlushFileBuffers(p R3) i .R4"
+  FileClose $R3
+  ${If} $R4 == 0
+    Abort "Failed to flush the MagicHat active-version temporary file."
+  ${EndIf}
+  System::Call 'kernel32::MoveFileExW(w "$R0\active-version.tmp", w "$R0\active-version", i 9) i .R4'
+  ${If} $R4 == 0
+    Abort "Failed to replace the MagicHat active-version file."
   ${EndIf}
 
   ${If} ${FileExists} "$INSTDIR\*.*"

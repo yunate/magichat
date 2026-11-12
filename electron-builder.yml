@@ -13,12 +13,17 @@ files:
   - build/appIcon.ico
   - client/dist/**
   - dist-electron/**
+  - "!dist-electron/backend/**"
   - "!dist-electron/uac-broker/**"
-  - node_modules/node-pty/**
+  - "!node_modules/node-pty/**"
   - package.json
   - VERSION
   - THIRD_PARTY_NOTICES.md
 extraResources:
+  - from: dist-electron/backend/index.js
+    to: backend/index.js
+  - from: node_modules/node-pty
+    to: backend/node_modules/node-pty
   - from: dist-electron/uac-broker/index.js
     to: uac-broker/index.js
   - from: node_modules/node-pty
@@ -44,8 +49,6 @@ extraFiles:
     to: native-tools/cli-helper/powershell/MagicHat.psm1
   - from: native-tools/cli-helper/powershell/Invoke-MagicHatPowerShellScript.ps1
     to: native-tools/cli-helper/powershell/Invoke-MagicHatPowerShellScript.ps1
-asarUnpack:
-  - node_modules/node-pty/**
 win:
   icon: build/appIcon.ico
   forceCodeSigning: false

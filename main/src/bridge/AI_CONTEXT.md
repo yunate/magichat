@@ -1,13 +1,13 @@
 # Main Bridge
 
-Registers main RPC objects and creates connection-scoped renderer event proxies.
+Registers the Electron host's platform/window RPC objects and connection-scoped control proxies.
 
 ## Structure
 
-- `rpc_object_registry/` registers `gConfigManager`, `gThemeManager`, `gTaskManager`, `gUpdateService`, and the Window owned by the caller's bridge peer.
-- Terminal registration uses `TerminalRuntimeServiceApi` and directly returns `gTerminalRuntimeService`, which implements that interface. Its `create()` returns `RpcPty` references; individual PTYs have no registered factory, and the Service has no peer binding or connection lifecycle state.
-- `remote_rpc_objects/` contains TaskEvents and Window client proxy factories. Each Window holds its proxy Promises; Task broadcasts retain per-window error isolation, while Window close requests return control to the renderer's standard close flow.
-- Task service behavior is documented in [`../services/tasks/AI_CONTEXT.md`](../services/tasks/AI_CONTEXT.md).
+- `rpc_object_registry/` registers only the Window owned by the caller's Main peer and the Platform owner restricted to the Backend control peer.
+- `remote_rpc_objects/backend.ts` creates Backend lifecycle, Config, and Theme proxies cached by `BackendProcess`. Config/Theme calls support actual window startup and bounds persistence; there is no business forwarding API.
+- Window close requests use the cached Window Client proxy and the renderer's standard close flow.
+- All business registrations, Task event proxies, and broadcasts belong to [`../backend/`](../backend/AI_CONTEXT.md).
 
 ## Boundaries
 
@@ -15,6 +15,5 @@ Registers main RPC objects and creates connection-scoped renderer event proxies.
 - WindowFactory owns peer setup and startup port transfer. WindowManager owns peer-to-Window lookup and disconnect cleanup.
 - Renderer readiness is acknowledged through the Window RPC object after client-side proxies are created; it does not use a second raw IPC channel.
 - RPC registerName strings equal their interface names.
-- Config values cross the RPC boundary as JSON strings and are validated by the shared serializer selected by `config_key`.
-- Theme listing exposes validated theme directories plus the bundled `dark` theme. Theme resolution accepts one validated folder name, reads only the fixed theme stylesheet files, and returns bundled `dark` when the configured folder does not exist.
+- Main's control peer is distinct from every Renderer peer. Renderer requests cannot obtain the Platform RPC object or Backend lifecycle owner.
 - Validation failures return stable bridge errors without internal stack details.

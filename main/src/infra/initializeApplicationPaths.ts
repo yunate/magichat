@@ -18,4 +18,6 @@ gApplicationPaths.init({
   executablePath: process.execPath,
   resourcesPath: process.resourcesPath,
   localAppDataDirectory,
+  applicationDataDirectory: app.getPath("appData"),
+  desktopDirectory: app.getPath("desktop"),
 });

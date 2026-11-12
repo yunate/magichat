@@ -1,4 +1,5 @@
 import type { BridgePeer } from "../../../common/ipc_bridge/peer";
+import type { BackendServerRpcApi } from "../../../common/backend/backendRpcApi";
 import { createMessagePortPeer } from "../../../common/ipc_bridge/messagePortPeer";
 import {
   BRIDGE_CONNECT_ACCEPT,
@@ -21,6 +22,7 @@ import {
   createWindowServerRpcObject,
 } from "../bridge/remote_rpc_objects/remoteServerRpcObjects";
 import { createCommandStorageServerRpcObject } from "../bridge/remote_rpc_objects/commandStorage";
+import { createBackendServerRpcObject } from "../bridge/remote_rpc_objects/backend";
 import { RpcObjectRegistry } from "../bridge/rpc_object_registry/registerRpcObjects";
 
 export class Window {
@@ -28,16 +30,21 @@ export class Window {
     const router = BridgeRouter.getRouter();
     RpcObjectRegistry.register(router);
 
-    const { port, connectId } = await this._waitForBridgePort();
+    const { port, backendPort, connectId } = await this._waitForBridgePort();
     const instance = createMessagePortPeer(port, connectId);
     this._peer = instance;
     router.startDispatchMessage(instance);
+    const backendPeer = createMessagePortPeer(backendPort, connectId);
+    this._backendPeer = backendPeer;
+    router.startDispatchMessage(backendPeer);
+    this._backendServerRpcObject = createBackendServerRpcObject(backendPeer);
+    await (await this._backendServerRpcObject).getProcessId();
 
-    this._configServerRpcObject = createConfigServerRpcObject(instance);
-    this._commandStorageServerRpcObject = createCommandStorageServerRpcObject(instance);
-    this._tasksServerRpcObject = createTasksServerRpcObject(instance);
-    this._themeServerRpcObject = createThemeServerRpcObject(instance);
-    this._updateServerRpcObject = createUpdateServerRpcObject(instance);
+    this._configServerRpcObject = createConfigServerRpcObject(backendPeer);
+    this._commandStorageServerRpcObject = createCommandStorageServerRpcObject(backendPeer);
+    this._tasksServerRpcObject = createTasksServerRpcObject(backendPeer);
+    this._themeServerRpcObject = createThemeServerRpcObject(backendPeer);
+    this._updateServerRpcObject = createUpdateServerRpcObject(backendPeer);
     this._windowServerRpcObject = createWindowServerRpcObject(instance);
     await (await this._windowServerRpcObject).rendererReady();
     return instance;
@@ -65,7 +72,7 @@ export class Window {
   }
 
   public getTerminalRuntimeService(): Promise<RemoteObject<TerminalRuntimeServiceApi>> {
-    this._terminalRuntimeService ??= getTerminalRuntimeService(this.getPeer());
+    this._terminalRuntimeService ??= getTerminalRuntimeService(this.getBackendPeer());
     return this._terminalRuntimeService;
   }
 
@@ -95,7 +102,21 @@ export class Window {
     return this._peer;
   }
 
-  private _waitForBridgePort(): Promise<{ readonly port: MessagePort; readonly connectId: string }> {
+  public getBackendPeer(): BridgePeer {
+    if (this._backendPeer === null) throw new Error("Backend bridge is not initialized");
+    return this._backendPeer;
+  }
+
+  public getBackendServerRpcObject(): Promise<RemoteObject<BackendServerRpcApi>> {
+    if (this._backendServerRpcObject === null) throw new Error("Backend bridge is not initialized");
+    return this._backendServerRpcObject;
+  }
+
+  private _waitForBridgePort(): Promise<{
+    readonly port: MessagePort;
+    readonly backendPort: MessagePort;
+    readonly connectId: string;
+  }> {
     return new Promise((resolve) => {
       const handleMessage = (event: MessageEvent<unknown>): void => {
         if (event.source !== window
@@ -106,9 +127,10 @@ export class Window {
           return;
         }
         const accept = parseBridgeConnectAccept(event.data);
-        if (event.ports.length !== 1) return;
+        const [port, backendPort] = event.ports;
+        if (event.ports.length !== 2 || port === undefined || backendPort === undefined) return;
         window.removeEventListener("message", handleMessage);
-        resolve({ port: event.ports[0], connectId: accept.connectId });
+        resolve({ port, backendPort, connectId: accept.connectId });
       };
 
       window.addEventListener("message", handleMessage);
@@ -123,4 +145,6 @@ export class Window {
   private _updateServerRpcObject: Promise<RemoteObject<UpdateServerRpcApi>> | null = null;
   private _windowServerRpcObject: Promise<RemoteObject<WindowServerRpcApi>> | null = null;
   private _peer: BridgePeer | null = null;
+  private _backendPeer: BridgePeer | null = null;
+  private _backendServerRpcObject: Promise<RemoteObject<BackendServerRpcApi>> | null = null;
 }

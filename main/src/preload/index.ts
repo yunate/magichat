@@ -11,6 +11,6 @@ contextBridge.exposeInMainWorld("electronFileSystem", {
 
 ipcRenderer.on(BRIDGE_CONNECT_ACCEPT, (event: IpcRendererEvent, payload: BridgeConnectAccept) => {
   const accept = parseBridgeConnectAccept(payload);
-  if (event.ports.length !== 1) return;
+  if (event.ports.length !== 2) return;
   window.postMessage(accept, "*", event.ports);
 });

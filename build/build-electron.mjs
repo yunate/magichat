@@ -32,6 +32,11 @@ await Promise.all([
   }),
   build({
     ...sharedOptions,
+    entryPoints: [path.join(projectRoot, "main", "src", "backend", "index.ts")],
+    outfile: path.join(outputRoot, "backend", "index.js"),
+  }),
+  build({
+    ...sharedOptions,
     entryPoints: [path.join(projectRoot, "main", "src", "uacBroker", "index.ts")],
     outfile: path.join(outputRoot, "uac-broker", "index.js"),
   }),

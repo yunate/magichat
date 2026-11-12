@@ -15,7 +15,7 @@ Symmetric TypeScript bridge shared by Electron renderer, main, and local Node ch
 - One `send` timeout budget covers both waiting for a connection and waiting for the response. The default is 30 seconds.
 - Disconnecting rejects and clears all pending requests. Request timeouts remove only their matching pending entry.
 - `onConnect` and `onDisconnect` return idempotent unsubscribe functions scoped to each registration, including repeated registration of the same callback. Registration does not immediately notify the current state and unsubscription does not affect wait listeners.
-- Main creates `connectId` and transfers a dedicated port after the renderer finishes loading.
+- Main creates `connectId` and transfers two ports after the renderer finishes loading, ordered Main then Backend. Both Renderer peers use that Main-owned connection identity. A separate Main-to-Backend control channel manages process lifecycle; its bootstrap source distinguishes Main and Renderer ports and is validated by `parseBackendBridgeConnectAccept()`.
 - Transport accepts only string message payloads and explicit close envelopes. Invalid envelopes do not enter the RPC router.
 - `registerRemoteObj(registerName, creator)` registers one object factory. `createRemoteObj<T>(peer, registerName, ...params)` forwards creation parameters to that factory and creates a recursive, method-only async proxy over nested object members.
 - Ordinary results, including arrays, remain JSON values. A provider uses `BridgeRouter.returnRemoteObj(object)` when a local returned object must remain callable; the caller receives an independently managed remote proxy. Known remote proxies returned by a method are forwarded automatically through a new receiving-connection handle.

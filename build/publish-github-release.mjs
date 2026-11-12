@@ -78,11 +78,50 @@ function ensureRepositoryWriteAccess() {
   }
 }
 
+function listRepositoryItems(resource) {
+  const output = runGitHubCli([
+    "api",
+    `repos/${repository}/${resource}?per_page=100`,
+    "--paginate",
+    "--slurp",
+  ], true);
+  const pages = JSON.parse(output);
+  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) {
+    throw new Error(`GitHub ${resource} API returned an invalid response.`);
+  }
+  return pages.flat();
+}
+
 function deleteForeignAssets(tag, assets, retainedVersion) {
   for (const asset of assets) {
     if (getAssetVersion(asset.name) === retainedVersion) continue;
     console.log(`Deleting stale asset ${asset.name} from release ${tag}.`);
     runGitHubCli(["release", "delete-asset", tag, asset.name, "--repo", repository, "--yes"]);
+  }
+}
+
+function deleteOldReleasesAndTags(releases) {
+  for (const release of releases) {
+    if (release.tag_name === releaseTag) continue;
+    if (!Number.isSafeInteger(release.id) || release.id <= 0) {
+      throw new Error("GitHub Releases API returned an invalid release ID.");
+    }
+    console.log(`Deleting old release ${release.tag_name}.`);
+    runGitHubCli(["api", "--method", "DELETE", `repos/${repository}/releases/${release.id}`]);
+  }
+  const tags = listRepositoryItems("tags");
+  for (const tag of tags) {
+    if (typeof tag.name !== "string" || tag.name.length === 0) {
+      throw new Error("GitHub Tags API returned an invalid tag name.");
+    }
+    if (tag.name === releaseTag) continue;
+    console.log(`Deleting old tag ${tag.name}.`);
+    runGitHubCli([
+      "api",
+      "--method",
+      "DELETE",
+      `repos/${repository}/git/refs/tags/${encodeURIComponent(tag.name)}`,
+    ]);
   }
 }
 
@@ -108,63 +147,23 @@ function createLatestRelease(targetCommitish) {
 
 runGitHubCli(["auth", "status"]);
 ensureRepositoryWriteAccess();
-const releasesOutput = runGitHubCli([
-  "api",
-  `repos/${repository}/releases?per_page=100`,
-], true);
-const releases = JSON.parse(releasesOutput);
-if (!Array.isArray(releases)) throw new Error("GitHub Releases API returned an invalid response.");
+const releases = listRepositoryItems("releases");
 
 const latestRelease = releases.find((release) => release.tag_name === releaseTag);
 if (latestRelease === undefined) {
   createLatestRelease("main");
+  deleteOldReleasesAndTags(releases);
   console.log(`Published ${installerName} and ${updateZipName}.`);
   process.exit(0);
 }
 
-if (!Array.isArray(latestRelease.assets) || typeof latestRelease.target_commitish !== "string") {
+if (!Array.isArray(latestRelease.assets)) {
   throw new Error(`Release ${releaseTag} metadata is invalid.`);
 }
 
 const previousVersion = getReleaseVersion(latestRelease);
-const versionComparison = compareVersions(appVersion, previousVersion);
-if (versionComparison < 0) {
+if (compareVersions(appVersion, previousVersion) < 0) {
   throw new Error(`VERSION ${appVersion} is older than published version ${previousVersion}.`);
-}
-
-if (versionComparison === 0) {
-  deleteForeignAssets(releaseTag, latestRelease.assets, appVersion);
-  runGitHubCli([
-    "release",
-    "edit",
-    releaseTag,
-    "--repo",
-    repository,
-    "--title",
-    `${releaseTitlePrefix}${appVersion}`,
-    "--latest",
-  ]);
-} else {
-  if (releases.some((release) => release.tag_name === previousVersion)) {
-    throw new Error(`Archived release ${previousVersion} already exists.`);
-  }
-  deleteForeignAssets(releaseTag, latestRelease.assets, previousVersion);
-  console.log(`Archiving release ${releaseTag} as ${previousVersion}.`);
-  runGitHubCli([
-    "release",
-    "edit",
-    releaseTag,
-    "--repo",
-    repository,
-    "--tag",
-    previousVersion,
-    "--title",
-    `${releaseTitlePrefix}${previousVersion}`,
-    "--latest=false",
-  ]);
-  createLatestRelease(latestRelease.target_commitish);
-  console.log(`Published ${installerName} and ${updateZipName}.`);
-  process.exit(0);
 }
 
 console.log(`Publishing ${installerName} and ${updateZipName} to ${repository} release ${releaseTag}.`);
@@ -178,4 +177,18 @@ runGitHubCli([
   repository,
   "--clobber",
 ]);
+runGitHubCli([
+  "release",
+  "edit",
+  releaseTag,
+  "--repo",
+  repository,
+  "--title",
+  `${releaseTitlePrefix}${appVersion}`,
+  "--notes",
+  `MagicHat ${appVersion}`,
+  "--latest",
+]);
+deleteForeignAssets(releaseTag, latestRelease.assets, appVersion);
+deleteOldReleasesAndTags(releases);
 console.log(`Published ${installerName} and ${updateZipName}.`);

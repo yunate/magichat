@@ -9,7 +9,7 @@ export async function createDefaultTreeViewDataProvider(
   controller: TreeViewController,
 ): Promise<RemoteObject<TreeViewDataProvider>> {
   return createTreeViewDataProvider(
-    gMainApplication.window.getPeer(),
+    gMainApplication.window.getBackendPeer(),
     new TreeViewDataNotifierRpcObject(controller),
   );
 }

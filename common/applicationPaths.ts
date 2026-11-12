@@ -8,6 +8,8 @@ export type ApplicationPathsOptions = Readonly<{
   executablePath: string;
   resourcesPath: string;
   localAppDataDirectory: string;
+  applicationDataDirectory: string;
+  desktopDirectory: string;
 }>;
 
 class ApplicationPathsOptionsSerializer extends ISerializer<ApplicationPathsOptions> {
@@ -36,6 +38,8 @@ class ApplicationPathsOptionsSerializer extends ISerializer<ApplicationPathsOpti
     executablePath: "",
     resourcesPath: "",
     localAppDataDirectory: "",
+    applicationDataDirectory: "",
+    desktopDirectory: "",
   };
 }
 

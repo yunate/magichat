@@ -1,7 +1,9 @@
 {
   "isExpanded": true,
   "folderOrder": [],
-  "itemOrder": [],
+  "itemOrder": [
+    "test"
+  ],
   "data": {
     "selectedParamGroupId": "folder",
     "paramGroups": [

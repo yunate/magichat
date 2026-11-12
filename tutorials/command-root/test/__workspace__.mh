@@ -1,5 +1,5 @@
 {
-  "isSelected": true,
+  "isSelected": false,
   "ui": {
     "layout": {
       "sidebarWidth": 400
@@ -8,7 +8,7 @@
   "tabs": [
     {
       "kind": "item",
-      "path": "Untitled folder/test.mh",
+      "path": "Untitled folder/Untitled folder/Untitled folder/test.mh",
       "isPinned": false
     },
     {
@@ -23,6 +23,6 @@
     }
   ],
   "activeTabPath": "Untitled folder/tst.mh",
-  "previewTabPath": "Untitled folder/Untitled folder/Untitled folder",
+  "previewTabPath": null,
   "data": null
 }

@@ -27,6 +27,14 @@ export class ApplicationPaths {
     return this._requireOptions().userDataDir;
   }
 
+  public get applicationDataDirectory(): string {
+    return this._requireOptions().applicationDataDirectory;
+  }
+
+  public get desktopDirectory(): string {
+    return this._requireOptions().desktopDirectory;
+  }
+
   public get appRoot(): string {
     return path.join(this._requireOptions().localAppDataDirectory, "MagicHat");
   }
@@ -53,6 +61,12 @@ export class ApplicationPaths {
 
   public get preloadEntryPath(): string {
     return path.join(this.appPath, "dist-electron", "preload", "index.js");
+  }
+
+  public get backendEntryPath(): string {
+    return this.isPackaged
+      ? path.join(this._requireOptions().resourcesPath, "backend", "index.js")
+      : path.join(this.appPath, "dist-electron", "backend", "index.js");
   }
 
   public get nativeToolsDirectoryPath(): string {

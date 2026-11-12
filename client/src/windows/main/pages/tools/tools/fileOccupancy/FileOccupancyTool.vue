@@ -137,7 +137,7 @@ const notifier: FileOccupancyClientRpcApi = {
 async function initialize(): Promise<void> {
   try {
     remoteObject = await createFileOccupancyServerRpcObject(
-      gMainApplication.window.getPeer(),
+      gMainApplication.window.getBackendPeer(),
       notifier,
     );
   } catch (caughtError: unknown) {

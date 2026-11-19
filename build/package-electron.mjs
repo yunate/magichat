@@ -50,6 +50,7 @@ fs.writeFileSync(
 try {
   fs.rmSync(updateZipPath, { force: true });
   await build({
+    publish: "never",
     config: {
       extends: path.join(rootDirectory, "electron-builder.yml"),
       buildNumber,

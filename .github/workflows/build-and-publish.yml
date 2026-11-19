@@ -1,0 +1,46 @@
+name: Build and publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: magichat-latest-publication
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    environment: release
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Check out MagicHat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Cache dependency downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/AppData/Local/npm-cache
+            C:/npm/cache
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-${{ runner.arch }}-downloads-v1-${{ hashFiles('package-lock.json') }}
+
+      - name: Package
+        run: |
+          call npm ci
+          if errorlevel 1 exit /b %ERRORLEVEL%
+          call package.bat
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.MAGICHAT_RELEASE_TOKEN }}
+        run: call publish.bat

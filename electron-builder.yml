@@ -18,6 +18,9 @@ files:
   - "!node_modules/node-pty/**"
   - package.json
   - VERSION
+  - LICENSE
+  - PRIVACY.md
+  - CODE_SIGNING.md
   - THIRD_PARTY_NOTICES.md
 extraResources:
   - from: dist-electron/backend/index.js
